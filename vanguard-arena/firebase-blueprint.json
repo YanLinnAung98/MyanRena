@@ -1,0 +1,114 @@
+{
+  "entities": {
+    "UserPublicProfile": {
+      "title": "UserPublicProfile",
+      "description": "Public competitive profile for a player in Vanguard Arena",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "gameId": { "type": "string", "minLength": 5, "maxLength": 20 },
+        "displayName": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "avatarUrl": { "type": "string", "maxLength": 2048 },
+        "frameId": { "type": "string", "maxLength": 64 },
+        "xp": { "type": "number" },
+        "wins": { "type": "number" },
+        "losses": { "type": "number" },
+        "draws": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "gameId", "displayName", "xp", "wins", "losses", "draws", "updatedAt"]
+    },
+    "UserPrivateInfo": {
+      "title": "UserPrivateInfo",
+      "description": "Private PII isolated from public player profiles",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 254 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "createdAt"]
+    },
+    "MatchRecord": {
+      "title": "MatchRecord",
+      "description": "Competitive match result and metadata",
+      "type": "object",
+      "properties": {
+        "matchId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "gameType": { "type": "string", "enum": ["connect4", "ttt", "rps"] },
+        "player1Id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "player2Id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "winnerId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["active", "finished"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["matchId", "gameType", "player1Id", "player2Id", "status", "createdAt", "updatedAt"]
+    },
+    "ProfileFrame": {
+      "title": "ProfileFrame",
+      "description": "Decorative avatar frame managed by platform admins",
+      "type": "object",
+      "properties": {
+        "frameId": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 2, "maxLength": 64 },
+        "imageUrl": { "type": "string", "maxLength": 2048 },
+        "unlockTier": { "type": "string", "maxLength": 32 },
+        "isActive": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["frameId", "name", "imageUrl", "isActive", "createdAt"]
+    },
+    "FeatureLock": {
+      "title": "FeatureLock",
+      "description": "Real-time feature or game lock switch controlled by admins",
+      "type": "object",
+      "properties": {
+        "key": { "type": "string", "minLength": 2, "maxLength": 32 },
+        "locked": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["key", "locked", "updatedAt"]
+    },
+    "Tournament": {
+      "title": "Tournament",
+      "description": "Knockout bracket tournament event",
+      "type": "object",
+      "properties": {
+        "tournamentId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "title": { "type": "string", "minLength": 3, "maxLength": 80 },
+        "gameType": { "type": "string", "enum": ["connect4", "ttt", "rps"] },
+        "status": { "type": "string", "enum": ["draft", "registration", "live", "completed"] },
+        "maxPlayers": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tournamentId", "title", "gameType", "status", "maxPlayers", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublicProfile" },
+      "description": "Public competitive player profiles"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivateInfo" },
+      "description": "Private user PII restricted to account owner and admin"
+    },
+    "/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/MatchRecord" },
+      "description": "Authoritative match history records"
+    },
+    "/frames/{frameId}": {
+      "schema": { "$ref": "#/entities/ProfileFrame" },
+      "description": "Admin-managed avatar frames"
+    },
+    "/featureLocks/{lockId}": {
+      "schema": { "$ref": "#/entities/FeatureLock" },
+      "description": "Real-time platform feature and game locks"
+    },
+    "/tournaments/{tournamentId}": {
+      "schema": { "$ref": "#/entities/Tournament" },
+      "description": "Knockout tournament events"
+    }
+  }
+}
