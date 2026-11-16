@@ -80,23 +80,21 @@ export const LandingView: React.FC<LandingViewProps> = ({
     e.preventDefault();
     setError('');
     setLoading(true);
-    try {
-      // အစားထိုးရမည့် ကုဒ်အသစ် ✅
+   // LandingView.tsx ဖိုင်အတွင်းရှိ Login/Register ခလုတ်နှိပ်သော Function တွင် အောက်ပါအတိုင်း အတိအကျဖြစ်ရပါမည်
+
+try {
   if (authMode === 'signin') {
-    // Admin Account ဟုတ်/မဟုတ် အရင်စစ်ဆေးခြင်း
+    // Admin Account ဟုတ်/မဟုတ် စစ်ဆေးခြင်း
     if (username.trim() === 'yanlinnaung' && password === '163104') {
-      // Admin အဖြစ် သတ်မှတ်ပေးသည့် ကုဒ် (သင့် State ပေါ်မူတည်၍ ပြင်ဆင်ပါ)
       console.log("Admin Logged In");
-      // onLoginSuccess(adminData); 
+      // Admin ဝင်သွားလျှင် လုပ်ရမည့် အရာ ဆက်ရေးရန်
     } else {
       // သာမန် User Login ဝင်ခြင်း
       const { data, error } = await supabase.auth.signInWithPassword({
-        email: `${username.trim()}@myanrena.com`, // Username ကို Email ပုံစံပြောင်း၍ သုံးခြင်း
+        email: `${username.trim()}@myanrena.com`,
         password: password,
       });
-      
       if (error) throw error;
-      // onLoginSuccess(data.user);
     }
   } else {
     // အကောင့်သစ်ဖွင့်ခြင်း (Register)
@@ -106,8 +104,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
     });
     if (error) throw error;
   }
-  
-  // ... (Loading ပိတ်သည့် ကုဒ်များ ဆက်လုပ်ပါ)
+} catch (error: any) { 
+  // 👈 ဒီ catch အပိုင်းလေး ဖျက်မိသွားလို့ Error တက်တာပါ
+  setError(error.message || 'Authentication failed');
+} finally {
+  setLoading(false);
+}
 
       const res = await fetch(endpoint, {
         method: 'POST',
