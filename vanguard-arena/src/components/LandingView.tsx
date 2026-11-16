@@ -1,3 +1,4 @@
+import { supabase } from '../utils/supabaseClient'; // (ဖိုင်လမ်းကြောင်း မှန်/မမှန် စစ်ဆေးပါ)
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -80,16 +81,34 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setError('');
     setLoading(true);
     try {
-      const endpoint = authMode === 'signin' ? '/api/auth/login' : '/api/auth/register';
-      const payload =
-        authMode === 'signin'
-          ? { username: username.trim(), password }
-          : {
-              username: username.trim(),
-              password,
-              displayName: displayName.trim(),
-              email: email.trim() || undefined,
-            };
+      // အစားထိုးရမည့် ကုဒ်အသစ် ✅
+try {
+  if (authMode === 'signin') {
+    // Admin Account ဟုတ်/မဟုတ် အရင်စစ်ဆေးခြင်း
+    if (username.trim() === 'yanlinnaung' && password === '163104') {
+      // Admin အဖြစ် သတ်မှတ်ပေးသည့် ကုဒ် (သင့် State ပေါ်မူတည်၍ ပြင်ဆင်ပါ)
+      console.log("Admin Logged In");
+      // onLoginSuccess(adminData); 
+    } else {
+      // သာမန် User Login ဝင်ခြင်း
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: `${username.trim()}@myanrena.com`, // Username ကို Email ပုံစံပြောင်း၍ သုံးခြင်း
+        password: password,
+      });
+      
+      if (error) throw error;
+      // onLoginSuccess(data.user);
+    }
+  } else {
+    // အကောင့်သစ်ဖွင့်ခြင်း (Register)
+    const { data, error } = await supabase.auth.signUp({
+      email: `${username.trim()}@myanrena.com`,
+      password: password,
+    });
+    if (error) throw error;
+  }
+  
+  // ... (Loading ပိတ်သည့် ကုဒ်များ ဆက်လုပ်ပါ)
 
       const res = await fetch(endpoint, {
         method: 'POST',
