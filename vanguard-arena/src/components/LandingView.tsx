@@ -84,17 +84,20 @@ export const LandingView: React.FC<LandingViewProps> = ({
     try {
       if (authMode === 'signin') {
         // Admin Account ဟုတ်/မဟုတ် စစ်ဆေးခြင်း
-        if (username.trim() === 'yanlinnaung' && password === '163104') {
-          console.log("Admin Logged In");
-          soundEngine.playNotify();
-          // Admin အဖြစ် OnAuthenticated သို့ ပို့ပေးရန် (သင်၏ UserProfile Type အတိုင်း လိုအပ်သလို ချိန်ညှိပါ)
-          onAuthenticated('admin-token', { 
-            id: 'admin', 
-            username: 'yanlinnaung', 
-            displayName: 'Admin', 
-            gameId: '163104' 
-          } as UserProfile, rememberMe);
-        } else {
+    // LandingView.tsx ထဲရှိ Admin ဝင်သည့်အပိုင်းအား အောက်ပါအတိုင်း ပြင်ပါ
+if (username.trim() === 'yanlinnaung' && password === '163104') {
+  console.log("Admin Logged In");
+  soundEngine.playNotify();
+  onAuthenticated('admin-token', { 
+    id: 'admin', 
+    username: 'yanlinnaung', 
+    displayName: 'Yan Linn Aung', 
+    gameId: '163104',
+    role: 'admin',          // 👈 Admin Panel ပေါ်လာစေရန်
+    isAdmin: true,          // 👈 Admin Permission ရစေရန်
+    avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=fff' // 👈 Profile ပုံ ယာယီပေါ်စေရန်
+  } as any, rememberMe);
+}else {
           // သာမန် User Login ဝင်ခြင်း
           const { data, error } = await supabase.auth.signInWithPassword({
             email: `${username.trim()}@myanrena.com`,
