@@ -1,5 +1,5 @@
 import React from 'react';
-import { supabase } from '../utils/supabase'; // လမ်းကြောင်း မှန်/မမှန် စစ်ဆေးပါ
+import { supabase } from '../utils/supabaseClient';
 import type {
   ActiveMatch,
   Announcement,
