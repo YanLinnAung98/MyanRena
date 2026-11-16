@@ -82,7 +82,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setLoading(true);
     try {
       // အစားထိုးရမည့် ကုဒ်အသစ် ✅
-try {
   if (authMode === 'signin') {
     // Admin Account ဟုတ်/မဟုတ် အရင်စစ်ဆေးခြင်း
     if (username.trim() === 'yanlinnaung' && password === '163104') {
