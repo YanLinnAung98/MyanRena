@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import express from 'express';
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -66,16 +65,6 @@ const adminAuth = getAdminAuth();
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const app = express();
-
-// 👉 ဒီ CORS အပိုင်းကို အသစ်ထည့်ပေးပါ
-app.use(cors({
-  origin: ['https://myanrena.vercel.app', 'http://localhost:5173'], // သင့် Vercel လင့်ခ်ကို အတိအကျထည့်ပါ
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
-}));
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'arena.db'));
 db.exec('PRAGMA journal_mode = WAL;');
@@ -1844,6 +1833,14 @@ setInterval(() => {
 
 // ─── EXPRESS APP & AUTH MIDDLEWARE ────────────────────────────────────────────
 const app = express();
+
+app.use(cors({
+  origin: ['https://myanrena.vercel.app', 'http://localhost:5173'], 
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
+
 app.use(express.json({ limit: '4mb' }));
 app.use('/uploads', express.static(UPLOADS_DIR));
 
