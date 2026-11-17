@@ -2,7 +2,7 @@
   "rewrites": [
     {
       "source": "/api/(.*)",
-      "destination": "https://[အစ်ကို့-REPLIT-LINK]/api/$1"
+      "destination": "https://2c3f69d0-bb83-4a5c-9c76-cd15a54a147e-00-butmapl87ofc.riker.replit.dev:5000/api/$1"
     },
     {
       "source": "/(.*)",
