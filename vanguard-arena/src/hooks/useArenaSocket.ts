@@ -133,7 +133,7 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
       setConnectionState('connecting');
       
       // 👉 ဒီနေရာမှာ Replit ရဲ့ WebSocket လင့်ခ်အသစ်ကို တိုက်ရိုက်ချိတ်ဆက်ပေးထားပါတယ်
-      const ws = new WebSocket(`wss://2c3f69d0-bb83-4a5c-9c76-cd15a54a147e-00-butmapl87ofc.riker.replit.dev/ws?token=${encodeURIComponent(token)}`);
+      const ws = new WebSocket(`wss://2c3f69d0-bb83-4a5c-9c76-cd15a54a147e-00-butmapl87ofc.riker.replit.dev:5000/ws?token=${encodeURIComponent(token)}`);
       wsRef.current = ws;
 
       ws.onopen = () => {
