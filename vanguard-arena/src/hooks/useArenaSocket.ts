@@ -1,5 +1,4 @@
 import React from 'react';
-import { supabase } from '../utils/supabaseClient';
 import type {
   ActiveMatch,
   Announcement,
@@ -39,13 +38,17 @@ interface UseArenaSocketOptions {
 }
 
 export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArenaSocketOptions) {
+  const wsRef = React.useRef<WebSocket | null>(null);
+  const retryTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const attemptRef = React.useRef(0);
+  const outgoingQueueRef = React.useRef<Record<string, unknown>[]>([]);
+  const mountedRef = React.useRef(true);
+
   const [connectionState, setConnectionState] = React.useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const [pingMs, setPingMs] = React.useState<number>(24);
   const [onlinePlayers, setOnlinePlayers] = React.useState<OnlinePlayer[]>([]);
   const [onlineCount, setOnlineCount] = React.useState<number>(0);
   const [activeDevices, setActiveDevices] = React.useState<number>(0);
-  
-  // State များကို Default အတိုင်း ဆက်လက်ထားရှိသည်
   const [featureLocks, setFeatureLocks] = React.useState<FeatureLocks>({
     connect4: false,
     ttt: false,
@@ -72,17 +75,16 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
     botFillDelaySeconds: 8,
     autoBotFillDefault: true,
   });
+  const langRef = React.useRef<Language>(lang);
+  React.useEffect(() => {
+    langRef.current = lang;
+  }, [lang]);
   const [sakarQuickCount, setSakarQuickCount] = React.useState<number>(0);
   const [openRooms, setOpenRooms] = React.useState<CustomRoom[]>([]);
   const [currentRoom, setCurrentRoom] = React.useState<CustomRoom | null>(null);
   const [roomChat, setRoomChat] = React.useState<CustomRoomChatMessage[]>([]);
   const [landingContent, setLandingContent] = React.useState<LandingContent>(DEFAULT_LANDING_CONTENT);
   const [pendingWarnings, setPendingWarnings] = React.useState<OfficialWarning[]>([]);
-
-  const langRef = React.useRef<Language>(lang);
-  React.useEffect(() => {
-    langRef.current = lang;
-  }, [lang]);
 
   const pushToast = React.useCallback((level: ToastNotice['level'], message: string) => {
     const id = `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
@@ -92,53 +94,249 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
     }, 4500);
   }, []);
 
-  // Supabase Realtime ချိတ်ဆက်ခြင်း (WebSocket အစား)
+  const sendWs = React.useCallback((payload: Record<string, unknown>) => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    } else {
+      outgoingQueueRef.current.push(payload);
+    }
+  }, []);
+
+  const flushQueue = React.useCallback(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    while (outgoingQueueRef.current.length > 0) {
+      const next = outgoingQueueRef.current.shift();
+      if (next) ws.send(JSON.stringify(next));
+    }
+  }, []);
+
   React.useEffect(() => {
+    mountedRef.current = true;
     if (!token) {
       setConnectionState('disconnected');
+      setCurrentRoom(null);
+      setRoomChat([]);
+      setOpenRooms([]);
+      setSakarQuickCount(0);
+      setQueuedGame(null);
+      setQueueStatus(null);
+      setActiveMatch(null);
       return;
     }
 
-    setConnectionState('connecting');
+    let intentionallyClosed = false;
 
-    // Global Public Channel ဖန်တီးခြင်း
-    const globalChannel = supabase.channel('vanguard-global');
+    const connect = () => {
+      if (!mountedRef.current || intentionallyClosed) return;
+      setConnectionState('connecting');
+      
+      // 👉 ဒီနေရာမှာ Replit ရဲ့ WebSocket လင့်ခ်အသစ်ကို တိုက်ရိုက်ချိတ်ဆက်ပေးထားပါတယ်
+      const ws = new WebSocket(`wss://2c3f69d0-bb83-4a5c-9c76-cd15a54a147e-00-butmapl87ofc.riker.replit.dev:5000/ws?token=${encodeURIComponent(token)}`);
+      wsRef.current = ws;
 
-    globalChannel
-      .on('broadcast', { event: 'ping' }, () => {
-        setPingMs(Math.floor(Math.random() * 20) + 20); // Dummy Ping for UI
-      })
-      .on('broadcast', { event: 'online-count' }, (payload) => {
-        if (payload.count) setOnlineCount(payload.count);
-      })
-      .on('broadcast', { event: 'announcement' }, (payload) => {
-        soundEngine.playNotify();
-        setAnnouncement(payload.announcement as Announcement);
-      })
-      .on('presence', { event: 'sync' }, () => {
-        const newState = globalChannel.presenceState();
-        setOnlineCount(Object.keys(newState).length);
-        // User Profile များကို Update လုပ်ရန် ဤနေရာတွင် ရေးနိုင်သည်
-      })
-      .subscribe(async (status) => {
-        if (status === 'SUBSCRIBED') {
-          setConnectionState('connected');
-          // မိမိကိုယ်တိုင် Presence သို့ ဝင်ရောက်ခြင်း
-          await globalChannel.track({
-            online_at: new Date().toISOString(),
-            status: 'lobby'
-          });
+      ws.onopen = () => {
+        attemptRef.current = 0;
+        setConnectionState('connected');
+        flushQueue();
+        ws.send(JSON.stringify({ type: 'match:sync' }));
+      };
+
+      ws.onmessage = (ev) => {
+        let msg: Record<string, unknown>;
+        try {
+          msg = JSON.parse(ev.data);
+        } catch {
+          return;
         }
-      });
+
+        switch (msg.type) {
+          case 'ping':
+            ws.send(JSON.stringify({ type: 'pong', ts: msg.ts }));
+            break;
+          case 'ping:ack':
+            setPingMs(Number(msg.pingMs || 20));
+            break;
+          case 'init':
+            if (msg.user) onUserUpdate(msg.user as UserProfile);
+            if (msg.featureLocks) setFeatureLocks(msg.featureLocks as FeatureLocks);
+            if (msg.matchmakingSettings) setMatchmakingSettings(msg.matchmakingSettings as MatchmakingSettings);
+            if (msg.frames) setFrames(msg.frames as ProfileFrame[]);
+            if (msg.onlinePlayers) {
+              const list = msg.onlinePlayers as OnlinePlayer[];
+              setOnlinePlayers(list);
+              setOnlineCount(list.length);
+            }
+            if (msg.activeDevices !== undefined) setActiveDevices(Number(msg.activeDevices));
+            if (msg.leaderboard) setLeaderboard(msg.leaderboard as UserProfile[]);
+            if (msg.tournaments) setTournaments(msg.tournaments as Tournament[]);
+            if (msg.landingContent) setLandingContent(msg.landingContent as LandingContent);
+            if (Array.isArray(msg.warnings)) setPendingWarnings(msg.warnings as OfficialWarning[]);
+            if (Array.isArray(msg.openRooms)) setOpenRooms(msg.openRooms as CustomRoom[]);
+            if (msg.sakarQueueCount !== undefined) setSakarQuickCount(Number(msg.sakarQueueCount || 0));
+            break;
+          case 'matchmaking:settings':
+            if (msg.matchmakingSettings) setMatchmakingSettings(msg.matchmakingSettings as MatchmakingSettings);
+            break;
+          case 'queue:tick':
+            if (msg.queue) {
+              const q = msg.queue as QueueStatus;
+              setQueueStatus(q);
+              setQueuedGame(q.gameType);
+            }
+            break;
+          case 'queue:cancelled':
+            setQueuedGame(null);
+            setQueueStatus(null);
+            setSakarQuickCount(0);
+            break;
+          case 'queue:timeout':
+            setQueuedGame(null);
+            setQueueStatus(null);
+            setSakarQuickCount(0);
+            soundEngine.playNotify();
+            pushToast('info', TRANSLATIONS[langRef.current].lobby.noPlayersTimeoutToast);
+            break;
+          case 'warning:official':
+            if (msg.warning) {
+              const w = msg.warning as OfficialWarning;
+              soundEngine.playNotify();
+              setPendingWarnings((prev) => (prev.some((x) => x.id === w.id) ? prev : [w, ...prev]));
+            }
+            break;
+          case 'landing:update':
+            if (msg.landingContent) setLandingContent(msg.landingContent as LandingContent);
+            break;
+          case 'presence:update': {
+            const list = (msg.onlinePlayers as OnlinePlayer[]) || [];
+            setOnlinePlayers(list);
+            setOnlineCount(Number(msg.onlineCount ?? list.length));
+            if (msg.activeDevices !== undefined) setActiveDevices(Number(msg.activeDevices));
+            break;
+          }
+          case 'locks:update':
+            setFeatureLocks(msg.featureLocks as FeatureLocks);
+            break;
+          case 'frames:update':
+            setFrames(msg.frames as ProfileFrame[]);
+            break;
+          case 'leaderboard:update':
+            setLeaderboard(msg.leaderboard as UserProfile[]);
+            break;
+          case 'tournaments:update':
+            setTournaments(msg.tournaments as Tournament[]);
+            break;
+          case 'user:update':
+            if (msg.user) onUserUpdate(msg.user as UserProfile);
+            break;
+          case 'match:state': {
+            const nextMatch = msg.match as ActiveMatch;
+            setActiveMatch((prev) => {
+              if (!prev || prev.id !== nextMatch.id) {
+                setMatchChat([]);
+                setQueuedGame(null);
+                setQueueStatus(null);
+                setSakarQuickCount(0);
+              }
+              return nextMatch;
+            });
+            break;
+          }
+          case 'match:left':
+            setActiveMatch(null);
+            setMatchChat([]);
+            break;
+          case 'rooms:update':
+            setOpenRooms((msg.openRooms as CustomRoom[]) || []);
+            break;
+          case 'room:state': {
+            const nextRoom = (msg.room as CustomRoom | null) || null;
+            setCurrentRoom(nextRoom);
+            if (Array.isArray(msg.chat)) {
+              setRoomChat(msg.chat as CustomRoomChatMessage[]);
+            } else if (!nextRoom) {
+              setRoomChat([]);
+            }
+            break;
+          }
+          case 'room:chat': {
+            const rc = msg.message as CustomRoomChatMessage;
+            setRoomChat((prev) => (prev.some((m) => m.id === rc.id) ? prev : [...prev.slice(-79), rc]));
+            break;
+          }
+          case 'room:kicked':
+            setCurrentRoom(null);
+            setRoomChat([]);
+            pushToast('error', String(msg.reason || 'Removed from room.'));
+            break;
+          case 'sakar:queue': {
+            const cnt = Number(msg.count || 0);
+            setSakarQuickCount(cnt);
+            if (cnt === 0) {
+              setQueuedGame((prev) => (prev === 'sakar_htar' ? null : prev));
+            }
+            break;
+          }
+          case 'match:chat': {
+            const chat = msg.message as ChatMessage;
+            setMatchChat((prev) => (prev.some((c) => c.id === chat.id) ? prev : [...prev.slice(-79), chat]));
+            break;
+          }
+          case 'challenge:received':
+            soundEngine.playNotify();
+            setPendingChallenge(msg.invite as ChallengeInvite);
+            break;
+          case 'announcement':
+            soundEngine.playNotify();
+            setAnnouncement(msg.announcement as Announcement);
+            break;
+          case 'dm:new': {
+            const dm = msg.message as DirectMessage;
+            setIncomingDMs((prev) => [...prev.slice(-30), dm]);
+            setSocialRefreshTick((n) => n + 1);
+            soundEngine.playNotify();
+            break;
+          }
+          case 'social:update':
+            setSocialRefreshTick((n) => n + 1);
+            break;
+          case 'toast':
+            pushToast((msg.level as ToastNotice['level']) || 'info', String(msg.message || ''));
+            break;
+          case 'kicked':
+            intentionallyClosed = true;
+            onKicked(String(msg.reason || 'Disconnected by administrator.'));
+            break;
+          default:
+            break;
+        }
+      };
+
+      ws.onclose = (ev) => {
+        if (wsRef.current === ws) wsRef.current = null;
+        if (intentionallyClosed || ev.code === 4001 || ev.code === 4003) {
+          setConnectionState('disconnected');
+          return;
+        }
+        setConnectionState('connecting');
+        const delay = Math.min(15000, 1000 * Math.pow(2, attemptRef.current));
+        attemptRef.current += 1;
+        retryTimerRef.current = setTimeout(connect, delay);
+      };
+    };
+
+    connect();
 
     return () => {
-      supabase.removeChannel(globalChannel);
-      setConnectionState('disconnected');
+      mountedRef.current = false;
+      intentionallyClosed = true;
+      if (retryTimerRef.current) clearTimeout(retryTimerRef.current);
+      if (wsRef.current) wsRef.current.close();
     };
-  }, [token, pushToast]);
+  }, [token, flushQueue, onKicked, onUserUpdate, pushToast]);
 
-  // Matchmaking (Queue) သို့ဝင်ရောက်ခြင်း
-  const joinQueue = async (gameType: GameType, turnTimeLimit?: TurnTimeLimit, autoBotFill?: boolean) => {
+  const joinQueue = (gameType: GameType, turnTimeLimit?: TurnTimeLimit, autoBotFill?: boolean) => {
     const botFill = autoBotFill ?? matchmakingSettings.autoBotFillDefault;
     setQueuedGame(gameType);
     setQueueStatus({
@@ -150,16 +348,14 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
       autoBotFill: botFill,
       count: 1,
     });
-    
-    // မှတ်ချက်: Vercel ပေါ်တွင် Database Query ဖြင့် Matchmaking ကို ဆက်လက်ရေးသားရမည် (ဥပမာ - matchmaking_queue Table ထဲသို့ Insert လုပ်ခြင်း)
-    pushToast('info', 'Searching for opponent...');
+    sendWs({ type: 'queue:join', gameType, turnTimeLimit, autoBotFill: botFill });
   };
 
   const leaveQueue = () => {
     setQueuedGame(null);
     setQueueStatus(null);
     setSakarQuickCount(0);
-    pushToast('info', 'Left matchmaking queue.');
+    sendWs({ type: 'queue:leave' });
   };
 
   const joinSakarQuick = (autoBotFill?: boolean) => {
@@ -174,57 +370,78 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
       autoBotFill: botFill,
       count: 1,
     });
+    sendWs({ type: 'sakar:quick:join', autoBotFill: botFill });
   };
 
-  const leaveSakarQuick = () => leaveQueue();
-  const startSakarQuickNow = () => pushToast('info', 'Starting match now...');
-
-  const sendRoomChat = async (roomId: string, content: string) => {
-    // Supabase DB (သို့) Realtime Broadcast သို့ ပို့ပေးရမည်
-    pushToast('info', 'Room chat not yet implemented on Vercel.');
+  const leaveSakarQuick = () => {
+    setQueuedGame(null);
+    setQueueStatus(null);
+    setSakarQuickCount(0);
+    sendWs({ type: 'sakar:quick:leave' });
   };
 
-  const sendChallenge = (targetUserId: string, gameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit?: TurnTimeLimit) => {
+  const startSakarQuickNow = () => {
+    sendWs({ type: 'sakar:quick:start_now' });
+  };
+
+  const sendRoomChat = (roomId: string, content: string) => {
+    sendWs({ type: 'room:chat', roomId, content });
+  };
+
+  const sendChallenge = (
+    targetUserId: string,
+    gameType: GameType,
+    bestOf: 3 | 5 = 3,
+    turnTimeLimit?: TurnTimeLimit
+  ) => {
+    sendWs({ type: 'challenge:send', targetUserId, gameType, bestOf, turnTimeLimit });
     pushToast('info', 'Challenge invitation sent.');
   };
 
   const respondChallenge = (inviteId: string, accept: boolean) => {
     setPendingChallenge(null);
+    sendWs({ type: 'challenge:respond', inviteId, accept });
   };
 
   const sendMove = async (matchId: string, payload: Record<string, unknown>) => {
-    // သီးသန့် Match Channel သို့ Broadcast လုပ်ခြင်း (သို့) Database Update လုပ်ခြင်း
-    const matchChannel = supabase.channel(`match-${matchId}`);
-    matchChannel.send({
-      type: 'broadcast',
-      event: 'match:move',
-      payload: payload
-    });
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'match:move', matchId, payload }));
+      return;
+    }
+    if (!token) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(`/api/matches/${matchId}/move`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.match) setActiveMatch(data.match);
+          return;
+        }
+        if (res.status >= 400 && res.status < 500) break;
+      } catch {
+        await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
   };
 
   const forfeitMatch = (matchId: string) => {
-    pushToast('info', 'You forfeited the match.');
-    setActiveMatch(null);
+    sendWs({ type: 'match:forfeit', matchId });
   };
 
   const sendMatchChat = (matchId: string, content: string, kind: 'text' | 'sticker' = 'text') => {
-    const chatMsg: ChatMessage = {
-      id: Date.now().toString(),
-      matchId,
-      senderId: 'me', // လက်ရှိ User ID ကို ထည့်ပါ
-      content,
-      isSticker: kind === 'sticker',
-      timestamp: Date.now()
-    };
-    setMatchChat((prev) => [...prev, chatMsg]);
-    // Supabase Channel မှတစ်ဆင့် ပြိုင်ဘက်ထံ ပို့ပေးရန်
+    sendWs({ type: kind === 'sticker' ? 'match:sticker' : 'match:chat', matchId, content });
   };
 
   const setAdminSocketMode = React.useCallback(
     (mode: 'admin' | 'lobby') => {
-      console.log(`Switched to ${mode} mode`);
+      sendWs({ type: 'admin:mode', mode });
     },
-    []
+    [sendWs]
   );
 
   const dismissWarningLocal = React.useCallback((id: string) => {
