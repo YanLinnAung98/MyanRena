@@ -21,7 +21,7 @@ if (isFirebaseConfigured) {
     db = getFirestore(app);
     auth = getAuth(app);
   } catch (error) {
-    console.warn('Firebase initialization warning:', error);
+    console.warn('Firebase init fallback:', error);
   }
 }
 
