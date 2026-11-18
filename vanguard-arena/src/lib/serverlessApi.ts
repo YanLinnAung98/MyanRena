@@ -1,520 +1,549 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   collection,
+  deleteDoc,
   doc,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
+  getDoc,
+  getDocs,
   setDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
-import { db, isFirebaseConfigured } from '../lib/firebase.ts';
-import {
-  buildPlayableMatch,
-  DEFAULT_SAKAR_RIDDLES,
-  readServerlessStore,
-  writeServerlessStore,
-} from '../lib/serverlessApi.ts';
-import type {
-  Difficulty,
-  GameType,
-  LandingContent,
-  Language,
-  TurnTimeLimit,
-  UserProfile,
-} from '../types.ts';
+import { db, isFirebaseConfigured } from './firebase.ts';
 
-interface UseArenaSocketOptions {
-  token: string | null;
-  lang: Language;
-  onUserUpdate: (user: UserProfile) => void;
-  onKicked: (reason: string) => void;
-}
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v3';
 
-const DEFAULT_FRAMES = [
-  { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
-  { id: 'silver', name: 'Silver Striker', minXp: 1000 },
-  { id: 'gold', name: 'Gold Champion', minXp: 1300 },
-  { id: 'diamond', name: 'Diamond Sovereign', minXp: 1800 },
-  { id: 'legend', name: 'Legend Mythic', minXp: 2500 },
+export const DEFAULT_SAKAR_RIDDLES = [
+  {
+    id: 'rid_1',
+    question: 'ခြေလေးချောင်းရှိသော်လည်း လမ်းမလျှောက်နိုင်သော အရာမှာ အဘယ်နည်း။',
+    questionMy: 'ခြေလေးချောင်းရှိသော်လည်း လမ်းမလျှောက်နိုင်သော အရာမှာ အဘယ်နည်း။',
+    questionEn: 'What has four legs but cannot walk?',
+    options: ['စားပွဲခုံ', 'ဆင်', 'လိပ်', 'မြင်း'],
+    optionsMy: ['စားပွဲခုံ', 'ဆင်', 'လိပ်', 'မြင်း'],
+    optionsEn: ['Table', 'Elephant', 'Turtle', 'Horse'],
+    answerIndex: 0,
+  },
+  {
+    id: 'rid_2',
+    question: 'အပေါ်ကလည်း မိုး၊ အောက်ကလည်း မိုး၊ အလယ်က အဘိုးအို ခါးကုန်းကုန်း ဆိုသည်မှာ အဘယ်နည်း။',
+    questionMy: 'အပေါ်ကလည်း မိုး၊ အောက်ကလည်း မိုး၊ အလယ်က အဘိုးအို ခါးကုန်းကုန်း ဆိုသည်မှာ အဘယ်နည်း။',
+    questionEn: 'Roof above, roof below, a hunchbacked old man in the middle. What is it?',
+    options: ['လိပ်', 'ဖား', 'ပုစွန်', 'ခရု'],
+    optionsMy: ['လိပ်', 'ဖား', 'ပုစွန်', 'ခရု'],
+    optionsEn: ['Turtle', 'Frog', 'Shrimp', 'Snail'],
+    answerIndex: 0,
+  },
+  {
+    id: 'rid_3',
+    question: 'သွားလည်း သွားသည်၊ ရပ်လည်း ရပ်သည်၊ ခြေထောက်မရှိသော အရာမှာ အဘယ်နည်း။',
+    questionMy: 'သွားလည်း သွားသည်၊ ရပ်လည်း ရပ်သည်၊ ခြေထောက်မရှိသော အရာမှာ အဘယ်နည်း။',
+    questionEn: 'It moves and it stops, yet it has no legs. What is it?',
+    options: ['နာရီ', 'လှည်း', 'စက်ဘီး', 'လေယာဉ်'],
+    optionsMy: ['နာရီ', 'လှည်း', 'စက်ဘီး', 'လေယာဉ်'],
+    optionsEn: ['Clock', 'Cart', 'Bicycle', 'Airplane'],
+    answerIndex: 0,
+  },
+  {
+    id: 'rid_4',
+    question: 'အမေက ဖြူဖြူ၊ သားက မည်းမည်း၊ သားက အမေ့ကို ပြန်ကိုက်သည် ဆိုသည်မှာ အဘယ်နည်း။',
+    questionMy: 'အမေက ဖြူဖြူ၊ သားက မည်းမည်း၊ သားက အမေ့ကို ပြန်ကိုက်သည် ဆိုသည်မှာ အဘယ်နည်း။',
+    questionEn: 'White mother, black son, the son bites the mother back. What is it?',
+    options: ['မီးခြစ်ဆံ', 'ကျီးကန်း', 'မီးသွေး', 'ဖယောင်းတိုင်'],
+    optionsMy: ['မီးခြစ်ဆံ', 'ကျီးကန်း', 'မီးသွေး', 'ဖယောင်းတိုင်'],
+    optionsEn: ['Matchstick', 'Crow', 'Charcoal', 'Candle'],
+    answerIndex: 0,
+  },
+  {
+    id: 'rid_5',
+    question: 'အမြီးတိုတို နှာခေါင်းရှည်၊ ရေထဲမှာ နေသည် ဆိုသည်မှာ အဘယ်နည်း။',
+    questionMy: 'အမြီးတိုတို နှာခေါင်းရှည်၊ ရေထဲမှာ နေသည် ဆိုသည်မှာ အဘယ်နည်း။',
+    questionEn: 'Short tail, long nose, lives in the water. What is it?',
+    options: ['ကရားအိုး', 'ဆင်', 'ငါးရှဉ့်', 'မိကျောင်း'],
+    optionsMy: ['ကရားအိုး', 'ဆင်', 'ငါးရှဉ့်', 'မိကျောင်း'],
+    optionsEn: ['Kettle', 'Elephant', 'Eel', 'Crocodile'],
+    answerIndex: 0,
+  },
 ];
 
-function checkTTTResult(board: Array<string | null>): string | 'DRAW' | null {
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  for (const [a, b, c] of lines) {
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a];
-  }
-  return board.every((cell) => cell !== null) ? 'DRAW' : null;
-}
+export function readServerlessStore() {
+  const defaultStore = {
+    users: {
+      admin_yanlinnaung: {
+        id: 'admin_yanlinnaung',
+        username: 'yanlinnaung',
+        displayName: 'Yan Linn Aung',
+        gameId: '163104',
+        role: 'admin',
+        isAdmin: true,
+        xp: 3000,
+        rank: 'Legend',
+        wins: 45,
+        losses: 2,
+        draws: 1,
+        frameId: 'legend',
+        status: 'active',
+        avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=0A0D14&bold=true',
+        friends: [],
+        blocked: [],
+        createdAt: new Date().toISOString(),
+      },
+    } as Record<string, any>,
+    tournaments: [] as any[],
+    rooms: [] as any[],
+    riddles: [...DEFAULT_SAKAR_RIDDLES],
+    reports: [] as any[],
+    warnings: [] as any[],
+    announcements: [] as any[],
+    auditLogs: [
+      {
+        id: 'log_1',
+        action: 'SYSTEM_READY',
+        actor: 'yanlinnaung',
+        detail: 'Vanguard Arena Serverless Core Active',
+        createdAt: new Date().toISOString(),
+      },
+    ],
+    landingContent: DEFAULT_LANDING_CONTENT,
+    featureLocks: {
+      connect4: false,
+      tictactoe: false,
+      rps: false,
+      sakarhtar: false,
+      matchmaking: false,
+      customRooms: false,
+      tournaments: false,
+      chat: false,
+      dms: false,
+    },
+    matchmakingSettings: {
+      maxWaitSec: 30,
+      xpRange: 400,
+      botFallbackSec: 15,
+      defaultTurnTime: 20,
+    },
+  };
 
-function checkConnect4Result(grid: Array<Array<string | null>>): string | 'DRAW' | null {
-  for (let r = 0; r < 6; r++) {
-    for (let c = 0; c < 7; c++) {
-      const v = grid[r]?.[c];
-      if (!v) continue;
-      if (c <= 3 && v === grid[r][c + 1] && v === grid[r][c + 2] && v === grid[r][c + 3]) return v;
-      if (r <= 2 && v === grid[r + 1][c] && v === grid[r + 2][c] && v === grid[r + 3][c]) return v;
-      if (r <= 2 && c <= 3 && v === grid[r + 1][c + 1] && v === grid[r + 2][c + 2] && v === grid[r + 3][c + 3]) return v;
-      if (r <= 2 && c >= 3 && v === grid[r + 1][c - 1] && v === grid[r + 2][c - 2] && v === grid[r + 3][c - 3]) return v;
+  try {
+    const raw = localStorage.getItem(LOCAL_STATE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        ...defaultStore,
+        ...parsed,
+        riddles: parsed.riddles?.length ? parsed.riddles : defaultStore.riddles,
+        featureLocks: { ...defaultStore.featureLocks, ...(parsed.featureLocks || {}) },
+        matchmakingSettings: { ...defaultStore.matchmakingSettings, ...(parsed.matchmakingSettings || {}) },
+      };
     }
-  }
-  const hasEmpty = grid.some((row) => row.some((cell) => cell === null));
-  return hasEmpty ? null : 'DRAW';
+  } catch {}
+  return defaultStore;
 }
 
-export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
-  const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
-  const [pingMs, setPingMs] = useState<number>(22);
-  const [landingContent, setLandingContent] = useState<LandingContent>(DEFAULT_LANDING_CONTENT);
-  const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
-  const [frames] = useState<any[]>(DEFAULT_FRAMES);
-  const [featureLocks, setFeatureLocks] = useState<Record<string, boolean>>({});
-  const [matchmakingSettings, setMatchmakingSettings] = useState<any>({ maxWaitSec: 30, xpRange: 400 });
-  const [onlinePlayers, setOnlinePlayers] = useState<UserProfile[]>([]);
-  const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
-  const [tournaments, setTournaments] = useState<any[]>([]);
-  const [openRooms, setOpenRooms] = useState<any[]>([]);
-  const [activeMatch, setActiveMatch] = useState<any | null>(null);
-  const [currentRoom, setCurrentRoom] = useState<any | null>(null);
-  const [matchChat, setMatchChat] = useState<any[]>([]);
-  const [roomChat, setRoomChat] = useState<any[]>([]);
-  const [queuedGame, setQueuedGame] = useState<GameType | null>(null);
-  const [queueStatus, setQueueStatus] = useState<any | null>(null);
-  const [sakarQuickCount, setSakarQuickCount] = useState<number>(1);
-  const [pendingChallenge, setPendingChallenge] = useState<any | null>(null);
-  const [pendingWarnings, setPendingWarnings] = useState<{ id: string; reason: string }[]>([]);
-  const [socialRefreshTick, setSocialRefreshTick] = useState<number>(0);
-  const [incomingDMs] = useState<any[]>([]);
-  const [toasts, setToasts] = useState<{ id: string; level: string; message: string }[]>([]);
-  const queueTimerRef = useRef<number | null>(null);
+export function writeServerlessStore(store: any) {
+  try {
+    localStorage.setItem(LOCAL_STATE_KEY, JSON.stringify(store));
+  } catch {}
+}
 
-  const pushToast = useCallback((level: string, message: string) => {
-    const id = `toast_${Date.now()}_${Math.random()}`;
-    setToasts((prev) => [...prev, { id, level, message }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
-  }, []);
+export function buildPlayableMatch(user: any, opts: {
+  gameType?: string;
+  mode?: string;
+  difficulty?: string;
+  bestOf?: 3 | 5;
+  turnTimeLimit?: number;
+}) {
+  const store = readServerlessStore();
+  const gameType = opts.gameType || 'tictactoe';
+  const difficulty = opts.difficulty || 'medium';
+  const bestOf = opts.bestOf || 3;
+  const turnTimeLimit = opts.turnTimeLimit || 20;
 
-  const dismissWarningLocal = useCallback((warningId: string) => {
-    setPendingWarnings((prev) => prev.filter((w) => w.id !== warningId));
-  }, []);
+  const botPlayer = {
+    id: 'aegis_bot',
+    username: 'aegis_bot',
+    displayName: `Aegis Bot (${difficulty.toUpperCase()})`,
+    gameId: 'BOT-001',
+    xp: user?.xp || 1000,
+    rank: 'Gold',
+    frameId: 'gold',
+    avatarUrl: 'https://ui-avatars.com/api/?name=Aegis+Bot&background=6366F1&color=fff',
+    isBot: true,
+  };
 
-  const setAdminSocketMode = useCallback((_mode: 'admin' | 'lobby') => {}, []);
+  const tttBoard = Array(9).fill(null);
+  const c4Board = Array.from({ length: 6 }, () => Array(7).fill(null));
+  const riddles = store.riddles?.length ? store.riddles : DEFAULT_SAKAR_RIDDLES;
+  const deadline = new Date(Date.now() + turnTimeLimit * 1000).toISOString();
 
-  const getCurrentPlayerFromStore = useCallback(() => {
-    const store = readServerlessStore();
-    const adminFallback = store.users.admin_yanlinnaung || Object.values(store.users)[0];
-    if (!token || token === 'admin-token') return adminFallback;
-    return Object.values(store.users).find((u: any) => token.includes(u.id)) || adminFallback;
-  }, [token]);
-
-  const applyXpDeltaToPlayer = useCallback(
-    async (outcome: 'win' | 'loss' | 'draw') => {
-      const store = readServerlessStore();
-      const player = getCurrentPlayerFromStore();
-      if (!player) return;
-
-      const delta = outcome === 'win' ? 75 : outcome === 'draw' ? 25 : -20;
-      const nextXp = Math.max(0, (player.xp || 1000) + delta);
-      const nextRank =
-        nextXp >= 2500
-          ? 'Legend'
-          : nextXp >= 1800
-          ? 'Diamond'
-          : nextXp >= 1300
-          ? 'Gold'
-          : nextXp >= 1000
-          ? 'Silver'
-          : 'Bronze';
-
-      player.xp = nextXp;
-      player.rank = nextRank;
-      player.wins = (player.wins || 0) + (outcome === 'win' ? 1 : 0);
-      player.losses = (player.losses || 0) + (outcome === 'loss' ? 1 : 0);
-      player.draws = (player.draws || 0) + (outcome === 'draw' ? 1 : 0);
-
-      store.users[player.id] = player;
-      writeServerlessStore(store);
-      onUserUpdate({ ...player });
-
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'users', player.id), player, { merge: true }).catch(() => {});
-      }
-      pushToast(
-        outcome === 'win' ? 'success' : 'info',
-        outcome === 'win'
-          ? 'Victory! +75 XP earned'
-          : outcome === 'draw'
-          ? 'Draw! +25 XP earned'
-          : 'Defeat! -20 XP'
-      );
-    },
-    [getCurrentPlayerFromStore, onUserUpdate, pushToast]
-  );
-
-  useEffect(() => {
-    if (!token) return;
-    setConnectionState('connected');
-    const timer = setInterval(() => {
-      setPingMs(Math.floor(18 + Math.random() * 14));
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [token]);
-
-  useEffect(() => {
-    if (!token || !isFirebaseConfigured || !db) return;
-
-    const qUsers = query(collection(db, 'users'), orderBy('xp', 'desc'), limit(50));
-    const unsubUsers = onSnapshot(qUsers, (snap) => {
-      const list: UserProfile[] = [];
-      snap.forEach((d) => list.push(d.data() as UserProfile));
-      setLeaderboard(list);
-      setOnlinePlayers(list);
-
-      const uid = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '');
-      const me = list.find((u) => u.id === uid) as any;
-      if (me) {
-        if (me.status === 'banned' || me.status === 'suspended') {
-          onKicked('Your account has been suspended or banned by an Administrator.');
-        } else {
-          onUserUpdate(me);
-        }
-      }
-    });
-
-    const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => list.push(d.data()));
-      setTournaments(list);
-    });
-
-    const unsubRooms = onSnapshot(collection(db, 'rooms'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => {
-        const data = d.data();
-        if (data.status === 'waiting') list.push(data);
-      });
-      setOpenRooms(list);
-    });
-
-    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
-      if (snap.exists()) setLandingContent(snap.data() as LandingContent);
-    });
-
-    return () => {
-      unsubUsers();
-      unsubTourneys();
-      unsubRooms();
-      unsubLanding();
-    };
-  }, [token, onUserUpdate, onKicked]);
-
-  // Matchmaking Queue -> Auto-pairs with Aegis Bot in 3 seconds so user can always play
-  const joinQueue = useCallback(
-    (gameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
-      setQueuedGame(gameType);
-      setQueueStatus({ gameType, startedAt: Date.now(), elapsedSec: 0 });
-      if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-
-      queueTimerRef.current = window.setTimeout(() => {
-        const player = getCurrentPlayerFromStore();
-        const match = buildPlayableMatch(player, {
-          gameType,
-          mode: 'matchmaking',
-          difficulty: 'medium',
-          bestOf,
-          turnTimeLimit,
-        });
-        setQueuedGame(null);
-        setQueueStatus(null);
-        setMatchChat([]);
-        setActiveMatch(match);
-        pushToast('success', 'Opponent found! Match starting...');
-      }, 2500);
-    },
-    [getCurrentPlayerFromStore, pushToast]
-  );
-
-  const leaveQueue = useCallback(() => {
-    if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-    setQueuedGame(null);
-    setQueueStatus(null);
-  }, []);
-
-  const joinSakarQuick = useCallback(() => {
-    setSakarQuickCount((c) => Math.min(8, c + 1));
-    setQueueStatus({ gameType: 'sakarhtar', startedAt: Date.now() });
-    if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-    queueTimerRef.current = window.setTimeout(() => {
-      const player = getCurrentPlayerFromStore();
-      setQueueStatus(null);
-      setQueuedGame(null);
-      setActiveMatch(buildPlayableMatch(player, { gameType: 'sakarhtar', mode: 'matchmaking' }));
-    }, 2500);
-  }, [getCurrentPlayerFromStore]);
-
-  const startSakarQuickNow = useCallback(() => {
-    if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-    const player = getCurrentPlayerFromStore();
-    setQueueStatus(null);
-    setQueuedGame(null);
-    setActiveMatch(buildPlayableMatch(player, { gameType: 'sakarhtar', mode: 'matchmaking' }));
-  }, [getCurrentPlayerFromStore]);
-
-  // Full Local & Bot Gameplay Engine for All 4 Games
-  const sendMove = useCallback(
-    async (move: any) => {
-      setActiveMatch((prev: any) => {
-        if (!prev || prev.status === 'finished') return prev;
-        const p1 = prev.players?.[0] || prev.player1;
-        const p2 = prev.players?.[1] || prev.player2;
-        const next = JSON.parse(JSON.stringify(prev));
-
-        // 1. TIC-TAC-TOE
-        if (next.gameType === 'tictactoe') {
-          const board: Array<string | null> = [...(next.state?.board || next.board || Array(9).fill(null))];
-          const idx = typeof move === 'number' ? move : (move?.index ?? move?.cell ?? move?.position ?? -1);
-          if (idx < 0 || idx > 8 || board[idx] !== null) return prev;
-
-          board[idx] = p1.id;
-          let res = checkTTTResult(board);
-
-          if (!res) {
-            const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
-            if (empty.length > 0) {
-              const botIdx = empty[Math.floor(Math.random() * empty.length)];
-              board[botIdx] = p2.id;
-              res = checkTTTResult(board);
-            }
-          }
-
-          next.board = board;
-          next.state.board = board;
-          next.state.cells = board;
-
-          if (res) {
-            next.status = 'finished';
-            next.state.status = 'finished';
-            if (res === 'DRAW') {
-              next.isDraw = true;
-              next.state.isDraw = true;
-              applyXpDeltaToPlayer('draw');
-            } else {
-              next.winnerId = res;
-              next.state.winnerId = res;
-              applyXpDeltaToPlayer(res === p1.id ? 'win' : 'loss');
-            }
-          }
-          return next;
-        }
-
-        // 2. CONNECT 4
-        if (next.gameType === 'connect4') {
-          const grid: Array<Array<string | null>> = (next.state?.board || next.board).map((r: any) => [...r]);
-          const col = typeof move === 'number' ? move : (move?.col ?? move?.column ?? -1);
-          if (col < 0 || col > 6) return prev;
-
-          let placed = false;
-          for (let r = 5; r >= 0; r--) {
-            if (grid[r][col] === null) {
-              grid[r][col] = p1.id;
-              placed = true;
-              break;
-            }
-          }
-          if (!placed) return prev;
-
-          let res = checkConnect4Result(grid);
-          if (!res) {
-            const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
-            if (validCols.length > 0) {
-              const botCol = validCols[Math.floor(Math.random() * validCols.length)];
-              for (let r = 5; r >= 0; r--) {
-                if (grid[r][botCol] === null) {
-                  grid[r][botCol] = p2.id;
-                  break;
-                }
-              }
-              res = checkConnect4Result(grid);
-            }
-          }
-
-          next.board = grid;
-          next.state.board = grid;
-          next.state.grid = grid;
-
-          if (res) {
-            next.status = 'finished';
-            next.state.status = 'finished';
-            if (res === 'DRAW') {
-              next.isDraw = true;
-              next.state.isDraw = true;
-              applyXpDeltaToPlayer('draw');
-            } else {
-              next.winnerId = res;
-              next.state.winnerId = res;
-              applyXpDeltaToPlayer(res === p1.id ? 'win' : 'loss');
-            }
-          }
-          return next;
-        }
-
-        // 3. ROCK, PAPER, SCISSORS (Best of 3 / 5)
-        if (next.gameType === 'rps') {
-          const p1Choice = String(typeof move === 'string' ? move : (move?.choice ?? move?.move ?? 'rock')).toLowerCase();
-          const options = ['rock', 'paper', 'scissors'];
-          const p2Choice = options[Math.floor(Math.random() * 3)];
-
-          let roundWinner: string | null = null;
-          if (p1Choice !== p2Choice) {
-            const p1Beats =
-              (p1Choice === 'rock' && p2Choice === 'scissors') ||
-              (p1Choice === 'paper' && p2Choice === 'rock') ||
-              (p1Choice === 'scissors' && p2Choice === 'paper');
-            roundWinner = p1Beats ? p1.id : p2.id;
-          }
-
-          next.scores = next.scores || { [p1.id]: 0, [p2.id]: 0 };
-          if (roundWinner) {
-            next.scores[roundWinner] = (next.scores[roundWinner] || 0) + 1;
-          }
-          next.state.scores = { ...next.scores };
-          next.state.choices = { [p1.id]: p1Choice, [p2.id]: p2Choice };
-          next.state.lastRound = { [p1.id]: p1Choice, [p2.id]: p2Choice, winnerId: roundWinner };
-          next.round = (next.round || 1) + 1;
-          next.state.round = next.round;
-
-          const targetWins = Math.ceil((next.bestOf || 3) / 2);
-          if (next.scores[p1.id] >= targetWins || next.scores[p2.id] >= targetWins) {
-            const p1Won = next.scores[p1.id] >= targetWins;
-            next.status = 'finished';
-            next.winnerId = p1Won ? p1.id : p2.id;
-            next.state.winnerId = next.winnerId;
-            applyXpDeltaToPlayer(p1Won ? 'win' : 'loss');
-          }
-          return next;
-        }
-
-        // 4. SAKAR-HTAR (Myanmar Riddles)
-        if (next.gameType === 'sakarhtar') {
-          const riddles = next.state?.riddles || DEFAULT_SAKAR_RIDDLES;
-          const idx = next.state?.currentIndex || 0;
-          const current = riddles[idx] || riddles[0];
-          const chosenIdx = typeof move === 'number' ? move : (move?.answerIndex ?? move?.optionIndex ?? -1);
-
-          next.scores = next.scores || { [p1.id]: 0, [p2.id]: 0 };
-          if (chosenIdx === current.answerIndex) {
-            next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
-          }
-          if (Math.random() > 0.45) {
-            next.scores[p2.id] = (next.scores[p2.id] || 0) + 100;
-          }
-
-          const nextIdx = idx + 1;
-          next.state.scores = { ...next.scores };
-          next.state.currentIndex = nextIdx;
-          next.state.currentRiddle = riddles[nextIdx] || riddles[0];
-
-          if (nextIdx >= riddles.length) {
-            next.status = 'finished';
-            if (next.scores[p1.id] === next.scores[p2.id]) {
-              next.isDraw = true;
-              applyXpDeltaToPlayer('draw');
-            } else {
-              const p1Won = next.scores[p1.id] > next.scores[p2.id];
-              next.winnerId = p1Won ? p1.id : p2.id;
-              applyXpDeltaToPlayer(p1Won ? 'win' : 'loss');
-            }
-          }
-          return next;
-        }
-
-        return next;
-      });
-    },
-    [applyXpDeltaToPlayer]
-  );
-
-  const forfeitMatch = useCallback(() => {
-    setActiveMatch((prev: any) => {
-      if (!prev) return null;
-      const p2 = prev.players?.[1] || prev.player2;
-      applyXpDeltaToPlayer('loss');
-      return { ...prev, status: 'finished', winnerId: p2?.id || 'aegis_bot' };
-    });
-  }, [applyXpDeltaToPlayer]);
-
-  const sendMatchChat = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setMatchChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
-  }, []);
-
-  const sendRoomChat = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setRoomChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
-  }, []);
-
-  const sendChallenge = useCallback(
-    (_targetUserId: string, gameType: GameType) => {
-      const player = getCurrentPlayerFromStore();
-      setActiveMatch(buildPlayableMatch(player, { gameType, mode: 'bot', difficulty: 'hard' }));
-      setSocialRefreshTick((n) => n + 1);
-    },
-    [getCurrentPlayerFromStore]
-  );
-
-  const respondChallenge = useCallback((_challengeId: string, accept: boolean) => {
-    setPendingChallenge(null);
-    if (accept) pushToast('success', 'Challenge accepted!');
-  }, [pushToast]);
+  const statePayload = {
+    board: gameType === 'tictactoe' ? tttBoard : gameType === 'connect4' ? c4Board : null,
+    grid: gameType === 'connect4' ? c4Board : tttBoard,
+    cells: tttBoard,
+    turnUserId: user.id,
+    turnDeadline: deadline,
+    round: 1,
+    bestOf,
+    choices: {} as Record<string, string | null>,
+    lastRound: null as any,
+    riddles,
+    currentIndex: 0,
+    currentRiddle: riddles[0],
+    scores: { [user.id]: 0, aegis_bot: 0 },
+    answers: {} as Record<string, number>,
+    winnerId: null as string | null,
+    isDraw: false,
+  };
 
   return {
-    connectionState,
-    pingMs,
-    landingContent,
-    setLandingContent,
-    announcement,
-    setAnnouncement,
-    frames,
-    featureLocks,
-    matchmakingSettings,
-    onlinePlayers,
-    leaderboard,
-    tournaments,
-    openRooms,
-    activeMatch,
-    setActiveMatch,
-    currentRoom,
-    setCurrentRoom,
-    matchChat,
-    roomChat,
-    setRoomChat,
-    queuedGame,
-    queueStatus,
-    sakarQuickCount,
-    pendingChallenge,
-    pendingWarnings,
-    socialRefreshTick,
-    incomingDMs,
-    toasts,
-    pushToast,
-    dismissWarningLocal,
-    setAdminSocketMode,
-    joinQueue,
-    leaveQueue,
-    joinSakarQuick,
-    startSakarQuickNow,
-    sendMove,
-    forfeitMatch,
-    sendMatchChat,
-    sendRoomChat,
-    sendChallenge,
-    respondChallenge,
+    id: `match_${Date.now()}`,
+    gameType,
+    mode: opts.mode || 'bot',
+    difficulty,
+    bestOf,
+    turnTimeLimit,
+    turnDeadline: deadline,
+    status: 'active',
+    players: [user, botPlayer],
+    player1: user,
+    player2: botPlayer,
+    turnUserId: user.id,
+    currentTurn: user.id,
+    scores: { [user.id]: 0, aegis_bot: 0 },
+    round: 1,
+    board: statePayload.board,
+    state: statePayload,
+    winnerId: null,
+    isDraw: false,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function jsonResponse(data: any, status = 200): Response {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
+  (window as any).__vanguardApiPatched = true;
+  const nativeFetch = window.fetch.bind(window);
+
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const urlStr = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+    const urlObj = new URL(urlStr, window.location.origin);
+
+    if (!urlObj.pathname.startsWith('/api/')) {
+      return nativeFetch(input, init);
+    }
+
+    const path = urlObj.pathname;
+    const method = (init?.method || 'GET').toUpperCase();
+    const authHeader = (init?.headers as Record<string, string>)?.Authorization || '';
+    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let body: any = {};
+    if (init?.body && typeof init.body === 'string') {
+      try {
+        body = JSON.parse(init.body);
+      } catch {}
+    }
+
+    const store = readServerlessStore();
+    const adminFallback = store.users.admin_yanlinnaung || Object.values(store.users)[0];
+    const currentUser =
+      token === 'admin-token'
+        ? adminFallback
+        : Object.values(store.users).find((u: any) => token.includes(u.id)) || adminFallback;
+
+    if (path === '/api/bootstrap') {
+      return jsonResponse({
+        onlineCount: Math.max(1, Object.keys(store.users).length),
+        landingContent: store.landingContent || DEFAULT_LANDING_CONTENT,
+      });
+    }
+
+    if (path === '/api/auth/me') {
+      if (!token) return jsonResponse({ error: 'Unauthorized' }, 401);
+      if (token === 'admin-token') return jsonResponse({ user: adminFallback });
+      if (isFirebaseConfigured && db) {
+        const uid = token.replace(/^token_/, '');
+        const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
+        if (snap && snap.exists()) return jsonResponse({ user: snap.data() });
+      }
+      return jsonResponse({ user: currentUser });
+    }
+
+    if (path === '/api/auth/logout') {
+      return jsonResponse({ ok: true });
+    }
+
+    if (path === '/api/matches/bot' && method === 'POST') {
+      return jsonResponse({ match: buildPlayableMatch(currentUser, body) });
+    }
+
+    if (path === '/api/sakar/solo' && method === 'POST') {
+      return jsonResponse({
+        match: buildPlayableMatch(currentUser, { gameType: 'sakarhtar', mode: 'solo', difficulty: 'medium' }),
+      });
+    }
+
+    if (path === '/api/sakar/rooms' && method === 'POST') {
+      const code = 'MR-' + Math.floor(1000 + Math.random() * 9000);
+      const room = {
+        id: `room_${Date.now()}`,
+        code,
+        title: body.title || `${currentUser.displayName}'s Room`,
+        hostId: currentUser.id,
+        maxPlayers: Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)),
+        players: [currentUser],
+        status: 'waiting',
+      };
+      store.rooms.push(room);
+      writeServerlessStore(store);
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'rooms', room.id), room).catch(() => {});
+      }
+      return jsonResponse({ room });
+    }
+
+    if (path === '/api/sakar/rooms/join' && method === 'POST') {
+      const codeOrId = String(body.roomId || '').trim().toUpperCase();
+      let room = store.rooms.find(
+        (r: any) => r.id.toUpperCase() === codeOrId || r.code.toUpperCase() === codeOrId
+      );
+      if (!room && isFirebaseConfigured && db) {
+        const snap = await getDocs(collection(db, 'rooms')).catch(() => null);
+        snap?.forEach((d) => {
+          const data = d.data();
+          if (data.id?.toUpperCase() === codeOrId || data.code?.toUpperCase() === codeOrId) {
+            room = data as any;
+          }
+        });
+      }
+      if (!room) return jsonResponse({ error: 'Room not found.' }, 404);
+      if (!room.players.some((p: any) => p.id === currentUser.id)) {
+        room.players.push(currentUser);
+        writeServerlessStore(store);
+      }
+      return jsonResponse({ room });
+    }
+
+    if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/leave$/) && method === 'POST') {
+      const roomId = path.split('/')[4];
+      store.rooms = store.rooms.filter((r: any) => r.id !== roomId);
+      writeServerlessStore(store);
+      return jsonResponse({ ok: true });
+    }
+
+    if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/start$/) && method === 'POST') {
+      return jsonResponse({
+        match: buildPlayableMatch(currentUser, { gameType: 'sakarhtar', mode: 'custom' }),
+      });
+    }
+
+    if (path.match(/^\/api\/tournaments\/[^/]+\/join$/) && method === 'POST') {
+      return jsonResponse({ ok: true });
+    }
+
+    if (path.match(/^\/api\/tournaments\/[^/]+\/leave$/) && method === 'POST') {
+      return jsonResponse({ ok: true });
+    }
+
+    if (path === '/api/social/request' && method === 'POST') {
+      return jsonResponse({ ok: true });
+    }
+
+    if (path.startsWith('/api/social')) {
+      return jsonResponse({
+        friends: [],
+        incomingRequests: [],
+        outgoingRequests: [],
+        blocked: currentUser.blocked || [],
+        conversations: [],
+      });
+    }
+
+    if (path.startsWith('/api/users/')) {
+      const uid = path.split('/')[3];
+      return jsonResponse({ user: store.users[uid] || currentUser });
+    }
+
+    if (path.startsWith('/api/profile') && ['PATCH', 'POST', 'PUT'].includes(method)) {
+      Object.assign(currentUser, body);
+      writeServerlessStore(store);
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
+      }
+      return jsonResponse({ user: currentUser });
+    }
+
+    if (path.match(/^\/api\/warnings\/[^/]+\/ack$/) && method === 'POST') {
+      return jsonResponse({ ok: true });
+    }
+
+    // Admin Dashboard APIs (Every possible nested counter structure included)
+    if (path.startsWith('/api/admin')) {
+      let allUsers = Object.values(store.users);
+      if (isFirebaseConfigured && db) {
+        const snap = await getDocs(collection(db, 'users')).catch(() => null);
+        if (snap && !snap.empty) {
+          const fbUsers: any[] = [];
+          snap.forEach((d) => fbUsers.push(d.data()));
+          allUsers = fbUsers;
+        }
+      }
+
+      if ((path.includes('lock') || path.includes('config')) && ['PUT', 'POST', 'PATCH'].includes(method)) {
+        store.featureLocks = { ...store.featureLocks, ...(body.featureLocks || body) };
+        writeServerlessStore(store);
+        return jsonResponse({ ok: true, featureLocks: store.featureLocks });
+      }
+
+      if (path.includes('matchmaking') && ['PUT', 'POST', 'PATCH'].includes(method)) {
+        store.matchmakingSettings = { ...store.matchmakingSettings, ...body };
+        writeServerlessStore(store);
+        return jsonResponse({ ok: true, matchmakingSettings: store.matchmakingSettings });
+      }
+
+      if (path.includes('landing') && ['PUT', 'POST', 'PATCH'].includes(method)) {
+        store.landingContent = body;
+        writeServerlessStore(store);
+        if (isFirebaseConfigured && db) {
+          await setDoc(doc(db, 'system', 'landing'), body, { merge: true }).catch(() => {});
+        }
+        return jsonResponse({ ok: true, landingContent: body });
+      }
+
+      if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
+        const ann = { id: `ann_${Date.now()}`, ...body, createdAt: new Date().toISOString() };
+        store.announcements.unshift(ann);
+        writeServerlessStore(store);
+        return jsonResponse({ ok: true, announcement: ann });
+      }
+
+      if (path.includes('/users/') && ['POST', 'PATCH', 'PUT'].includes(method)) {
+        const parts = path.split('/');
+        const targetId = parts[4];
+        const action = parts[5] || body.action || '';
+        const updates: any = {};
+        if (action.includes('ban') && !action.includes('unban')) updates.status = 'banned';
+        else if (action.includes('unban') || action.includes('restore')) {
+          updates.status = 'active';
+          updates.suspendedUntil = null;
+        } else if (action.includes('suspend')) {
+          updates.status = 'suspended';
+          updates.suspendedUntil = new Date(Date.now() + 3600000).toISOString();
+        } else if (action.includes('warn')) {
+          updates.status = 'warned';
+          updates.warnMessage = body.reason || 'Official Warning';
+        } else if (typeof body.xp === 'number') {
+          updates.xp = body.xp;
+        }
+        if (store.users[targetId]) {
+          Object.assign(store.users[targetId], updates);
+          writeServerlessStore(store);
+        }
+        return jsonResponse({ ok: true });
+      }
+
+      if (path.includes('tournament') && method === 'POST') {
+        const newTourney = {
+          id: `tourney_${Date.now()}`,
+          title: body.title || 'Vanguard Knockout Cup',
+          gameType: body.gameType || 'rps',
+          bracketSize: body.bracketSize || 8,
+          prizeXp: body.prizeXp || 300,
+          status: 'open',
+          participants: [],
+          rounds: [],
+          createdAt: new Date().toISOString(),
+        };
+        store.tournaments.push(newTourney);
+        writeServerlessStore(store);
+        if (isFirebaseConfigured && db) {
+          await setDoc(doc(db, 'tournaments', newTourney.id), newTourney).catch(() => {});
+        }
+        return jsonResponse({ ok: true, tournament: newTourney });
+      }
+
+      if (path.includes('riddle')) {
+        if (method === 'POST') {
+          const riddle = { id: `rid_${Date.now()}`, ...body };
+          store.riddles.push(riddle);
+          writeServerlessStore(store);
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'riddles', riddle.id), riddle).catch(() => {});
+          }
+          return jsonResponse({ ok: true, riddle });
+        }
+        if (method === 'DELETE') {
+          const rid = path.split('/').pop() || '';
+          store.riddles = store.riddles.filter((r: any) => r.id !== rid);
+          writeServerlessStore(store);
+          if (isFirebaseConfigured && db) {
+            await deleteDoc(doc(db, 'riddles', rid)).catch(() => {});
+          }
+          return jsonResponse({ ok: true });
+        }
+      }
+
+      const fullCounters = {
+        totalUsers: allUsers.length,
+        onlineUsers: allUsers.length,
+        activeUsers: allUsers.length,
+        bannedUsers: allUsers.filter((u: any) => u.status === 'banned').length,
+        suspendedUsers: allUsers.filter((u: any) => u.status === 'suspended').length,
+        activeMatches: 0,
+        totalMatches: 48,
+        pendingReports: store.reports.length,
+        resolvedReports: 0,
+        totalReports: store.reports.length,
+        openTournaments: store.tournaments.length,
+        activeTournaments: store.tournaments.length,
+        totalRiddles: store.riddles.length,
+        openRooms: store.rooms.length,
+        uptimeSec: Math.floor(performance.now() / 1000),
+      };
+
+      return jsonResponse({
+        ok: true,
+        ...fullCounters,
+        stats: fullCounters,
+        overview: fullCounters,
+        summary: fullCounters,
+        counts: fullCounters,
+        metrics: fullCounters,
+        telemetry: fullCounters,
+        kpi: fullCounters,
+        kpis: fullCounters,
+        moderation: fullCounters,
+        reportStats: fullCounters,
+        health: fullCounters,
+        serverHealth: fullCounters,
+        dashboard: fullCounters,
+        users: allUsers,
+        reports: store.reports,
+        warnings: store.warnings,
+        announcements: store.announcements,
+        tournaments: store.tournaments,
+        riddles: store.riddles,
+        activeMatches: [],
+        matches: [],
+        auditLogs: store.auditLogs,
+        logs: store.auditLogs,
+        frames: [
+          { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
+          { id: 'silver', name: 'Silver Striker', minXp: 1000 },
+          { id: 'gold', name: 'Gold Champion', minXp: 1300 },
+          { id: 'diamond', name: 'Diamond Sovereign', minXp: 1800 },
+          { id: 'legend', name: 'Legend Mythic', minXp: 2500 },
+        ],
+        featureLocks: store.featureLocks,
+        matchmakingSettings: store.matchmakingSettings,
+        landingContent: store.landingContent,
+      });
+    }
+
+    return jsonResponse({ ok: true });
   };
 }
