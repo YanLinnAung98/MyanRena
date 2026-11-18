@@ -1,9 +1,12 @@
-import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getFirestore, Firestore } from 'firebase/firestore';
+import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
+import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
+import { getFirestore, type Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let auth: Auth = null as unknown as Auth;
+const googleAuthProvider = new GoogleAuthProvider();
 
 export const isFirebaseConfigured = Boolean(
   firebaseConfig &&
@@ -16,9 +19,10 @@ if (isFirebaseConfigured) {
   try {
     app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
     db = getFirestore(app);
+    auth = getAuth(app);
   } catch (error) {
-    console.warn('Firebase init fallback to local mode:', error);
+    console.warn('Firebase initialization warning:', error);
   }
 }
 
-export { app, db };
+export { app, db, auth, googleAuthProvider };
