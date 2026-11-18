@@ -11,7 +11,7 @@ const googleAuthProvider = new GoogleAuthProvider();
 export const isFirebaseConfigured = Boolean(
   firebaseConfig &&
   firebaseConfig.apiKey &&
-  !firebaseConfig.apiKey.includes('သင့်_') &&
+  !firebaseConfig.apiKey.includes('AIzaSyDVpL90m8SwxNbzg2OWwx2t-Mc4HkWNd3M') &&
   firebaseConfig.projectId
 );
 
