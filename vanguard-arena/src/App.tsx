@@ -38,10 +38,69 @@ import { SocialHub } from './components/SocialHub.tsx';
 import { ProfileView } from './components/ProfileView.tsx';
 import { PlayerProfileModal } from './components/PlayerProfileModal.tsx';
 
-// Strictly code-split isolated Admin Control Panel — never loaded for standard users
 const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
 );
+
+// Prevents black screen if AdminPanel encounters a runtime error
+class AdminErrorBoundary extends React.Component<
+  { children: React.ReactNode; onSwitchToLobby: () => void; onLogout: () => void },
+  { hasError: boolean; errorMessage: string }
+> {
+  constructor(props: { children: React.ReactNode; onSwitchToLobby: () => void; onLogout: () => void }) {
+    super(props);
+    this.state = { hasError: false, errorMessage: '' };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, errorMessage: error?.message || 'Admin Panel Render Error' };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-screen bg-[#0A0D14] text-slate-100 flex items-center justify-center p-4">
+          <div className="max-w-md w-full rounded-2xl bg-[#121826] border border-amber-500/40 p-6 space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-amber-400">
+              <ShieldAlert className="w-6 h-6 shrink-0" />
+              <h2 className="text-lg font-display font-bold text-white">Master Admin Recovery</h2>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Admin Dashboard ဖွင့်ရာတွင် ယာယီ Error တစ်ခု တွေ့ရှိပါသည် -
+            </p>
+            <div className="p-3 rounded-xl bg-[#0A0D14] border border-rose-500/30 text-xs font-mono text-rose-300 break-words">
+              {this.state.errorMessage}
+            </div>
+            <div className="grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                onClick={this.props.onSwitchToLobby}
+                className="min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs cursor-pointer"
+              >
+                🎮 Game Lobby သို့သွားမည်
+              </button>
+              <button
+                type="button"
+                onClick={() => this.setState({ hasError: false, errorMessage: '' })}
+                className="min-h-[44px] rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs cursor-pointer"
+              >
+                🔄 ပြန်ကြိုးစားမည်
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={this.props.onLogout}
+              className="w-full py-2 text-xs text-slate-400 hover:text-rose-300 cursor-pointer"
+            >
+              Sign Out
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
 
@@ -379,26 +438,31 @@ export default function App() {
   if (user.role === 'admin' && adminViewMode === 'admin') {
     return (
       <div className={rootClass}>
-        <Suspense
-          fallback={
-            <div className="min-h-screen bg-[#0A0D14] flex items-center justify-center text-sm text-slate-400">
-              {t.common.loading}
-            </div>
-          }
+        <AdminErrorBoundary
+          onSwitchToLobby={() => setAdminViewMode('lobby')}
+          onLogout={handleLogout}
         >
-          <AdminPanel
-            token={token}
-            adminUser={user}
-            livePingMs={socket.pingMs}
-            lang={lang}
-            onChangeLang={handleChangeLang}
-            onSwitchToLobby={() => setAdminViewMode('lobby')}
-            landingContent={socket.landingContent}
-            onLandingUpdated={socket.setLandingContent}
-            onLogout={handleLogout}
-            onNotify={socket.pushToast}
-          />
-        </Suspense>
+          <Suspense
+            fallback={
+              <div className="min-h-screen bg-[#0A0D14] flex items-center justify-center text-sm text-slate-400">
+                {t.common.loading}
+              </div>
+            }
+          >
+            <AdminPanel
+              token={token}
+              adminUser={user}
+              livePingMs={socket.pingMs}
+              lang={lang}
+              onChangeLang={handleChangeLang}
+              onSwitchToLobby={() => setAdminViewMode('lobby')}
+              landingContent={socket.landingContent}
+              onLandingUpdated={socket.setLandingContent}
+              onLogout={handleLogout}
+              onNotify={socket.pushToast}
+            />
+          </Suspense>
+        </AdminErrorBoundary>
         <ToastStack toasts={socket.toasts} />
       </div>
     );
