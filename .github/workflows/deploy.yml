@@ -2,7 +2,7 @@ name: Build and Deploy MyanRena
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "master"]
   workflow_dispatch:
 
 permissions:
@@ -26,16 +26,30 @@ jobs:
         with:
           node-version: 20
 
+      - name: Locate package.json directory
+        id: find_dir
+        run: |
+          PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+          if [ -z "$PKG_PATH" ]; then
+            echo "ERROR: package.json ဖိုင်ကို Repository ထဲတွင် ရှာမတွေ့ပါ။"
+            exit 1
+          fi
+          APP_DIR=$(dirname "$PKG_PATH")
+          echo "Found project in: $APP_DIR"
+          echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
+
       - name: Install dependencies
+        working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npm install --legacy-peer-deps
 
-      - name: Build project
-        run: npm run build
+      - name: Build production bundle
+        working-directory: ${{ steps.find_dir.outputs.app_dir }}
+        run: npx vite build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ./dist
+          path: ${{ steps.find_dir.outputs.app_dir }}/dist
 
   deploy:
     environment:
