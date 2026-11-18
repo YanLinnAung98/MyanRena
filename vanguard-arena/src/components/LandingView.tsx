@@ -1,4 +1,3 @@
-import { supabase } from '../utils/supabaseClient'; // (ဖိုင်လမ်းကြောင်း မှန်/မမှန် စစ်ဆေးပါ)
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -17,9 +16,10 @@ import {
   X,
 } from 'lucide-react';
 import { sendPasswordResetEmail, signInWithPopup } from 'firebase/auth';
+import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { auth, googleAuthProvider } from '../lib/firebase.ts';
+import { auth, db, googleAuthProvider, isFirebaseConfigured } from '../lib/firebase.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { LanguageSwitcher } from './LanguageSwitcher.tsx';
@@ -76,67 +76,166 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setMuted(next);
   };
 
+  const buildCompleteProfile = (base: Partial<UserProfile> & { id: string; username: string }): UserProfile => {
+    return {
+      id: base.id,
+      username: base.username,
+      displayName: base.displayName || base.username,
+      gameId: base.gameId || `MR-${Math.floor(100000 + Math.random() * 900000)}`,
+      avatarUrl:
+        base.avatarUrl ||
+        `https://ui-avatars.com/api/?name=${encodeURIComponent(base.displayName || base.username)}&background=1E293B&color=F59E0B`,
+      avatarFrame: base.avatarFrame || 'bronze',
+      xp: typeof base.xp === 'number' ? base.xp : 1000,
+      rank: base.rank || 'Silver',
+      wins: base.wins || 0,
+      losses: base.losses || 0,
+      draws: base.draws || 0,
+      role: base.role || 'player',
+      isAdmin: Boolean(base.isAdmin),
+      friends: base.friends || [],
+      blocked: base.blocked || [],
+      ...base,
+    } as UserProfile;
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    
+
+    const cleanUser = username.trim().toLowerCase();
+    const cleanPass = password.trim();
+
     try {
+      if (!cleanUser || !cleanPass) {
+        throw new Error(lang === 'my' ? 'အကောင့်အမည်နှင့် စကားဝှက် ထည့်သွင်းပါ။' : 'Please enter username and password.');
+      }
+
       if (authMode === 'signin') {
-        // Admin Account ဟုတ်/မဟုတ် စစ်ဆေးခြင်း
-    // LandingView.tsx ထဲရှိ Admin ဝင်သည့်အပိုင်းအား အောက်ပါအတိုင်း ပြင်ပါ
-if (username.trim() === 'yanlinnaung' && password === '163104') {
-  console.log("Admin Logged In");
-  soundEngine.playNotify();
-  onAuthenticated('admin-token', { 
-    id: 'admin', 
-    username: 'yanlinnaung', 
-    displayName: 'Yan Linn Aung', 
-    gameId: '163104',
-    role: 'admin',          // 👈 Admin Panel ပေါ်လာစေရန်
-    isAdmin: true,          // 👈 Admin Permission ရစေရန်
-    avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=fff' // 👈 Profile ပုံ ယာယီပေါ်စေရန်
-  } as any, rememberMe);
-}else {
-          // သာမန် User Login ဝင်ခြင်း
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: `${username.trim()}@myanrena.com`,
-            password: password,
+        // 1. Stealth Admin Login (yanlinnaung / 163104)
+        if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
+          const adminProfile = buildCompleteProfile({
+            id: 'admin_yanlinnaung',
+            username: 'yanlinnaung',
+            displayName: 'Yan Linn Aung',
+            gameId: '163104',
+            role: 'admin',
+            isAdmin: true,
+            xp: 3000,
+            rank: 'Legend',
+            avatarFrame: 'legend',
+            avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=0A0D14&bold=true',
           });
-          if (error) throw error;
-          
-          soundEngine.playNotify();
-          // Login အောင်မြင်လျှင် ဂိမ်းဘက်သို့ ညွှန်းပေးခြင်း
-          if (data.user) {
-            onAuthenticated(data.session?.access_token || 'token', { 
-              id: data.user.id, 
-              username: username.trim(), 
-              displayName: username.trim(), 
-              gameId: data.user.id.substring(0,6) 
-            } as UserProfile, rememberMe);
+
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true });
           }
+
+          soundEngine.playNotify();
+          onAuthenticated('admin-token', adminProfile, rememberMe);
+          return;
+        }
+
+        // 2. Player Sign In via Firebase Firestore (with LocalStorage fallback)
+        if (isFirebaseConfigured && db) {
+          const userRef = doc(db, 'users', `player_${cleanUser}`);
+          const snap = await getDoc(userRef);
+
+          if (!snap.exists()) {
+            throw new Error(
+              lang === 'my'
+                ? 'ဤအကောင့်အမည် မရှိသေးပါ။ အပေါ်ရှိ Sign Up ကို နှိပ်ပြီး အကောင့်သစ်ဖွင့်ပါ။'
+                : 'Account not found. Please switch to Sign Up to create an account.'
+            );
+          }
+
+          const stored = snap.data() as UserProfile & { password?: string; status?: string };
+          if (stored.password && stored.password !== cleanPass) {
+            throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
+          }
+          if (stored.status === 'banned' || stored.status === 'suspended') {
+            throw new Error(
+              lang === 'my'
+                ? 'သင့်အကောင့်ကို Admin မှ ပိတ်သိမ်းထားပါသည်။'
+                : 'Your account has been suspended or banned.'
+            );
+          }
+
+          const completeUser = buildCompleteProfile(stored);
+          soundEngine.playNotify();
+          onAuthenticated(`token_${completeUser.id}`, completeUser, rememberMe);
+        } else {
+          // Local Fallback when Firebase Config is not yet set
+          const localRaw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+          if (!localRaw) {
+            throw new Error(
+              lang === 'my'
+                ? 'အကောင့် မတွေ့ပါ။ Sign Up ဖြင့် အကောင့်အသစ် ဖွင့်ပါ။'
+                : 'Account not found. Please Sign Up first.'
+            );
+          }
+          const stored = JSON.parse(localRaw);
+          if (stored.password !== cleanPass) {
+            throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
+          }
+          soundEngine.playNotify();
+          onAuthenticated(`local_${stored.id}`, buildCompleteProfile(stored), rememberMe);
         }
       } else {
-        // အကောင့်သစ်ဖွင့်ခြင်း (Register)
-        const { data, error } = await supabase.auth.signUp({
-          email: `${username.trim()}@myanrena.com`,
-          password: password,
-        });
-        if (error) throw error;
-        
-        soundEngine.playNotify();
-        // Register အောင်မြင်လျှင် Recovery PIN ပြသရန် သို့မဟုတ် တန်းဝင်ရန်
-        if (data.user) {
-           onAuthenticated(data.session?.access_token || 'token', { 
-              id: data.user.id, 
-              username: username.trim(), 
-              displayName: displayName || username.trim(), 
-              gameId: data.user.id.substring(0,6) 
-            } as UserProfile, rememberMe);
+        // 3. Player Sign Up (Creates Account + Generates 6-Digit Recovery PIN)
+        if (cleanUser === 'yanlinnaung') {
+          throw new Error('This username is reserved.');
         }
+
+        const recoveryPin = String(Math.floor(100000 + Math.random() * 900000));
+        const newId = `player_${cleanUser}`;
+        const newUser = buildCompleteProfile({
+          id: newId,
+          username: cleanUser,
+          displayName: displayName.trim() || username.trim(),
+          gameId: `MR-${Math.floor(100000 + Math.random() * 900000)}`,
+          xp: 1000,
+          rank: 'Silver',
+          role: 'player',
+          isAdmin: false,
+        });
+
+        const recordToSave = {
+          ...newUser,
+          password: cleanPass,
+          email: email.trim(),
+          recoveryPin,
+          status: 'active',
+          createdAt: Date.now(),
+        };
+
+        if (isFirebaseConfigured && db) {
+          const userRef = doc(db, 'users', newId);
+          const existing = await getDoc(userRef);
+          if (existing.exists()) {
+            throw new Error(
+              lang === 'my'
+                ? 'ဤအကောင့်အမည်ကို အခြားသူ ယူထားပြီး ဖြစ်ပါသည်။'
+                : 'Username already exists. Please choose another.'
+            );
+          }
+          await setDoc(userRef, recordToSave);
+        } else {
+          localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(recordToSave));
+        }
+
+        soundEngine.playNotify();
+        setPinCopied(false);
+        setSignupPinModal({
+          token: `token_${newId}`,
+          user: newUser,
+          pin: recoveryPin,
+          rememberMe,
+        });
       }
     } catch (err: any) {
-      setError(err.message || 'Authentication failed');
+      setError(err?.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -144,18 +243,42 @@ if (username.trim() === 'yanlinnaung' && password === '163104') {
 
   const handleGoogleSignIn = async () => {
     setError('');
+    if (!isFirebaseConfigured || !auth) {
+      setError(
+        lang === 'my'
+          ? 'Google Sign-In သုံးရန် firebase-applet-config.json ထဲတွင် Firebase Config အရင်ထည့်ပါ။'
+          : 'Please configure Firebase in firebase-applet-config.json first.'
+      );
+      return;
+    }
+
     setLoading(true);
     try {
       const cred = await signInWithPopup(auth, googleAuthProvider);
       const idToken = await cred.user.getIdToken();
-      // Google Auth အတွက် Supabase ဘက်သို့ ဆက်လက်ချိတ်ဆက်ရန် (ယခုလောလောဆယ် Firebase မှ ရသော User ကို တိုက်ရိုက်သုံးထားသည်)
+      const userId = `google_${cred.user.uid}`;
+      const cleanName = (cred.user.displayName || 'Player').replace(/\s+/g, '_').toLowerCase();
+
+      let profile = buildCompleteProfile({
+        id: userId,
+        username: cleanName,
+        displayName: cred.user.displayName || 'Google Player',
+        gameId: `MR-${cred.user.uid.substring(0, 6).toUpperCase()}`,
+        avatarUrl: cred.user.photoURL || undefined,
+      });
+
+      if (db) {
+        const userRef = doc(db, 'users', userId);
+        const snap = await getDoc(userRef);
+        if (snap.exists()) {
+          profile = buildCompleteProfile(snap.data() as UserProfile);
+        } else {
+          await setDoc(userRef, { ...profile, email: cred.user.email || '', status: 'active' });
+        }
+      }
+
       soundEngine.playNotify();
-      onAuthenticated(idToken, { 
-        id: cred.user.uid, 
-        username: cred.user.displayName || 'GooglePlayer', 
-        displayName: cred.user.displayName || 'GooglePlayer', 
-        gameId: cred.user.uid.substring(0,6) 
-      } as UserProfile, rememberMe);
+      onAuthenticated(idToken, profile, rememberMe);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-in cancelled.');
     } finally {
@@ -168,21 +291,48 @@ if (username.trim() === 'yanlinnaung' && password === '163104') {
     setRecError('');
     setRecSuccess('');
     setRecLoading(true);
+
     try {
       if (recoveryTab === 'pin') {
-        // သင့် Custom PIN recovery စနစ်ကို ဤနေရာတွင် ရေးရန်
-        setRecSuccess('PIN recovery is under development.');
+        const cleanUser = recUsername.trim().toLowerCase();
+        if (isFirebaseConfigured && db) {
+          const userRef = doc(db, 'users', `player_${cleanUser}`);
+          const snap = await getDoc(userRef);
+          if (!snap.exists()) {
+            throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
+          }
+          const data = snap.data() as { recoveryPin?: string };
+          if (data.recoveryPin !== recPin.trim()) {
+            throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
+          }
+          await updateDoc(userRef, { password: recNewPassword.trim() });
+        } else {
+          const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+          if (!raw) throw new Error('Account not found.');
+          const parsed = JSON.parse(raw);
+          if (parsed.recoveryPin !== recPin.trim()) throw new Error('Invalid Recovery PIN.');
+          parsed.password = recNewPassword.trim();
+          localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
+        }
+
+        setRecSuccess(
+          lang === 'my'
+            ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။'
+            : 'Password updated successfully! You can now sign in.'
+        );
       } else {
-        const cleanEmail = recEmail.trim();
-        await sendPasswordResetEmail(auth, cleanEmail);
+        if (!isFirebaseConfigured || !auth) {
+          throw new Error('Firebase Auth is not configured.');
+        }
+        await sendPasswordResetEmail(auth, recEmail.trim());
         setRecSuccess(
           lang === 'my'
             ? 'အီးမေးလ်ပြန်လည်သတ်မှတ်မှုကို ပေးပို့ပြီးပါပြီ။'
             : 'Password reset email sent.'
         );
       }
-    } catch {
-      setRecError('Network error during recovery.');
+    } catch (err: any) {
+      setRecError(err?.message || 'Recovery failed.');
     } finally {
       setRecLoading(false);
     }
@@ -794,7 +944,7 @@ if (username.trim() === 'yanlinnaung' && password === '163104') {
             </motion.div>
           </motion.div>
         )}
-      </AnimatePresence> 
+      </AnimatePresence>
     </div>
   );
 };
