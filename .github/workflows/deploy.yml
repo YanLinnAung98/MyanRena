@@ -1,4 +1,4 @@
-name: Build and Deploy Vanguard Arena
+name: Build and Deploy MyanRena
 
 on:
   push:
