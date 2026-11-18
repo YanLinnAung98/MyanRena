@@ -1,3 +1,4 @@
+import './lib/serverlessApi.ts';
 import React, { Suspense } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
@@ -103,7 +104,6 @@ export default function App() {
     setKickBanner(reason);
   }, []);
 
-  // Restore session or load public online count + landing CMS content
   React.useEffect(() => {
     let active = true;
     const init = async () => {
@@ -122,7 +122,9 @@ export default function App() {
           });
           if (meRes.ok && active) {
             const me = await meRes.json();
-            setUser(me.user);
+            if (me.user) {
+              setUser({ frameId: 'bronze', ...me.user });
+            }
           } else if (active) {
             clearStoredToken();
             setToken(null);
@@ -145,7 +147,6 @@ export default function App() {
     onKicked: handleKicked,
   });
 
-  // Sync admin dual-mode presence with WebSocket server
   React.useEffect(() => {
     if (user?.role === 'admin' && socket.connectionState === 'connected') {
       socket.setAdminSocketMode(adminViewMode);
@@ -161,7 +162,7 @@ export default function App() {
     }
     setKickBanner(null);
     setToken(nextToken);
-    setUser(nextUser);
+    setUser({ frameId: nextUser.role === 'admin' ? 'legend' : 'bronze', ...nextUser });
     setActiveTab('lobby');
     setAdminViewMode('admin');
   };
@@ -349,7 +350,6 @@ export default function App() {
     );
   }
 
-  // Unauthenticated -> Landing Page with Integrated Sign In / Sign Up
   if (!user || !token) {
     return (
       <div className={rootClass}>
@@ -376,7 +376,6 @@ export default function App() {
     );
   }
 
-  // Strictly Isolated Admin View (never mounted for standard players)
   if (user.role === 'admin' && adminViewMode === 'admin') {
     return (
       <div className={rootClass}>
@@ -419,7 +418,6 @@ export default function App() {
         !socket.activeMatch ? 'pb-safe-nav md:pb-0' : ''
       } ${rootClass}`}
     >
-      {/* Desktop & Mobile Top Navigation */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/90 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-2 sm:gap-5">
           <button
@@ -430,7 +428,6 @@ export default function App() {
             {t.brandName}
           </button>
 
-          {/* Desktop Nav Links */}
           <nav className="hidden lg:flex items-center gap-5 text-sm font-medium">
             {navItems.map((item) => (
               <button
@@ -448,9 +445,7 @@ export default function App() {
             ))}
           </nav>
 
-          {/* Right Action & Live Telemetry */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {/* Admin Dual-Mode Switcher Pill — strictly visible ONLY to authenticated Admin */}
             {user.role === 'admin' && (
               <button
                 type="button"
@@ -514,14 +509,12 @@ export default function App() {
         </div>
       </header>
 
-      {/* Auto-Reconnect Status Banner */}
       {socket.connectionState === 'connecting' && (
         <div className="bg-amber-500/15 border-b border-amber-400/30 px-4 py-2 text-xs text-amber-200 text-center">
           {t.common.reconnecting}
         </div>
       )}
 
-      {/* Admin Broadcast Banner */}
       <AnimatePresence>
         {socket.announcement && (
           <motion.div
@@ -551,7 +544,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Live Timed Suspension Countdown Banner */}
       {suspendedUntilMs > nowTs && (
         <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-3">
           <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
@@ -572,7 +564,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content Viewport */}
       <main className="flex-1">
         {socket.activeMatch ? (
           <MatchArena
@@ -671,7 +662,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Mobile Touch-First Fixed Bottom Tab Bar */}
       {!socket.activeMatch && (
         <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0E131F]/95 backdrop-blur-md border-t border-white/10 safe-bottom-bar">
           <div className="grid grid-cols-5 h-16 items-center">
@@ -697,7 +687,6 @@ export default function App() {
         </nav>
       )}
 
-      {/* Animated Matchmaking Radar Overlay */}
       <AnimatePresence>
         {socket.queueStatus && !socket.activeMatch && (
           <MatchmakingOverlay
@@ -710,7 +699,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Incoming Direct Challenge Modal */}
       {socket.pendingChallenge && (
         <div className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl bg-[#121826] border border-amber-400/40 p-6 space-y-5 shadow-2xl">
@@ -755,7 +743,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Public Competitor Profile Inspector */}
       {inspectUserId && (
         <PlayerProfileModal
           lang={lang}
@@ -769,7 +756,6 @@ export default function App() {
         />
       )}
 
-      {/* Urgent Official Moderator Warning Modal */}
       {socket.pendingWarnings.length > 0 && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl bg-[#121826] border border-amber-400/50 p-6 space-y-4 shadow-2xl">
