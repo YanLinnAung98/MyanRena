@@ -145,13 +145,16 @@ export function writeServerlessStore(store: any) {
   } catch {}
 }
 
-export function buildPlayableMatch(user: any, opts: {
-  gameType?: string;
-  mode?: string;
-  difficulty?: string;
-  bestOf?: 3 | 5;
-  turnTimeLimit?: number;
-}) {
+export function buildPlayableMatch(
+  user: any,
+  opts: {
+    gameType?: string;
+    mode?: string;
+    difficulty?: string;
+    bestOf?: 3 | 5;
+    turnTimeLimit?: number;
+  }
+) {
   const store = readServerlessStore();
   const gameType = opts.gameType || 'tictactoe';
   const difficulty = opts.difficulty || 'medium';
@@ -381,7 +384,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
-    // Admin Dashboard APIs (Every possible nested counter structure included)
     if (path.startsWith('/api/admin')) {
       let allUsers = Object.values(store.users);
       if (isFirebaseConfigured && db) {
