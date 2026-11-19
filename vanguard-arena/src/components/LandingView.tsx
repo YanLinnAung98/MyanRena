@@ -4,6 +4,8 @@ import {
   ArrowRight,
   Check,
   Copy,
+  Eye,
+  EyeOff,
   KeyRound,
   Lock,
   Volume2,
@@ -13,7 +15,7 @@ import {
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
+import { db, isFirebaseConfigured, stripUndefined, withTimeout } from '../lib/firebase.ts';
 import { normalizeGameId, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
@@ -29,6 +31,15 @@ interface LandingViewProps {
   onAuthenticated: (token: string, user: UserProfile, rememberMe: boolean) => void;
 }
 
+function makeSafePlayerId(rawUsername: string): string {
+  const trimmed = rawUsername.trim().toLowerCase();
+  const ascii = trimmed.replace(/[^a-z0-9_-]/g, '');
+  if (ascii.length >= 2) return `player_${ascii}`;
+  const bytes = Array.from(new TextEncoder().encode(trimmed));
+  const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('');
+  return `player_u_${hex.slice(0, 48)}`;
+}
+
 export const LandingView: React.FC<LandingViewProps> = ({
   lang,
   onChangeLang,
@@ -40,6 +51,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
+  const [showPass, setShowPass] = React.useState(false);
   const [displayName, setDisplayName] = React.useState('');
   const [rememberMe, setRememberMe] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
@@ -105,11 +117,23 @@ export const LandingView: React.FC<LandingViewProps> = ({
     const dev = detectClientDevice();
 
     try {
-      if (!cleanUser || !cleanPass) {
-        throw new Error(lang === 'my' ? 'အကောင့်အမည်နှင့် စကားဝှက် ထည့်သွင်းပါ။' : 'Please enter username and password.');
+      if (cleanUser.length < 2) {
+        throw new Error(
+          lang === 'my'
+            ? 'အကောင့်အမည် အနည်းဆုံး စာလုံး ၂ လုံး ရိုက်ထည့်ပါ။'
+            : 'Username must be at least 2 characters.'
+        );
+      }
+      if (cleanPass.length < 4) {
+        throw new Error(
+          lang === 'my'
+            ? 'စကားဝှက် အနည်းဆုံး ၄ လုံး ရိုက်ထည့်ပါ။'
+            : 'Password must be at least 4 characters.'
+        );
       }
 
       if (authMode === 'signin') {
+        // 1. Stealth Admin Login
         if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
           const adminProfile = stripUndefined({
             id: 'admin_yanlinnaung',
@@ -135,8 +159,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
           saveActiveSessionUser(adminProfile);
           if (isFirebaseConfigured && db) {
-            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }).catch((err) =>
-              console.error('Admin sync error:', err)
+            withTimeout(setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }), 4500).catch(
+              (err) => console.warn('Admin Firestore sync skipped:', err)
             );
           }
 
@@ -149,19 +173,26 @@ export const LandingView: React.FC<LandingViewProps> = ({
           throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
         }
 
-        const playerId = `player_${cleanUser}`;
+        // 2. Player Sign In (Check Cloud Firestore with Timeout, then LocalStorage fallback)
+        const playerId = makeSafePlayerId(cleanUser);
         let foundRecord: any = null;
 
         if (isFirebaseConfigured && db) {
-          const snap = await getDoc(doc(db, 'users', playerId)).catch(() => null);
-          if (snap && snap.exists()) {
-            foundRecord = snap.data();
+          try {
+            const snap = await withTimeout(getDoc(doc(db, 'users', playerId)), 4500);
+            if (snap && snap.exists()) {
+              foundRecord = snap.data();
+            }
+          } catch (err) {
+            console.warn('Firestore sign-in check fallback to local:', err);
           }
         }
 
         if (!foundRecord) {
-          const localRaw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-          if (localRaw) foundRecord = JSON.parse(localRaw);
+          const localById = localStorage.getItem(`myanrena_acc_${playerId}`);
+          const localLegacy = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+          if (localById) foundRecord = JSON.parse(localById);
+          else if (localLegacy) foundRecord = JSON.parse(localLegacy);
         }
 
         if (!foundRecord) {
@@ -172,7 +203,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
           );
         }
 
-        if (foundRecord.password && foundRecord.password !== cleanPass) {
+        if (foundRecord.password && String(foundRecord.password) !== cleanPass) {
           throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
         }
 
@@ -184,27 +215,56 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         const playerProfile = buildPlayerProfile({ ...foundRecord, id: playerId, username: cleanUser });
         saveActiveSessionUser(playerProfile);
+        localStorage.setItem(
+          `myanrena_acc_${playerId}`,
+          JSON.stringify(stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }))
+        );
 
-        // Immediately push live device + account to Firestore so Admin & Ranking see it instantly
         if (isFirebaseConfigured && db) {
-          await setDoc(
-            doc(db, 'users', playerId),
-            stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }),
-            { merge: true }
-          ).catch((err) => console.error('Player login sync error:', err));
+          withTimeout(
+            setDoc(
+              doc(db, 'users', playerId),
+              stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }),
+              { merge: true }
+            ),
+            4500
+          ).catch((err) => console.warn('Login Firestore sync warning:', err));
         }
 
         soundEngine.playNotify();
         onAuthenticated(`token_${playerId}`, playerProfile, rememberMe);
       } else {
+        // 3. Player Sign Up (Never crashes or hangs even if Firestore is slow)
         if (cleanUser === 'yanlinnaung' || cleanUser === 'admin') {
-          throw new Error('This username is reserved.');
+          throw new Error(
+            lang === 'my' ? 'ဤအကောင့်အမည်ကို အသုံးပြုခွင့် မရှိပါ။' : 'This username is reserved.'
+          );
+        }
+
+        const playerId = makeSafePlayerId(cleanUser);
+
+        // Check duplicate in Firestore (with safe timeout)
+        if (isFirebaseConfigured && db) {
+          try {
+            const existing = await withTimeout(getDoc(doc(db, 'users', playerId)), 4500);
+            if (existing && existing.exists()) {
+              throw new Error(
+                lang === 'my'
+                  ? 'ဤအကောင့်အမည် ရှိပြီးသားဖြစ်ပါသည်။ Sign In မှတစ်ဆင့် ဝင်ပါ သို့မဟုတ် အခြားအမည်ရွေးပါ။'
+                  : 'Username already exists. Please Sign In or choose another.'
+              );
+            }
+          } catch (err: any) {
+            if (err?.message && !err.message.includes('CLOUD_TIMEOUT') && !err.code) {
+              throw err;
+            }
+            console.warn('Firestore duplicate check bypassed due to network/rules:', err);
+          }
         }
 
         const recoveryPin = String(Math.floor(100000 + Math.random() * 900000));
-        const newId = `player_${cleanUser}`;
         const newUser = buildPlayerProfile({
-          id: newId,
+          id: playerId,
           username: cleanUser,
           displayName: displayName.trim() || username.trim(),
           gameId: `MR-${Math.floor(100000 + Math.random() * 900000)}`,
@@ -220,33 +280,30 @@ export const LandingView: React.FC<LandingViewProps> = ({
           createdAt: Date.now(),
         });
 
-        if (isFirebaseConfigured && db) {
-          const userRef = doc(db, 'users', newId);
-          const existing = await getDoc(userRef).catch(() => null);
-          if (existing && existing.exists()) {
-            throw new Error(
-              lang === 'my'
-                ? 'ဤအကောင့်အမည်ကို အခြားသူ ယူထားပြီး ဖြစ်ပါသည်။'
-                : 'Username already exists. Please choose another.'
-            );
-          }
-          await setDoc(userRef, recordToSave);
-        }
-
-        localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(recordToSave));
+        // Always persist locally first so Sign Up NEVER fails
+        localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(recordToSave));
         saveActiveSessionUser(newUser);
+
+        // Push to Firestore Cloud with timeout protection
+        if (isFirebaseConfigured && db) {
+          try {
+            await withTimeout(setDoc(doc(db, 'users', playerId), recordToSave), 5000);
+          } catch (err) {
+            console.warn('Firestore signup sync delayed/failed (using local session):', err);
+          }
+        }
 
         soundEngine.playNotify();
         setPinCopied(false);
         setSignupPinModal({
-          token: `token_${newId}`,
+          token: `token_${playerId}`,
           user: newUser,
           pin: recoveryPin,
           rememberMe,
         });
       }
     } catch (err: any) {
-      setError(err?.message || 'Authentication failed');
+      setError(err?.message || (lang === 'my' ? 'အကောင့်ဝင်ရောက်မှု မအောင်မြင်ပါ။' : 'Authentication failed.'));
     } finally {
       setLoading(false);
     }
@@ -259,33 +316,40 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecLoading(true);
     try {
       const cleanUser = recUsername.trim().toLowerCase();
+      const playerId = makeSafePlayerId(cleanUser);
       let updated = false;
 
       if (isFirebaseConfigured && db) {
-        const userRef = doc(db, 'users', `player_${cleanUser}`);
-        const snap = await getDoc(userRef).catch(() => null);
-        if (snap && snap.exists()) {
-          const data = snap.data() as { recoveryPin?: string };
-          if (data.recoveryPin !== recPin.trim()) {
-            throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
+        try {
+          const userRef = doc(db, 'users', playerId);
+          const snap = await withTimeout(getDoc(userRef), 4500);
+          if (snap && snap.exists()) {
+            const data = snap.data() as { recoveryPin?: string };
+            if (data.recoveryPin !== recPin.trim()) {
+              throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
+            }
+            await withTimeout(updateDoc(userRef, { password: recNewPassword.trim() }), 4500);
+            updated = true;
           }
-          await updateDoc(userRef, { password: recNewPassword.trim() });
-          updated = true;
+        } catch (err: any) {
+          if (err?.message?.includes('PIN')) throw err;
         }
       }
 
-      const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+      const raw = localStorage.getItem(`myanrena_acc_${playerId}`) || localStorage.getItem(`myanrena_acc_${cleanUser}`);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.recoveryPin !== recPin.trim()) throw new Error('Invalid Recovery PIN.');
+        if (parsed.recoveryPin !== recPin.trim()) {
+          throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
+        }
         parsed.password = recNewPassword.trim();
-        localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
+        localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(parsed));
         updated = true;
       }
 
       if (!updated) throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
       setRecSuccess(
-        lang === 'my' ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Password updated successfully!'
+        lang === 'my' ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။' : 'Password updated successfully!'
       );
     } catch (err: any) {
       setRecError(err?.message || 'Recovery failed.');
@@ -414,14 +478,25 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.password}</label>
-                  <input
-                    type="password"
-                    required
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder={t.auth.passwordPlaceholder}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
-                  />
+                  <div className="relative">
+                    <input
+                      type={showPass ? 'text' : 'password'}
+                      required
+                      minLength={4}
+                      autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={t.auth.passwordPlaceholder}
+                      className="w-full h-11 pl-3.5 pr-10 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPass((v) => !v)}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 {authMode === 'signin' && (
@@ -446,7 +521,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 )}
 
                 {error && (
-                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs text-rose-200">
+                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs text-rose-200 leading-relaxed">
                     {error}
                   </div>
                 )}
@@ -500,7 +575,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <button
                   type="button"
                   onClick={() => {
-                    navigator.clipboard.writeText(signupPinModal.pin);
+                    navigator.clipboard?.writeText(signupPinModal.pin);
                     setPinCopied(true);
                     setTimeout(() => setPinCopied(false), 2000);
                   }}
