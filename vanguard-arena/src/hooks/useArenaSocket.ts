@@ -1,12 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  arrayUnion,
   collection,
+  deleteDoc,
   doc,
+  getDoc,
+  getDocs,
   limit,
   onSnapshot,
   orderBy,
   query,
   setDoc,
+  updateDoc,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured } from '../lib/firebase.ts';
 import {
@@ -16,6 +21,7 @@ import {
   readActiveSessionUser,
   readServerlessStore,
   saveActiveSessionUser,
+  writeServerlessStore,
 } from '../lib/serverlessApi.ts';
 import type {
   GameType,
@@ -63,12 +69,12 @@ function checkConnect4Winner(grid: Array<Array<string | null>>): 'P1' | 'P2' | '
       if (r <= 2 && c >= 3 && v === grid[r + 1][c - 1] && v === grid[r + 2][c - 2] && v === grid[r + 3][c - 3]) return v as 'P1' | 'P2';
     }
   }
-  return grid.every((row) => row.every((cell) => cell !== null)) ? 'DRAW' : null;
+  return grid.every((row) => row.every((cell) => cell === null)) ? 'DRAW' : null;
 }
 
 export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
   const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
-  const [pingMs, setPingMs] = useState<number>(22);
+  const [pingMs, setPingMs] = useState<number>(20);
   const [landingContent, setLandingContent] = useState<LandingContent>(() => getPatchedLandingContent());
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
   const [frames] = useState<any[]>(DEFAULT_FRAMES);
@@ -90,14 +96,18 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [socialRefreshTick, setSocialRefreshTick] = useState<number>(0);
   const [incomingDMs] = useState<any[]>([]);
   const [toasts, setToasts] = useState<{ id: string; level: string; message: string }[]>([]);
+
   const queueTimerRef = useRef<number | null>(null);
+  const queueRoomIdRef = useRef<string | null>(null);
+  const knownUserCountRef = useRef<number>(0);
+  const xpAwardedMatchRef = useRef<string | null>(null);
 
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
     setToasts((prev) => [...prev, { id, level, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
+    }, 3200);
   }, []);
 
   const dismissWarningLocal = useCallback((warningId: string) => {
@@ -119,7 +129,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   }, [token]);
 
   const applyXpDelta = useCallback(
-    async (outcome: 'win' | 'loss' | 'draw') => {
+    async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
+      if (matchId && xpAwardedMatchRef.current === matchId) return;
+      if (matchId) xpAwardedMatchRef.current = matchId;
+
       const player = resolveCurrentPlayer();
       if (!player) return;
 
@@ -159,18 +172,32 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     if (!token) return;
     setConnectionState('connected');
     const timer = setInterval(() => {
-      setPingMs(Math.floor(18 + Math.random() * 14));
+      setPingMs(Math.floor(16 + Math.random() * 14));
     }, 5000);
     return () => clearInterval(timer);
   }, [token]);
 
+  // 1. Real-Time Users, Leaderboard, Tournaments & Open Rooms Subscription
   useEffect(() => {
     if (!token || !isFirebaseConfigured || !db) return;
 
-    const qUsers = query(collection(db, 'users'), orderBy('xp', 'desc'), limit(50));
+    const qUsers = query(collection(db, 'users'), orderBy('xp', 'desc'), limit(100));
     const unsubUsers = onSnapshot(qUsers, (snap) => {
       const list: UserProfile[] = [];
-      snap.forEach((d) => list.push(d.data() as UserProfile));
+      const store = readServerlessStore();
+      snap.forEach((d) => {
+        const u = d.data() as any;
+        list.push(u as UserProfile);
+        if (u?.id) store.users[u.id] = u;
+      });
+      writeServerlessStore(store);
+
+      // Notify Admin in real-time when a new player registers
+      if (token === 'admin-token' && knownUserCountRef.current > 0 && list.length > knownUserCountRef.current) {
+        pushToast('success', `New Player Registered! (Total: ${list.length})`);
+      }
+      knownUserCountRef.current = list.length;
+
       setLeaderboard(list);
       setOnlinePlayers(list);
 
@@ -207,35 +234,167 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       unsubTourneys();
       unsubRooms();
     };
-  }, [token, onUserUpdate, onKicked]);
+  }, [token, onUserUpdate, onKicked, pushToast]);
 
+  // 2. Real-Time Room Sync (Players Joining, Chat, & Host Starting Match)
+  useEffect(() => {
+    if (!currentRoom?.id || !isFirebaseConfigured || !db) return;
+    const roomId = currentRoom.id;
+
+    const unsubRoom = onSnapshot(doc(db, 'rooms', roomId), async (snap) => {
+      if (!snap.exists()) {
+        setCurrentRoom(null);
+        return;
+      }
+      const latestRoom = snap.data() as any;
+      setCurrentRoom(latestRoom);
+      if (Array.isArray(latestRoom.chat)) {
+        setRoomChat(latestRoom.chat);
+      }
+
+      // If Host started the match (or matchmaking paired), transition all players into activeMatch!
+      if (latestRoom.status === 'playing' && latestRoom.activeMatchId) {
+        const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
+        if (matchSnap && matchSnap.exists()) {
+          setCurrentRoom(null);
+          setQueueStatus(null);
+          setQueuedGame(null);
+          setMatchChat([]);
+          setActiveMatch(matchSnap.data());
+        }
+      }
+    });
+
+    return () => unsubRoom();
+  }, [currentRoom?.id]);
+
+  // 3. Real-Time Active Match Sync (Live PvP Moves & Match Chat)
+  useEffect(() => {
+    if (!activeMatch?.id || !activeMatch?.isRealtimePvp || !isFirebaseConfigured || !db) return;
+    const matchId = activeMatch.id;
+    const me = resolveCurrentPlayer();
+
+    const unsubMatch = onSnapshot(doc(db, 'matches', matchId), (snap) => {
+      if (!snap.exists()) return;
+      const latest = snap.data() as any;
+      setActiveMatch(latest);
+      if (Array.isArray(latest.chat)) {
+        setMatchChat(latest.chat);
+      }
+
+      if (latest.status === 'finished' && me?.id) {
+        if (latest.isDraw) {
+          applyXpDelta('draw', matchId);
+        } else if (latest.winnerId) {
+          applyXpDelta(latest.winnerId === me.id ? 'win' : 'loss', matchId);
+        }
+      }
+    });
+
+    return () => unsubMatch();
+  }, [activeMatch?.id, activeMatch?.isRealtimePvp, resolveCurrentPlayer, applyXpDelta]);
+
+  // 4. Real-Time Matchmaking Queue (Pairs 2 Human Players via Firestore, falls back to Bot after 8s)
   const joinQueue = useCallback(
-    (gameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
+    async (gameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
+      const player = resolveCurrentPlayer();
       setQueuedGame(gameType);
       setQueueStatus({ gameType, startedAt: Date.now() });
+
       if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
 
-      queueTimerRef.current = window.setTimeout(() => {
-        const player = resolveCurrentPlayer();
-        const match = buildPlayableMatch(player, {
-          gameType,
-          mode: 'matchmaking',
-          difficulty: 'medium',
-          bestOf,
-          turnTimeLimit,
-        });
+      if (isFirebaseConfigured && db && player) {
+        try {
+          const snap = await getDocs(collection(db, 'rooms'));
+          let waitingRoom: any = null;
+          snap.forEach((d) => {
+            const r = d.data();
+            if (
+              r.status === 'waiting' &&
+              r.isMatchmaking === true &&
+              r.gameType === gameType &&
+              Array.isArray(r.players) &&
+              r.players.length === 1 &&
+              r.players[0].id !== player.id
+            ) {
+              waitingRoom = r;
+            }
+          });
+
+          if (waitingRoom) {
+            const twoPlayers = [waitingRoom.players[0], player];
+            const liveMatch = buildPlayableMatch(twoPlayers, {
+              gameType,
+              mode: 'matchmaking',
+              bestOf,
+              turnTimeLimit,
+              isRealtimePvp: true,
+            });
+            await setDoc(doc(db, 'matches', liveMatch.id), liveMatch);
+            await updateDoc(doc(db, 'rooms', waitingRoom.id), {
+              players: twoPlayers,
+              status: 'playing',
+              activeMatchId: liveMatch.id,
+            });
+            setQueuedGame(null);
+            setQueueStatus(null);
+            setMatchChat([]);
+            setActiveMatch(liveMatch);
+            pushToast('success', 'Real opponent found!');
+            return;
+          }
+
+          // Otherwise create a waiting matchmaking ticket in Firestore
+          const ticketId = `mm_${Date.now()}_${player.id}`;
+          queueRoomIdRef.current = ticketId;
+          const ticketRoom = {
+            id: ticketId,
+            code: 'MM-' + Math.floor(1000 + Math.random() * 9000),
+            gameType,
+            isMatchmaking: true,
+            hostId: player.id,
+            maxPlayers: 2,
+            players: [player],
+            status: 'waiting',
+            activeMatchId: null,
+          };
+          await setDoc(doc(db, 'rooms', ticketId), ticketRoom);
+          setCurrentRoom(ticketRoom);
+        } catch {}
+      }
+
+      // Fallback to Aegis Bot after 8 seconds if no human joins
+      queueTimerRef.current = window.setTimeout(async () => {
+        if (queueRoomIdRef.current && isFirebaseConfigured && db) {
+          await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
+          queueRoomIdRef.current = null;
+        }
+        setCurrentRoom(null);
         setQueuedGame(null);
         setQueueStatus(null);
         setMatchChat([]);
-        setActiveMatch(match);
-        pushToast('success', 'Opponent found!');
-      }, 2000);
+        setActiveMatch(
+          buildPlayableMatch([player], {
+            gameType,
+            mode: 'bot',
+            difficulty: 'medium',
+            bestOf,
+            turnTimeLimit,
+            isRealtimePvp: false,
+          })
+        );
+      }, 8000);
     },
     [resolveCurrentPlayer, pushToast]
   );
 
-  const leaveQueue = useCallback(() => {
+  const leaveQueue = useCallback(async () => {
     if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
+    if (queueRoomIdRef.current && isFirebaseConfigured && db) {
+      await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
+      queueRoomIdRef.current = null;
+    }
+    setCurrentRoom(null);
     setQueuedGame(null);
     setQueueStatus(null);
   }, []);
@@ -245,193 +404,316 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     joinQueue('sakarhtar');
   }, [joinQueue]);
 
-  const startSakarQuickNow = useCallback(() => {
+  const startSakarQuickNow = useCallback(async () => {
     if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
+    if (queueRoomIdRef.current && isFirebaseConfigured && db) {
+      await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
+      queueRoomIdRef.current = null;
+    }
     const player = resolveCurrentPlayer();
+    setCurrentRoom(null);
     setQueueStatus(null);
     setQueuedGame(null);
-    setActiveMatch(buildPlayableMatch(player, { gameType: 'sakarhtar', mode: 'matchmaking' }));
+    setActiveMatch(buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' }));
   }, [resolveCurrentPlayer]);
 
+  // 5. Unified Move Handler (Supports BOTH Real-Time PvP via Firestore & Bot AI)
   const sendMove = useCallback(
-    (move: any) => {
-      setActiveMatch((prev: any) => {
-        if (!prev || prev.status === 'finished') return prev;
-        const p1 = prev.players?.[0] || resolveCurrentPlayer();
-        const p2 = prev.players?.[1] || { id: 'aegis_bot' };
-        const next = JSON.parse(JSON.stringify(prev));
+    async (move: any) => {
+      if (!activeMatch || activeMatch.status === 'finished') return;
+      const me = resolveCurrentPlayer();
+      const players = activeMatch.players || [me];
+      const p1 = players[0];
+      const p2 = players[1] || { id: 'aegis_bot' };
+      const isPvp = Boolean(activeMatch.isRealtimePvp && players.length >= 2);
+      const next = JSON.parse(JSON.stringify(activeMatch));
 
-        // 1. TIC-TAC-TOE
-        if (next.gameType === 'tictactoe') {
-          const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
-          const idx = typeof move === 'number' ? move : move?.index ?? -1;
-          if (idx < 0 || idx > 8 || board[idx] !== null) return prev;
+      // --- A. TIC-TAC-TOE ---
+      if (next.gameType === 'tictactoe') {
+        const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
+        const idx = typeof move === 'number' ? move : move?.index ?? -1;
+        if (idx < 0 || idx > 8 || board[idx] !== null) return;
 
-          board[idx] = 'X';
-          let outcome = checkTTTWinner(board);
-
-          if (!outcome) {
-            const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
-            if (empty.length > 0) {
-              const botPick = empty[Math.floor(Math.random() * empty.length)];
-              board[botPick] = 'O';
-              outcome = checkTTTWinner(board);
-            }
-          }
-
+        if (isPvp) {
+          if (next.turnUserId !== me.id) return;
+          const myMark = me.id === p1.id ? 'X' : 'O';
+          board[idx] = myMark;
           next.tttBoard = board;
+          next.turnUserId = me.id === p1.id ? p2.id : p1.id;
+
+          const outcome = checkTTTWinner(board);
           if (outcome) {
             next.status = 'finished';
-            if (outcome === 'DRAW') {
-              next.isDraw = true;
-              applyXpDelta('draw');
-            } else {
-              const p1Won = outcome === 'X';
-              next.winnerId = p1Won ? p1.id : p2.id;
+            if (outcome === 'DRAW') next.isDraw = true;
+            else {
+              next.winnerId = outcome === 'X' ? p1.id : p2.id;
               next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-              applyXpDelta(p1Won ? 'win' : 'loss');
             }
           }
-          return next;
+          setActiveMatch(next);
+          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), next).catch(() => {});
+          return;
         }
 
-        // 2. CONNECT 4
-        if (next.gameType === 'connect4') {
-          const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
-          const col = typeof move === 'number' ? move : move?.col ?? -1;
-          if (col < 0 || col > 6) return prev;
-
-          let placed = false;
-          for (let r = 5; r >= 0; r--) {
-            if (grid[r][col] === null) {
-              grid[r][col] = 'P1';
-              placed = true;
-              break;
-            }
+        // Bot Match
+        board[idx] = 'X';
+        let outcome = checkTTTWinner(board);
+        if (!outcome) {
+          const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
+          if (empty.length > 0) {
+            board[empty[Math.floor(Math.random() * empty.length)]] = 'O';
+            outcome = checkTTTWinner(board);
           }
-          if (!placed) return prev;
-
-          let outcome = checkConnect4Winner(grid);
-          if (!outcome) {
-            const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
-            if (validCols.length > 0) {
-              const botCol = validCols[Math.floor(Math.random() * validCols.length)];
-              for (let r = 5; r >= 0; r--) {
-                if (grid[r][botCol] === null) {
-                  grid[r][botCol] = 'P2';
-                  break;
-                }
-              }
-              outcome = checkConnect4Winner(grid);
-            }
-          }
-
-          next.c4Board = grid;
-          if (outcome) {
-            next.status = 'finished';
-            if (outcome === 'DRAW') {
-              next.isDraw = true;
-              applyXpDelta('draw');
-            } else {
-              const p1Won = outcome === 'P1';
-              next.winnerId = p1Won ? p1.id : p2.id;
-              next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-              applyXpDelta(p1Won ? 'win' : 'loss');
-            }
-          }
-          return next;
         }
-
-        // 3. ROCK, PAPER, SCISSORS
-        if (next.gameType === 'rps') {
-          const pChoice = String(move?.choice || move || 'rock').toLowerCase();
-          const opts = ['rock', 'paper', 'scissors'];
-          const bChoice = opts[Math.floor(Math.random() * 3)];
-
-          let winner: 'player' | 'bot' | 'draw' = 'draw';
-          if (pChoice !== bChoice) {
-            const beats =
-              (pChoice === 'rock' && bChoice === 'scissors') ||
-              (pChoice === 'paper' && bChoice === 'rock') ||
-              (pChoice === 'scissors' && bChoice === 'paper');
-            winner = beats ? 'player' : 'bot';
-          }
-
-          if (winner === 'player') next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
-          if (winner === 'bot') next.scores[p2.id] = (next.scores[p2.id] || 0) + 1;
-
-          next.rpsLastRound = { playerChoice: pChoice, botChoice: bChoice, winner };
-          next.round = (next.round || 1) + 1;
-
-          const target = Math.ceil((next.bestOf || 3) / 2);
-          if (next.scores[p1.id] >= target || next.scores[p2.id] >= target) {
-            const p1Won = next.scores[p1.id] >= target;
-            next.status = 'finished';
+        next.tttBoard = board;
+        if (outcome) {
+          next.status = 'finished';
+          if (outcome === 'DRAW') {
+            next.isDraw = true;
+            applyXpDelta('draw', next.id);
+          } else {
+            const p1Won = outcome === 'X';
             next.winnerId = p1Won ? p1.id : p2.id;
-            applyXpDelta(p1Won ? 'win' : 'loss');
+            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
+            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
           }
-          return next;
         }
+        setActiveMatch(next);
+        return;
+      }
 
-        // 4. SAKAR-HTAR
-        if (next.gameType === 'sakarhtar') {
-          const riddles = next.riddles || DEFAULT_SAKAR_RIDDLES;
-          const idx = next.riddleIndex || 0;
-          const current = riddles[idx] || riddles[0];
-          const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
+      // --- B. CONNECT 4 ---
+      if (next.gameType === 'connect4') {
+        const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
+        const col = typeof move === 'number' ? move : move?.col ?? -1;
+        if (col < 0 || col > 6) return;
 
-          if (chosen === current.answerIndex) {
-            next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
+        if (isPvp && next.turnUserId !== me.id) return;
+        const myDisc = isPvp ? (me.id === p1.id ? 'P1' : 'P2') : 'P1';
+
+        let placed = false;
+        for (let r = 5; r >= 0; r--) {
+          if (grid[r][col] === null) {
+            grid[r][col] = myDisc;
+            placed = true;
+            break;
           }
-          if (Math.random() > 0.5) {
-            next.scores[p2.id] = (next.scores[p2.id] || 0) + 100;
-          }
+        }
+        if (!placed) return;
 
-          const nextIdx = idx + 1;
-          next.riddleIndex = nextIdx;
-          if (nextIdx >= riddles.length) {
+        if (isPvp) {
+          next.c4Board = grid;
+          next.turnUserId = me.id === p1.id ? p2.id : p1.id;
+          const outcome = checkConnect4Winner(grid);
+          if (outcome) {
             next.status = 'finished';
-            if (next.scores[p1.id] === next.scores[p2.id]) {
-              next.isDraw = true;
-              applyXpDelta('draw');
-            } else {
-              const p1Won = next.scores[p1.id] > next.scores[p2.id];
-              next.winnerId = p1Won ? p1.id : p2.id;
-              applyXpDelta(p1Won ? 'win' : 'loss');
+            if (outcome === 'DRAW') next.isDraw = true;
+            else {
+              next.winnerId = outcome === 'P1' ? p1.id : p2.id;
+              next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
             }
           }
-          return next;
+          setActiveMatch(next);
+          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), next).catch(() => {});
+          return;
         }
 
-        return next;
-      });
+        // Bot Match
+        let outcome = checkConnect4Winner(grid);
+        if (!outcome) {
+          const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
+          if (validCols.length > 0) {
+            const botCol = validCols[Math.floor(Math.random() * validCols.length)];
+            for (let r = 5; r >= 0; r--) {
+              if (grid[r][botCol] === null) {
+                grid[r][botCol] = 'P2';
+                break;
+              }
+            }
+            outcome = checkConnect4Winner(grid);
+          }
+        }
+        next.c4Board = grid;
+        if (outcome) {
+          next.status = 'finished';
+          if (outcome === 'DRAW') {
+            next.isDraw = true;
+            applyXpDelta('draw', next.id);
+          } else {
+            const p1Won = outcome === 'P1';
+            next.winnerId = p1Won ? p1.id : p2.id;
+            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
+            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+          }
+        }
+        setActiveMatch(next);
+        return;
+      }
+
+      // --- C. ROCK, PAPER, SCISSORS (Simultaneous PvP or Bot) ---
+      if (next.gameType === 'rps') {
+        const myChoice = String(move?.choice || move || 'rock').toLowerCase();
+
+        if (isPvp) {
+          next.rpsPicks = { ...(next.rpsPicks || {}), [me.id]: myChoice };
+          const c1 = next.rpsPicks[p1.id];
+          const c2 = next.rpsPicks[p2.id];
+
+          if (c1 && c2) {
+            let roundWinnerId: string | null = null;
+            if (c1 !== c2) {
+              const p1Beats =
+                (c1 === 'rock' && c2 === 'scissors') ||
+                (c1 === 'paper' && c2 === 'rock') ||
+                (c1 === 'scissors' && c2 === 'paper');
+              roundWinnerId = p1Beats ? p1.id : p2.id;
+            }
+            if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+            next.rpsLastRound = { p1Choice: c1, p2Choice: c2, winnerId: roundWinnerId };
+            next.rpsPicks = {};
+            next.round = (next.round || 1) + 1;
+
+            const target = Math.ceil((next.bestOf || 3) / 2);
+            if (next.scores[p1.id] >= target || next.scores[p2.id] >= target) {
+              next.status = 'finished';
+              next.winnerId = next.scores[p1.id] >= target ? p1.id : p2.id;
+            }
+          }
+          setActiveMatch(next);
+          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), next).catch(() => {});
+          return;
+        }
+
+        // Bot Match
+        const opts = ['rock', 'paper', 'scissors'];
+        const bChoice = opts[Math.floor(Math.random() * 3)];
+        let roundWinnerId: string | null = null;
+        if (myChoice !== bChoice) {
+          const beats =
+            (myChoice === 'rock' && bChoice === 'scissors') ||
+            (myChoice === 'paper' && bChoice === 'rock') ||
+            (myChoice === 'scissors' && bChoice === 'paper');
+          roundWinnerId = beats ? p1.id : p2.id;
+        }
+        if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+        next.rpsLastRound = { p1Choice: myChoice, p2Choice: bChoice, winnerId: roundWinnerId };
+        next.round = (next.round || 1) + 1;
+
+        const target = Math.ceil((next.bestOf || 3) / 2);
+        if (next.scores[p1.id] >= target || next.scores[p2.id] >= target) {
+          const p1Won = next.scores[p1.id] >= target;
+          next.status = 'finished';
+          next.winnerId = p1Won ? p1.id : p2.id;
+          applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+        }
+        setActiveMatch(next);
+        return;
+      }
+
+      // --- D. SAKAR-HTAR (1 to 8 Players Real-Time or Solo) ---
+      if (next.gameType === 'sakarhtar') {
+        const riddles = next.riddles || DEFAULT_SAKAR_RIDDLES;
+        const idx = next.riddleIndex || 0;
+        const current = riddles[idx] || riddles[0];
+        const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
+
+        if (isPvp) {
+          next.roundAnswers = next.roundAnswers || {};
+          if (typeof next.roundAnswers[me.id] === 'number') return; // Already answered this riddle
+
+          next.roundAnswers[me.id] = chosen;
+          if (chosen === current.answerIndex) {
+            next.scores[me.id] = (next.scores[me.id] || 0) + 100;
+          }
+
+          // Advance to next riddle once all room players have answered
+          const allAnswered = players.every((p: any) => typeof next.roundAnswers[p.id] === 'number');
+          if (allAnswered) {
+            next.roundAnswers = {};
+            next.riddleIndex = idx + 1;
+            if (next.riddleIndex >= riddles.length) {
+              next.status = 'finished';
+              const sorted = [...players].sort((a, b) => (next.scores[b.id] || 0) - (next.scores[a.id] || 0));
+              if ((next.scores[sorted[0].id] || 0) === (next.scores[sorted[1]?.id] || 0)) {
+                next.isDraw = true;
+              } else {
+                next.winnerId = sorted[0].id;
+              }
+            }
+          }
+          setActiveMatch(next);
+          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), next).catch(() => {});
+          return;
+        }
+
+        // Solo / Bot Match
+        if (chosen === current.answerIndex) {
+          next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
+        }
+        if (Math.random() > 0.5) {
+          next.scores[p2.id] = (next.scores[p2.id] || 0) + 100;
+        }
+        const nextIdx = idx + 1;
+        next.riddleIndex = nextIdx;
+        if (nextIdx >= riddles.length) {
+          next.status = 'finished';
+          if (next.scores[p1.id] === next.scores[p2.id]) {
+            next.isDraw = true;
+            applyXpDelta('draw', next.id);
+          } else {
+            const p1Won = next.scores[p1.id] > next.scores[p2.id];
+            next.winnerId = p1Won ? p1.id : p2.id;
+            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+          }
+        }
+        setActiveMatch(next);
+      }
     },
-    [resolveCurrentPlayer, applyXpDelta]
+    [activeMatch, resolveCurrentPlayer, applyXpDelta]
   );
 
-  const forfeitMatch = useCallback(() => {
-    setActiveMatch((prev: any) => {
-      if (!prev) return null;
-      const p2 = prev.players?.[1] || { id: 'aegis_bot' };
-      applyXpDelta('loss');
-      return { ...prev, status: 'finished', winnerId: p2.id };
-    });
-  }, [applyXpDelta]);
+  const forfeitMatch = useCallback(async () => {
+    if (!activeMatch) return;
+    const me = resolveCurrentPlayer();
+    const other = (activeMatch.players || []).find((p: any) => p.id !== me?.id) || { id: 'aegis_bot' };
+    const finished = { ...activeMatch, status: 'finished', winnerId: other.id };
+    setActiveMatch(finished);
+    applyXpDelta('loss', activeMatch.id);
+    if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'matches', activeMatch.id), finished).catch(() => {});
+    }
+  }, [activeMatch, resolveCurrentPlayer, applyXpDelta]);
 
-  const sendMatchChat = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setMatchChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
-  }, []);
+  const sendMatchChat = useCallback(
+    async (text: string) => {
+      if (!text.trim() || !activeMatch) return;
+      const me = resolveCurrentPlayer();
+      const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
+      setMatchChat((prev) => [...prev, msg]);
+      if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
+        await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
+      }
+    },
+    [activeMatch, resolveCurrentPlayer]
+  );
 
-  const sendRoomChat = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setRoomChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
-  }, []);
+  const sendRoomChat = useCallback(
+    async (text: string) => {
+      if (!text.trim() || !currentRoom) return;
+      const me = resolveCurrentPlayer();
+      const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
+      setRoomChat((prev) => [...prev, msg]);
+      if (isFirebaseConfigured && db) {
+        await updateDoc(doc(db, 'rooms', currentRoom.id), { chat: arrayUnion(msg) }).catch(() => {});
+      }
+    },
+    [currentRoom, resolveCurrentPlayer]
+  );
 
   const sendChallenge = useCallback(
     (_targetUserId: string, gameType: GameType) => {
       const player = resolveCurrentPlayer();
-      setActiveMatch(buildPlayableMatch(player, { gameType, mode: 'bot', difficulty: 'hard' }));
+      setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
       setSocialRefreshTick((n) => n + 1);
     },
     [resolveCurrentPlayer]
