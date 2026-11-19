@@ -1,20 +1,60 @@
-class SoundEngine {
+export type GraphicsQuality = 'low' | 'medium' | 'high';
+
+export interface UserGameSettings {
+  musicEnabled: boolean;
+  musicVolume: number; // 0 - 100
+  sfxEnabled: boolean;
+  sfxVolume: number; // 0 - 100
+  graphics: GraphicsQuality;
+  haptics: boolean;
+  showNotifications: boolean;
+}
+
+const SETTINGS_KEY = 'vanguard_user_settings_v1';
+
+const DEFAULT_SETTINGS: UserGameSettings = {
+  musicEnabled: false,
+  musicVolume: 35,
+  sfxEnabled: true,
+  sfxVolume: 70,
+  graphics: 'high',
+  haptics: true,
+  showNotifications: true,
+};
+
+class VanguardSoundEngine {
   private ctx: AudioContext | null = null;
-  private muted: boolean = false;
+  private musicTimer: number | null = null;
+  private settings: UserGameSettings = { ...DEFAULT_SETTINGS };
+  private stepIdx = 0;
 
   constructor() {
-    if (typeof window !== 'undefined') {
-      this.muted = localStorage.getItem('vanguard_muted') === '1';
-    }
+    this.loadSettings();
+    this.applyGraphics(this.settings.graphics);
+  }
+
+  private loadSettings() {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        this.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      }
+    } catch {}
+  }
+
+  private saveSettings() {
+    if (typeof window === 'undefined') return;
+    try {
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(this.settings));
+    } catch {}
   }
 
   private getContext(): AudioContext | null {
-    if (typeof window === 'undefined' || this.muted) return null;
+    if (typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (AudioCtx) {
-        this.ctx = new AudioCtx();
-      }
+      const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+      if (AudioCtx) this.ctx = new AudioCtx();
     }
     if (this.ctx && this.ctx.state === 'suspended') {
       this.ctx.resume().catch(() => {});
@@ -22,65 +62,125 @@ class SoundEngine {
     return this.ctx;
   }
 
-  isMuted(): boolean {
-    return this.muted;
+  public getSettings(): UserGameSettings {
+    return { ...this.settings };
   }
 
-  setMuted(next: boolean): void {
-    this.muted = next;
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('vanguard_muted', next ? '1' : '0');
+  public applyGraphics(mode: GraphicsQuality) {
+    if (typeof document !== 'undefined') {
+      document.documentElement.setAttribute('data-graphics', mode);
     }
   }
 
-  private tone(freq: number, duration: number, type: OscillatorType = 'sine', gainVal = 0.08, delay = 0) {
+  public updateSettings(patch: Partial<UserGameSettings>): UserGameSettings {
+    this.settings = { ...this.settings, ...patch };
+    this.saveSettings();
+    this.applyGraphics(this.settings.graphics);
+
+    if (this.settings.musicEnabled) {
+      this.startAmbientMusic();
+    } else {
+      this.stopAmbientMusic();
+    }
+    return this.getSettings();
+  }
+
+  // Backward compatibility with existing header mute toggle
+  public isMuted(): boolean {
+    return !this.settings.sfxEnabled && !this.settings.musicEnabled;
+  }
+
+  public setMuted(muted: boolean) {
+    if (muted) {
+      this.updateSettings({ sfxEnabled: false, musicEnabled: false });
+    } else {
+      this.updateSettings({ sfxEnabled: true });
+    }
+  }
+
+  public vibrate(ms = 18) {
+    if (!this.settings.haptics) return;
+    if (typeof navigator !== 'undefined' && typeof navigator.vibrate === 'function') {
+      try {
+        navigator.vibrate(ms);
+      } catch {}
+    }
+  }
+
+  private playTone(freq: number, duration: number, type: OscillatorType, volScale: number) {
     const ctx = this.getContext();
     if (!ctx) return;
-    const now = ctx.currentTime + delay;
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = type;
-    osc.frequency.setValueAtTime(freq, now);
-    gain.gain.setValueAtTime(0.0001, now);
-    gain.gain.exponentialRampToValueAtTime(gainVal, now + 0.015);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-    osc.start(now);
-    osc.stop(now + duration + 0.02);
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      const gainVal = Math.max(0.001, volScale);
+      gain.gain.setValueAtTime(gainVal, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.0008, ctx.currentTime + duration);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + duration);
+    } catch {}
   }
 
-  playMove() {
-    this.tone(420, 0.09, 'triangle', 0.09);
-    this.tone(620, 0.06, 'sine', 0.05, 0.03);
+  public playClick() {
+    if (!this.settings.sfxEnabled) return;
+    const v = (this.settings.sfxVolume / 100) * 0.12;
+    this.playTone(620, 0.06, 'sine', v);
+    this.vibrate(10);
   }
 
-  playDrop() {
-    this.tone(240, 0.12, 'sine', 0.11);
-    this.tone(180, 0.08, 'triangle', 0.07, 0.05);
+  public playNotify() {
+    if (!this.settings.sfxEnabled) return;
+    const v = (this.settings.sfxVolume / 100) * 0.16;
+    this.playTone(587.33, 0.11, 'triangle', v);
+    setTimeout(() => this.playTone(880, 0.18, 'triangle', v), 90);
+    this.vibrate(20);
   }
 
-  playTick() {
-    this.tone(760, 0.05, 'sine', 0.05);
+  public playWin() {
+    if (!this.settings.sfxEnabled) return;
+    const v = (this.settings.sfxVolume / 100) * 0.18;
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, idx) => {
+      setTimeout(() => this.playTone(f, 0.22, 'triangle', v), idx * 95);
+    });
+    this.vibrate(35);
   }
 
-  playNotify() {
-    this.tone(587.33, 0.12, 'sine', 0.06);
-    this.tone(880, 0.18, 'sine', 0.06, 0.09);
+  public playLose() {
+    if (!this.settings.sfxEnabled) return;
+    const v = (this.settings.sfxVolume / 100) * 0.16;
+    [392, 329.63, 261.63].forEach((f, idx) => {
+      setTimeout(() => this.playTone(f, 0.22, 'sawtooth', v * 0.6), idx * 120);
+    });
   }
 
-  playWin() {
-    this.tone(523.25, 0.15, 'triangle', 0.09, 0);
-    this.tone(659.25, 0.15, 'triangle', 0.09, 0.1);
-    this.tone(783.99, 0.18, 'triangle', 0.09, 0.2);
-    this.tone(1046.5, 0.36, 'sine', 0.1, 0.3);
+  public startAmbientMusic() {
+    if (typeof window === 'undefined' || this.musicTimer !== null) return;
+    // Soft ambient pentatonic synth loop (no external MP3 404s)
+    const notes = [220, 261.63, 293.66, 329.63, 392, 329.63, 293.66, 261.63];
+    const playStep = () => {
+      if (!this.settings.musicEnabled) {
+        this.stopAmbientMusic();
+        return;
+      }
+      const vol = (this.settings.musicVolume / 100) * 0.06;
+      const freq = notes[this.stepIdx % notes.length];
+      this.stepIdx += 1;
+      this.playTone(freq, 0.85, 'sine', vol);
+    };
+    playStep();
+    this.musicTimer = window.setInterval(playStep, 900);
   }
 
-  playLose() {
-    this.tone(349.23, 0.16, 'sawtooth', 0.04, 0);
-    this.tone(293.66, 0.18, 'sawtooth', 0.04, 0.12);
-    this.tone(220, 0.32, 'triangle', 0.06, 0.24);
+  public stopAmbientMusic() {
+    if (this.musicTimer !== null) {
+      window.clearInterval(this.musicTimer);
+      this.musicTimer = null;
+    }
   }
 }
 
-export const soundEngine = new SoundEngine();
+export const soundEngine = new VanguardSoundEngine();
