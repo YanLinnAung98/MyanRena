@@ -16,7 +16,12 @@ import {
 } from 'lucide-react';
 import { doc, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
-import { saveActiveSessionUser } from '../lib/serverlessApi.ts';
+import {
+  broadcastLocalSync,
+  readServerlessStore,
+  saveActiveSessionUser,
+  writeServerlessStore,
+} from '../lib/serverlessApi.ts';
 import type { GameType, Language, UserProfile } from '../types.ts';
 import {
   PREMIUM_BANNER_TEMPLATES,
@@ -50,6 +55,16 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [customBannerUrl, setCustomBannerUrl] = React.useState<string>(user.bannerUrl || '');
   const [saving, setSaving] = React.useState(false);
 
+  // Sync local inputs whenever user profile updates remotely in real-time
+  React.useEffect(() => {
+    setDisplayName(user.displayName || '');
+    setBio(user.bio || '');
+    if (user.favoriteGame) setFavoriteGame(user.favoriteGame);
+    if (user.frameId) setSelectedFrame(user.frameId);
+    if (user.bannerId) setSelectedBannerId(user.bannerId);
+    setCustomBannerUrl(user.bannerUrl || '');
+  }, [user.displayName, user.bio, user.favoriteGame, user.frameId, user.bannerId, user.bannerUrl]);
+
   // Avatar Cropper State
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const bannerInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -61,17 +76,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const imgRef = React.useRef<HTMLImageElement | null>(null);
 
   const persistProfilePatch = async (patch: Partial<UserProfile>) => {
-    const updatedUser = { ...user, ...patch };
-    saveActiveSessionUser(updatedUser);
-    onUserUpdated(updatedUser);
+    const cleanPatch = stripUndefined({ ...patch, updatedAtMs: Date.now() });
+    const updatedUser: UserProfile = { ...user, ...cleanPatch };
 
+    // 1. Update Active Session & Local Serverless Store IMMEDIATELY
+    saveActiveSessionUser(updatedUser);
+    const store = readServerlessStore();
+    store.users[updatedUser.id] = { ...(store.users[updatedUser.id] || {}), ...updatedUser };
+    writeServerlessStore(store);
+
+    // 2. Push into App React state immediately
+    onUserUpdated(updatedUser);
+    broadcastLocalSync('PROFILE_UPDATED');
+
+    // 3. Persist to Firestore Cloud Real-Time (so all connected devices see it instantly)
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', user.id), stripUndefined(patch), { merge: true }).catch(() => {});
+      await setDoc(doc(db, 'users', user.id), cleanPatch, { merge: true }).catch((err) => {
+        onNotify('error', `Cloud sync warning: ${err?.message || 'Retry'}`);
+      });
     }
+
+    // 4. Keep legacy serverless endpoint in sync
     await fetch('/api/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify(patch),
+      body: JSON.stringify(cleanPatch),
     }).catch(() => {});
   };
 
@@ -90,7 +119,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     e.target.value = '';
   };
 
-  // Compress & Upload Custom Profile Banner (800x260 WebP)
   const handleBannerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -113,7 +141,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         const bannerDataUrl = canvas.toDataURL('image/webp', 0.82);
         setCustomBannerUrl(bannerDataUrl);
         await persistProfilePatch({ bannerUrl: bannerDataUrl, bannerId: 'custom' });
-        onNotify('success', lang === 'my' ? 'Profile Banner အသစ် တင်ပြီးပါပြီ!' : 'Custom Profile Banner updated!');
+        onNotify('success', lang === 'my' ? 'Profile Banner အသစ် တင်ပြီးပါပြီ!' : 'Custom Banner updated!');
       };
       img.src = reader.result;
     };
@@ -168,43 +196,52 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
     const croppedDataUrl = canvas.toDataURL('image/webp', 0.88);
     setCropSource(null);
-
     await persistProfilePatch({ avatarUrl: croppedDataUrl });
-    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Profile picture updated!');
+    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
   };
 
   const handleEquipFrame = async (frameId: string, unlocked: boolean) => {
     if (!unlocked) {
-      onNotify('error', lang === 'my' ? 'ဤ Frame ကို ရရှိရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock this frame.');
+      onNotify('error', lang === 'my' ? 'ဤ Frame ဖွင့်ရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock.');
       return;
     }
     setSelectedFrame(frameId);
     await persistProfilePatch({ frameId });
-    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Profile frame equipped!');
+    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Frame equipped!');
   };
 
   const handleEquipBanner = async (bannerId: string, unlocked: boolean) => {
     if (!unlocked) {
-      onNotify('error', lang === 'my' ? 'ဤ Banner ကို ဖွင့်ရန် XP ပိုမိုစုဆောင်းပါ သို့မဟုတ် ပြိုင်ပွဲဆုရယူပါ။' : 'Earn more XP or win a tournament gift to unlock.');
+      onNotify('error', lang === 'my' ? 'ဤ Banner ဖွင့်ရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock.');
       return;
     }
     setSelectedBannerId(bannerId);
     setCustomBannerUrl('');
     await persistProfilePatch({ bannerId, bannerUrl: '' });
-    onNotify('success', lang === 'my' ? 'Profile Banner ပြောင်းလဲပြီးပါပြီ!' : 'Profile banner equipped!');
+    onNotify('success', lang === 'my' ? 'Profile Banner ပြောင်းလဲပြီးပါပြီ!' : 'Banner equipped!');
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
+    const cleanName = displayName.trim();
+    if (!cleanName) {
+      onNotify('error', lang === 'my' ? 'အမည် ထည့်သွင်းပေးပါ။' : 'Display name cannot be empty.');
+      return;
+    }
     setSaving(true);
     try {
       await persistProfilePatch({
-        displayName: displayName.trim() || user.displayName,
+        displayName: cleanName,
         bio: bio.trim().slice(0, 180),
         favoriteGame,
         frameId: selectedFrame,
       });
-      onNotify('success', lang === 'my' ? 'Profile နှင့် Bio သိမ်းဆည်းပြီးပါပြီ!' : 'Profile & Bio saved!');
+      onNotify(
+        'success',
+        lang === 'my'
+          ? `အမည် (${cleanName}) နှင့် Bio ကို Real-Time ပြောင်းလဲပြီးပါပြီ!`
+          : `Profile updated to "${cleanName}" in real time!`
+      );
     } finally {
       setSaving(false);
     }
@@ -218,15 +255,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const unlockedBanners = Array.isArray(user.unlockedBanners) ? user.unlockedBanners : [];
 
   return (
-    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4">
-      {/* Live Profile Banner + Avatar Header Preview Card */}
+    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 space-y-4">
+      {/* Live Profile Banner + Avatar Header */}
       <div className="cyber-panel rounded-2xl overflow-hidden border border-amber-500/30 shadow-xl">
         <div className="relative h-36 sm:h-44 w-full bg-[#070b14]">
-          <img
-            src={activeBannerSrc}
-            alt="Profile Banner"
-            className="w-full h-full object-cover"
-          />
+          <img src={activeBannerSrc} alt="Profile Banner" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-transparent" />
           <button
             type="button"
@@ -236,13 +269,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
             <span>{lang === 'my' ? 'Banner ပုံတင်မည်' : 'Upload Banner'}</span>
           </button>
-          <input
-            ref={bannerInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleBannerUpload}
-            className="hidden"
-          />
+          <input ref={bannerInputRef} type="file" accept="image/*" onChange={handleBannerUpload} className="hidden" />
         </div>
 
         <div className="px-4 sm:px-6 pb-5 -mt-12 relative z-10 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -251,7 +278,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <AvatarWithFrame
                 avatarUrl={user.avatarUrl}
                 frameId={selectedFrame}
-                displayName={user.displayName}
+                displayName={displayName || user.displayName}
                 size="xl"
                 status="online"
               />
@@ -259,17 +286,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="absolute -bottom-1 -right-1 z-30 w-9 h-9 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-lg cursor-pointer"
-                title={lang === 'my' ? 'ပုံတင်ပြီး Crop လုပ်ရန်' : 'Upload & Crop Photo'}
               >
                 <Camera className="w-4 h-4" />
               </button>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                onChange={handleFileSelected}
-                className="hidden"
-              />
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelected} className="hidden" />
             </div>
 
             <div className="text-center sm:text-left space-y-1 pb-1">
@@ -280,11 +300,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <RankTierIcon tier={user.rank || 'silver'} className="w-5 h-5" />
               </div>
               <div className="text-xs font-mono text-amber-400">
-                {user.gameId} • {user.xp} XP ({user.rank || 'Silver'})
+                {user.gameId} • {user.xp || 0} XP ({user.rank || 'Silver'})
               </div>
-              {bio && (
-                <p className="text-xs text-slate-300 max-w-md line-clamp-2 pt-0.5">{bio}</p>
-              )}
+              {bio && <p className="text-xs text-slate-300 max-w-md line-clamp-2 pt-0.5">{bio}</p>}
             </div>
           </div>
 
@@ -309,7 +327,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       </div>
 
-      {/* Received Tournament Gifts & Trophies Showcase */}
+      {/* Received Gifts & Trophies */}
       {gifts.length > 0 && (
         <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-400/25">
           <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
@@ -317,7 +335,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <span>
               {lang === 'my'
                 ? `ရရှိထားသော ပြိုင်ပွဲဆုတံဆိပ်နှင့် လက်ဆောင်များ (${gifts.length})`
-                : `Tournament Trophies & Admin Gifts (${gifts.length})`}
+                : `Tournament Trophies & Gifts (${gifts.length})`}
             </span>
           </h3>
           <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2.5">
@@ -346,7 +364,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <form onSubmit={handleSaveProfile} className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <FileText className="w-4 h-4 text-amber-400" />
-          <span>{lang === 'my' ? 'ကိုယ်ရေးအချက်အလက်နှင့် Bio ပြင်ဆင်ရန်' : 'Edit Profile Details & Bio'}</span>
+          <span>{lang === 'my' ? 'အမည်နှင့် Bio ပြင်ဆင်ရန် (Real-Time)' : 'Edit Display Name & Bio'}</span>
         </h3>
 
         <div className="grid sm:grid-cols-2 gap-3">
@@ -354,6 +372,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <label className="block text-[11px] text-slate-400 mb-1">Display Name</label>
             <input
               type="text"
+              required
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
               placeholder="Display Name"
@@ -363,7 +382,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
           <div>
             <label className="block text-[11px] text-slate-400 mb-1">
-              {lang === 'my' ? 'အကြိုက်ဆုံး ဂိမ်း (Favorite Game)' : 'Favorite Game'}
+              {lang === 'my' ? 'အကြိုက်ဆုံး ဂိမ်း' : 'Favorite Game'}
             </label>
             <div className="grid grid-cols-4 gap-1.5">
               {(['connect4', 'tictactoe', 'rps', 'sakarhtar'] as GameType[]).map((g) => (
@@ -374,7 +393,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   className={`h-10 rounded-xl flex items-center justify-center border cursor-pointer transition-all ${
                     favoriteGame === g ? 'cyber-gold-active' : 'bg-[#070b14] border-white/10 opacity-70 hover:opacity-100'
                   }`}
-                  title={g}
                 >
                   <GameBadgeIcon gameType={g} className="w-6 h-6" />
                 </button>
@@ -386,7 +404,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <div>
           <div className="flex items-center justify-between mb-1">
             <label className="text-[11px] text-slate-400">
-              {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Player Bio)' : 'Player Bio'}
+              {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio)' : 'Player Bio'}
             </label>
             <span className="text-[10px] font-mono text-slate-500">{bio.length}/180</span>
           </div>
@@ -395,11 +413,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             maxLength={180}
             value={bio}
             onChange={(e) => setBio(e.target.value)}
-            placeholder={
-              lang === 'my'
-                ? 'အခြားကစားသမားများ သင့် Profile ဝင်ကြည့်ချိန် မြင်ရမည့် စာသားရေးပါ...'
-                : 'Write a short bio visible when players inspect your profile...'
-            }
+            placeholder={lang === 'my' ? 'သင့် Profile ဝင်ကြည့်ချိန် မြင်ရမည့် စာသား...' : 'Short bio...'}
             className="w-full p-3 rounded-xl bg-[#070b14] border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400"
           />
         </div>
@@ -411,22 +425,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             className="h-10 px-6 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
           >
             <Save className="w-4 h-4" />
-            <span>{saving ? 'Saving...' : lang === 'my' ? 'Profile & Bio သိမ်းဆည်းမည်' : 'Save Profile & Bio'}</span>
+            <span>{saving ? 'Saving...' : lang === 'my' ? 'Profile & Bio သိမ်းဆည်းမည်' : 'Save Changes'}</span>
           </button>
         </div>
       </form>
 
-      {/* Premium Profile Banner Selector */}
+      {/* Banner Selector */}
       <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <ImageIcon className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'Profile Banner များ ရွေးချယ်ရန်' : 'Select Premium Profile Banner'}</span>
+            <span>{lang === 'my' ? 'Profile Banner ရွေးချယ်ရန်' : 'Select Profile Banner'}</span>
           </h3>
           <button
             type="button"
             onClick={() => bannerInputRef.current?.click()}
-            className="text-[11px] font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1 cursor-pointer"
+            className="text-[11px] font-bold text-amber-300 flex items-center gap-1 cursor-pointer"
           >
             <Upload className="w-3.5 h-3.5" /> {lang === 'my' ? 'ကိုယ်ပိုင်ပုံတင်မည်' : 'Upload Custom'}
           </button>
@@ -434,8 +448,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
           {PREMIUM_BANNER_TEMPLATES.map((b) => {
-            const unlocked =
-              user.role === 'admin' || (user.xp || 0) >= b.minXp || unlockedBanners.includes(b.id);
+            const unlocked = user.role === 'admin' || (user.xp || 0) >= b.minXp || unlockedBanners.includes(b.id);
             const equipped = !customBannerUrl && selectedBannerId === b.id;
             return (
               <button
@@ -472,20 +485,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       </div>
 
-      {/* SVG Profile Frame Selector */}
+      {/* Frame Selector */}
       <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'Profile Frame ဘောင်များ ရွေးချယ်ရန်' : 'Select Profile Frame'}</span>
+            <span>{lang === 'my' ? 'Profile Frame ဘောင်များ' : 'Profile Frames'}</span>
           </h3>
-          <span className="text-[11px] font-mono text-slate-400">XP: {user.xp}</span>
+          <span className="text-[11px] font-mono text-slate-400">XP: {user.xp || 0}</span>
         </div>
 
         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
           {SVG_FRAME_TEMPLATES.map((tpl) => {
-            const unlocked =
-              user.role === 'admin' || (user.xp || 0) >= tpl.minXp || unlockedFrames.includes(tpl.id);
+            const unlocked = user.role === 'admin' || (user.xp || 0) >= tpl.minXp || unlockedFrames.includes(tpl.id);
             const equipped = selectedFrame === tpl.id;
             return (
               <motion.button
@@ -504,12 +516,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <div className="absolute top-2 right-2">
                   <RankTierIcon tier={tpl.id} className="w-4 h-4" />
                 </div>
-                <AvatarWithFrame
-                  avatarUrl={user.avatarUrl}
-                  frameId={tpl.id}
-                  displayName={user.displayName}
-                  size="md"
-                />
+                <AvatarWithFrame avatarUrl={user.avatarUrl} frameId={tpl.id} displayName={user.displayName} size="md" />
                 <div className="text-[11px] font-bold text-white truncate max-w-full">
                   {lang === 'my' ? tpl.nameMy : tpl.name}
                 </div>
@@ -532,13 +539,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       </div>
 
-      {/* Avatar Circular Crop Modal */}
+      {/* Avatar Crop Modal */}
       {cropSource && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/50 p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white">
-                {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပြီး Crop ဖြတ်ပါ' : 'Fit & Crop Avatar in Frame'}
+                {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပါ' : 'Fit & Crop Avatar'}
               </h3>
               <button
                 type="button"
@@ -548,14 +555,13 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <X className="w-4 h-4" />
               </button>
             </div>
-
             <div className="flex justify-center">
               <div
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={handlePointerUp}
-                className="relative w-[220px] h-[220px] rounded-full overflow-hidden bg-[#070b14] border-4 border-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.45)] touch-none cursor-grab active:cursor-grabbing flex items-center justify-center"
+                className="relative w-[220px] h-[220px] rounded-full overflow-hidden bg-[#070b14] border-4 border-amber-400 touch-none cursor-grab active:cursor-grabbing flex items-center justify-center"
               >
                 <img
                   ref={imgRef}
@@ -565,10 +571,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
                   className="max-w-none w-full h-full object-cover select-none pointer-events-none"
                 />
-                <div className="absolute inset-0 rounded-full ring-2 ring-inset ring-white/30 pointer-events-none" />
               </div>
             </div>
-
             <div className="flex items-center gap-3 px-2">
               <ZoomOut className="w-4 h-4 text-slate-400" />
               <input
@@ -582,21 +586,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               />
               <ZoomIn className="w-4 h-4 text-amber-400" />
             </div>
-
             <div className="grid grid-cols-2 gap-2.5">
               <button
                 type="button"
                 onClick={() => setCropSource(null)}
                 className="h-11 rounded-xl bg-white/10 text-xs font-bold text-white cursor-pointer"
               >
-                {lang === 'my' ? 'မလုပ်တော့ပါ' : 'Cancel'}
+                Cancel
               </button>
               <button
                 type="button"
                 onClick={applyCroppedAvatar}
                 className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
               >
-                {lang === 'my' ? 'Crop လုပ်ပြီး တင်မည်' : 'Crop & Save'}
+                Save Avatar
               </button>
             </div>
           </div>
