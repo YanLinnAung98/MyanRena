@@ -2,9 +2,11 @@ import React from 'react';
 import { motion } from 'motion/react';
 import {
   Bot,
+  Check,
   ChevronLeft,
   ChevronRight,
   ChevronsRight,
+  Copy,
   Crown,
   Lock,
   MessageSquare,
@@ -18,6 +20,7 @@ import { GAME_LIST } from '../games/registry.ts';
 import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Difficulty, GameType, LandingContent, Language, TurnTimeLimit, UserProfile } from '../types.ts';
 import { GAME_ARTWORKS } from '../utils/gameArtworks.ts';
+import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 
 interface LobbyViewProps {
@@ -63,15 +66,17 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [difficulty, setDifficulty] = React.useState<Difficulty>('medium');
   const [bestOf, setBestOf] = React.useState<3 | 5>(3);
   const [roomCodeInput, setRoomCodeInput] = React.useState('');
+  const [copiedId, setCopiedId] = React.useState(false);
   const [lobbyChatInput, setLobbyChatInput] = React.useState('');
   const [lobbyMessages, setLobbyMessages] = React.useState<Array<{ id: number; sender: string; text: string }>>([
     { id: 1, sender: 'Vanguard System', text: 'Vanguard Cyber Arena မှ ကြိုဆိုပါတယ်!' },
   ]);
 
   const getGameDisplayTitle = (game: any) => {
+    if (!game) return 'Game';
     const norm = normalizeGameId(game.id);
     if (norm === 'sakarhtar') return lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz';
-    return lang === 'my' ? game.nameMy : game.name;
+    return lang === 'my' ? game.nameMy || game.name : game.name || game.nameMy;
   };
 
   const activeGameMeta = GAME_LIST[selectedIndex] || GAME_LIST[0];
@@ -81,11 +86,20 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const isLocked = Boolean(featureLocks?.[selectedGame] || featureLocks?.[normSelected]);
 
   const stepGame = (dir: -1 | 1) => {
+    soundEngine.playClick();
     setSelectedIndex((prev) => (prev + dir + GAME_LIST.length) % GAME_LIST.length);
+  };
+
+  const handleCopyMyId = () => {
+    navigator.clipboard?.writeText(currentUser.gameId || currentUser.id);
+    soundEngine.playClick();
+    setCopiedId(true);
+    setTimeout(() => setCopiedId(false), 1800);
   };
 
   const handleLaunch = () => {
     if (isLocked) return;
+    soundEngine.playClick();
     if (selectedMode === 'bot') {
       if (normSelected === 'sakarhtar') {
         onStartSakarSolo();
@@ -114,11 +128,14 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
     setLobbyChatInput('');
   };
 
-  const displayPlayers = onlinePlayers.length > 0 ? onlinePlayers : [currentUser];
+  const blockedIds: string[] = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
+  const displayPlayers = (onlinePlayers.length > 0 ? onlinePlayers : [currentUser]).filter(
+    (u) => !blockedIds.includes(u.id)
+  );
 
   return (
     <div className="h-[calc(100dvh-7.5rem)] lg:h-[calc(100dvh-4.5rem)] max-w-[1360px] mx-auto px-3 sm:px-6 py-2 lg:py-4 overflow-hidden">
-      {/* 1. MOBILE GAME UI (1-Column Thumb Carousel, Zero Scroll) */}
+      {/* 1. MOBILE GAME UI (Zero Scroll) */}
       <div className="lg:hidden h-full flex flex-col justify-between gap-2 overflow-hidden">
         <div className="relative flex items-center gap-2.5 pt-0.5 shrink-0">
           <motion.div
@@ -194,11 +211,18 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           </button>
         </div>
 
-        <div className="flex items-center justify-between px-1 shrink-0">
-          <h2 className="text-base font-display font-bold text-white truncate">
+        <div className="flex items-center justify-between px-1 shrink-0 gap-2">
+          <h2 className="text-sm sm:text-base font-display font-bold text-white truncate">
             {getGameDisplayTitle(activeGameMeta)}
           </h2>
-          <span className="text-[11px] font-mono text-amber-400">{currentUser.xp} XP</span>
+          <button
+            type="button"
+            onClick={handleCopyMyId}
+            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/30 text-[11px] font-mono text-amber-300 cursor-pointer shrink-0"
+          >
+            <span>{currentUser.gameId}</span>
+            {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+          </button>
         </div>
 
         <div className="space-y-1.5 shrink-0">
@@ -314,10 +338,18 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-2 text-sm font-mono mt-0.5">
-                  <span className="text-slate-400">{currentUser.gameId}</span>
+                  <button
+                    type="button"
+                    onClick={handleCopyMyId}
+                    title="Copy Game ID"
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-white/5 hover:bg-amber-500/20 border border-white/10 text-slate-200 hover:text-amber-300 transition-colors cursor-pointer"
+                  >
+                    <span>{currentUser.gameId}</span>
+                    {copiedId ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
                   <span className="text-slate-600">•</span>
                   <span className="text-amber-400 font-bold">
-                    {currentUser.xp} XP ({currentUser.rank || 'Legend'})
+                    {currentUser.xp} XP ({currentUser.rank || 'Silver'})
                   </span>
                   <Crown className="w-4 h-4 text-amber-400" />
                 </div>
@@ -342,7 +374,10 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   type="button"
                   whileHover={{ y: -4, scale: 1.015 }}
                   whileTap={{ scale: 0.98 }}
-                  onClick={() => setSelectedIndex(idx)}
+                  onClick={() => {
+                    soundEngine.playClick();
+                    setSelectedIndex(idx);
+                  }}
                   className={`rounded-2xl p-3 flex flex-col justify-between text-left transition-all cursor-pointer relative overflow-hidden ${
                     active ? 'cyber-gold-active' : 'cyber-panel hover:border-slate-500/50'
                   }`}
@@ -488,12 +523,12 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           </div>
         </div>
 
-        {/* Right Sidebar: Online Friends & Live Arena Chat */}
+        {/* Right Sidebar: Online Friends & Chat */}
         <aside className="lg:col-span-3 cyber-panel rounded-2xl p-3.5 flex flex-col justify-between gap-3 h-full overflow-hidden border border-white/10">
           <div className="flex items-center justify-between border-b border-white/10 pb-2.5 shrink-0">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
               <Users className="w-4 h-4 text-amber-400" />
-              Online Friends & Chat
+              Online Players & Chat
             </span>
             <span className="text-[11px] font-mono text-emerald-400">{displayPlayers.length}</span>
           </div>
@@ -521,7 +556,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     <div className="text-xs font-bold text-amber-200 truncate">{pl.displayName}</div>
                     <div className="text-[10px] text-emerald-400 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      {(pl as any).deviceType || 'Online'} · {pl.xp} XP
+                      {pl.gameId} · {pl.xp} XP
                     </div>
                   </div>
                 </button>
