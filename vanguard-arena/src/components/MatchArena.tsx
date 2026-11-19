@@ -4,6 +4,7 @@ import { Award, Flag, MessageSquare, RotateCcw, Send, Sparkles, X } from 'lucide
 import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Language, UserProfile } from '../types.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
+import { WiseOwl3D } from './WiseOwl3D.tsx';
 
 interface MatchArenaProps {
   lang: Language;
@@ -20,102 +21,6 @@ interface MatchArenaProps {
   onNotify: (level: string, message: string) => void;
 }
 
-// 3D Animated Wise Owl (ပညာရှိ ဇီးကွက်) Component for Sakar-Htar
-const WiseOwl3D: React.FC<{ mood: 'asking' | 'happy' | 'thinking' }> = ({ mood }) => {
-  return (
-    <motion.div
-      animate={{
-        y: [0, -6, 0],
-        rotateY: mood === 'happy' ? [0, 12, -12, 0] : [0, 4, -4, 0],
-      }}
-      transition={{ duration: mood === 'happy' ? 1.2 : 3.6, repeat: Infinity, ease: 'easeInOut' }}
-      style={{ perspective: 900 }}
-      className="relative w-24 h-24 sm:w-28 sm:h-28 mx-auto select-none shrink-0"
-    >
-      {/* Golden Ambient Aura */}
-      <div className="absolute inset-1 rounded-full bg-amber-500/20 blur-xl animate-pulse" />
-
-      <svg viewBox="0 0 200 200" className="w-full h-full relative z-10 drop-shadow-[0_10px_18px_rgba(0,0,0,0.75)]">
-        <defs>
-          <radialGradient id="owlBody3d" cx="40%" cy="30%" r="70%">
-            <stop offset="0%" stopColor="#92400e" />
-            <stop offset="55%" stopColor="#451a03" />
-            <stop offset="100%" stopColor="#1c0a00" />
-          </radialGradient>
-          <radialGradient id="owlBelly3d" cx="50%" cy="35%" r="65%">
-            <stop offset="0%" stopColor="#fef3c7" />
-            <stop offset="65%" stopColor="#d97706" />
-            <stop offset="100%" stopColor="#78350f" />
-          </radialGradient>
-          <linearGradient id="owlGold" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0%" stopColor="#fef08a" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="100%" stopColor="#92400e" />
-          </linearGradient>
-        </defs>
-
-        {/* Left & Right 3D Flapping Wings */}
-        <motion.path
-          d="M44 95 C15 110, 18 155, 50 165 C55 140, 52 115, 44 95 Z"
-          fill="url(#owlBody3d)"
-          stroke="#f59e0b"
-          strokeWidth="2"
-          animate={{ rotate: mood === 'happy' ? [-18, 12, -18] : [-5, 4, -5] }}
-          transition={{ duration: mood === 'happy' ? 0.5 : 2.4, repeat: Infinity }}
-          style={{ transformOrigin: '48px 102px' }}
-        />
-        <motion.path
-          d="M156 95 C185 110, 182 155, 150 165 C145 140, 148 115, 156 95 Z"
-          fill="url(#owlBody3d)"
-          stroke="#f59e0b"
-          strokeWidth="2"
-          animate={{ rotate: mood === 'happy' ? [18, -12, 18] : [5, -4, 5] }}
-          transition={{ duration: mood === 'happy' ? 0.5 : 2.4, repeat: Infinity }}
-          style={{ transformOrigin: '152px 102px' }}
-        />
-
-        {/* Main 3D Torso */}
-        <ellipse cx="100" cy="122" rx="54" ry="60" fill="url(#owlBody3d)" stroke="#d97706" strokeWidth="2.5" />
-        <ellipse cx="100" cy="132" rx="36" ry="42" fill="url(#owlBelly3d)" />
-
-        {/* Wise Owl Ear Tufts & Head */}
-        <polygon points="54,42 74,56 62,74" fill="url(#owlBody3d)" stroke="#f59e0b" strokeWidth="2" />
-        <polygon points="146,42 126,56 138,74" fill="url(#owlBody3d)" stroke="#f59e0b" strokeWidth="2" />
-        <circle cx="100" cy="76" r="44" fill="url(#owlBody3d)" stroke="#f59e0b" strokeWidth="2.5" />
-
-        {/* Scholarly Golden Crown / Mortarboard */}
-        <polygon points="100,14 146,30 100,44 54,30" fill="url(#owlGold)" stroke="#fef08a" strokeWidth="1.5" />
-        <rect x="78" y="34" width="44" height="10" rx="4" fill="#78350f" stroke="#fbbf24" strokeWidth="1.5" />
-        <line x1="142" y1="31" x2="152" y2="54" stroke="#fde047" strokeWidth="2.5" />
-        <circle cx="152" cy="56" r="3.5" fill="#fde047" />
-
-        {/* Glowing Wise Eyes */}
-        <circle cx="80" cy="76" r="19" fill="#090d16" stroke="url(#owlGold)" strokeWidth="3.5" />
-        <circle cx="120" cy="76" r="19" fill="#090d16" stroke="url(#owlGold)" strokeWidth="3.5" />
-        <motion.g
-          animate={{ scaleY: [1, 1, 0.1, 1, 1] }}
-          transition={{ duration: 4, repeat: Infinity, times: [0, 0.46, 0.5, 0.54, 1] }}
-          style={{ transformOrigin: '100px 76px' }}
-        >
-          <circle cx="80" cy="76" r="10" fill="#fbbf24" />
-          <circle cx="120" cy="76" r="10" fill="#fbbf24" />
-          <circle cx="80" cy="76" r="5" fill="#090d16" />
-          <circle cx="120" cy="76" r="5" fill="#090d16" />
-          <circle cx="77" cy="73" r="2.5" fill="#ffffff" />
-          <circle cx="117" cy="73" r="2.5" fill="#ffffff" />
-        </motion.g>
-
-        {/* Golden Beak */}
-        <polygon points="92,88 108,88 100,104" fill="url(#owlGold)" stroke="#fef08a" strokeWidth="1" />
-
-        {/* Golden Talons */}
-        <ellipse cx="82" cy="182" rx="12" ry="5" fill="url(#owlGold)" />
-        <ellipse cx="118" cy="182" rx="12" ry="5" fill="url(#owlGold)" />
-      </svg>
-    </motion.div>
-  );
-};
-
 export const MatchArena: React.FC<MatchArenaProps> = ({
   lang,
   match,
@@ -131,6 +36,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const [chatText, setChatText] = React.useState('');
   const [owlMood, setOwlMood] = React.useState<'asking' | 'happy' | 'thinking'>('asking');
   const [rpsShaking, setRpsShaking] = React.useState(false);
+  const [hoverCol, setHoverCol] = React.useState<number>(3);
+  const [lastAnsFlash, setLastAnsFlash] = React.useState<{ idx: number; correct: boolean } | null>(null);
 
   const gType = normalizeGameId(match.gameType);
   const players: any[] = match.players || [currentUser];
@@ -150,10 +57,16 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
     setChatText('');
   };
 
-  const handleSakarAnswer = (oIdx: number, correctIdx: number) => {
-    setOwlMood(oIdx === correctIdx ? 'happy' : 'thinking');
-    setTimeout(() => setOwlMood('asking'), 900);
-    onMove({ answerIndex: oIdx });
+  const handleQuizAnswer = (oIdx: number, correctIdx: number) => {
+    if (lastAnsFlash) return;
+    const isRight = oIdx === correctIdx;
+    setLastAnsFlash({ idx: oIdx, correct: isRight });
+    setOwlMood(isRight ? 'happy' : 'thinking');
+    setTimeout(() => {
+      setLastAnsFlash(null);
+      setOwlMood('asking');
+      onMove({ answerIndex: oIdx });
+    }, 520);
   };
 
   const handleRpsPick = (choice: string) => {
@@ -161,7 +74,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
     setTimeout(() => {
       setRpsShaking(false);
       onMove({ choice });
-    }, 380);
+    }, 450);
   };
 
   return (
@@ -180,7 +93,14 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             <div className="text-xs font-bold text-white truncate max-w-[85px] sm:max-w-[140px]">
               {p1.displayName}
             </div>
-            <div className="text-xs font-mono font-bold text-amber-400">{p1Score}</div>
+            <motion.div
+              key={p1Score}
+              initial={{ scale: 1.35 }}
+              animate={{ scale: 1 }}
+              className="text-xs font-mono font-bold text-amber-400"
+            >
+              {p1Score}
+            </motion.div>
           </div>
         </div>
 
@@ -191,7 +111,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             ? 'Tic-Tac-Toe'
             : gType === 'rps'
             ? `RPS (Bo${match.bestOf || 3})`
-            : `ပညာရှိ ဇီးကွက် စကားထာ`}
+            : 'ဉာဏ်စမ်းပဟေဠိ'}
         </span>
 
         <div className="flex items-center gap-2 min-w-0">
@@ -199,7 +119,14 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             <div className="text-xs font-bold text-white truncate max-w-[85px] sm:max-w-[140px]">
               {p2.displayName}
             </div>
-            <div className="text-xs font-mono font-bold text-sky-400">{p2Score}</div>
+            <motion.div
+              key={p2Score}
+              initial={{ scale: 1.35 }}
+              animate={{ scale: 1 }}
+              className="text-xs font-mono font-bold text-sky-400"
+            >
+              {p2Score}
+            </motion.div>
           </div>
           <AvatarWithFrame
             avatarUrl={p2.avatarUrl}
@@ -213,60 +140,72 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
 
       {/* Centered Zero-Scroll Game Board */}
       <div className="flex-1 min-h-0 flex items-center justify-center py-1">
-        {/* 1. TIC-TAC-TOE (3D Tilt Neon Board) */}
+        {/* 1. TIC-TAC-TOE (3D Tilt + Animated SVG Stroke Drawing X & O) */}
         {gType === 'tictactoe' && (
           <motion.div
-            initial={{ opacity: 0, scale: 0.92 }}
+            initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
             style={{ perspective: 1000 }}
             className="w-full max-w-[295px] sm:max-w-[340px] space-y-2.5"
           >
             <div className="text-center text-xs font-bold text-amber-300">
               {isFinished
-                ? lang === 'my'
-                  ? 'ပွဲပြီးဆုံးပါပြီ'
-                  : 'Match Finished'
+                ? lang === 'my' ? 'ပွဲပြီးဆုံးပါပြီ' : 'Match Finished'
                 : isMyTurn
-                ? lang === 'my'
-                  ? 'သင့်အလှည့် (X) — အကွက်တစ်ခု နှိပ်ပါ'
-                  : 'Your Turn (X) — Tap a cell'
-                : lang === 'my'
-                ? 'ပြိုင်ဘက် အလှည့်စောင့်နေပါသည်...'
-                : "Opponent's Turn..."}
+                ? lang === 'my' ? 'သင့်အလှည့် (X) — အကွက်တစ်ခု နှိပ်ပါ' : 'Your Turn (X) — Tap a cell'
+                : lang === 'my' ? 'ပြိုင်ဘက် အလှည့်စောင့်နေပါသည်...' : "Opponent's Turn..."}
             </div>
             <motion.div
-              animate={{ rotateX: 6 }}
-              className="grid grid-cols-3 gap-2.5 aspect-square p-3 rounded-2xl cyber-panel border-2 border-sky-400/40 shadow-[0_14px_34px_rgba(56,189,248,0.2)]"
+              animate={{ rotateX: 8 }}
+              className="grid grid-cols-3 gap-2.5 aspect-square p-3 rounded-2xl cyber-panel border-2 border-sky-400/40 shadow-[0_16px_38px_rgba(56,189,248,0.22)]"
             >
               {(match.tttBoard || Array(9).fill(null)).map((cell: string | null, idx: number) => (
                 <motion.button
                   key={idx}
-                  whileHover={!cell && !isFinished ? { scale: 1.04 } : {}}
+                  whileHover={!cell && !isFinished ? { scale: 1.05, borderColor: '#38bdf8' } : {}}
                   whileTap={!cell && !isFinished ? { scale: 0.9 } : {}}
                   type="button"
                   disabled={isFinished || !isMyTurn || cell !== null}
                   onClick={() => onMove({ index: idx })}
-                  className="rounded-xl bg-[#070b14] hover:bg-sky-500/10 border border-sky-400/25 flex items-center justify-center text-4xl sm:text-5xl font-display font-extrabold cursor-pointer"
+                  className="rounded-xl bg-[#070b14] hover:bg-sky-500/10 border border-sky-400/25 flex items-center justify-center p-3 cursor-pointer"
                 >
                   {cell === 'X' && (
-                    <motion.span
-                      initial={{ scale: 0.2, rotate: -25, opacity: 0 }}
-                      animate={{ scale: 1, rotate: 0, opacity: 1 }}
-                      transition={{ type: 'spring', stiffness: 480, damping: 18 }}
-                      className="text-sky-400 drop-shadow-[0_0_12px_rgba(56,189,248,0.9)]"
-                    >
-                      X
-                    </motion.span>
+                    <svg viewBox="0 0 60 60" className="w-full h-full drop-shadow-[0_0_10px_rgba(56,189,248,0.9)]">
+                      <motion.path
+                        d="M12 12 L48 48"
+                        stroke="#38bdf8"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 0.24 }}
+                      />
+                      <motion.path
+                        d="M48 12 L12 48"
+                        stroke="#7dd3fc"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 0.24, delay: 0.1 }}
+                      />
+                    </svg>
                   )}
                   {cell === 'O' && (
-                    <motion.span
-                      initial={{ scale: 0.2, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ type: 'spring', stiffness: 480, damping: 18 }}
-                      className="text-amber-400 drop-shadow-[0_0_12px_rgba(251,191,36,0.9)]"
-                    >
-                      O
-                    </motion.span>
+                    <svg viewBox="0 0 60 60" className="w-full h-full drop-shadow-[0_0_10px_rgba(251,191,36,0.9)]">
+                      <motion.circle
+                        cx="30"
+                        cy="30"
+                        r="20"
+                        fill="none"
+                        stroke="#fbbf24"
+                        strokeWidth="8"
+                        strokeLinecap="round"
+                        initial={{ pathLength: 0 }}
+                        animate={{ pathLength: 1 }}
+                        transition={{ duration: 0.32 }}
+                      />
+                    </svg>
                   )}
                 </motion.button>
               ))}
@@ -274,27 +213,36 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           </motion.div>
         )}
 
-        {/* 2. CONNECT 4 (Gravity Bounce Discs) */}
+        {/* 2. CONNECT 4 (Column Hover Preview + Multi-Bounce Gravity Discs) */}
         {gType === 'connect4' && (
           <motion.div
             initial={{ opacity: 0, scale: 0.94 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full max-w-[340px] sm:max-w-[390px] space-y-2"
+            className="w-full max-w-[340px] sm:max-w-[390px] space-y-1.5"
           >
             <div className="text-center text-xs font-bold text-amber-300">
               {isFinished
-                ? lang === 'my'
-                  ? 'ပွဲပြီးဆုံးပါပြီ'
-                  : 'Match Finished'
+                ? lang === 'my' ? 'ပွဲပြီးဆုံးပါပြီ' : 'Match Finished'
                 : isMyTurn
-                ? lang === 'my'
-                  ? 'သင့်အလှည့် — ကော်လံတစ်ခု နှိပ်ပါ'
-                  : 'Your Turn — Tap any column'
-                : lang === 'my'
-                ? 'ပြိုင်ဘက် အလှည့်စောင့်နေပါသည်...'
-                : "Opponent's Turn..."}
+                ? lang === 'my' ? 'သင့်အလှည့် — ကော်လံတစ်ခု နှိပ်ပါ' : 'Your Turn — Tap any column'
+                : lang === 'my' ? 'ပြိုင်ဘက် အလှည့်စောင့်နေပါသည်...' : "Opponent's Turn..."}
             </div>
-            <div className="p-2.5 rounded-2xl bg-gradient-to-b from-blue-900/85 to-blue-950/95 border-2 border-blue-400/45 shadow-[0_0_28px_rgba(37,99,235,0.35)] grid grid-cols-7 gap-1.5">
+
+            {/* Top Floating Drop Indicator */}
+            <div className="grid grid-cols-7 gap-1.5 px-2.5 h-6">
+              {[0, 1, 2, 3, 4, 5, 6].map((colIdx) => (
+                <div key={colIdx} className="flex items-center justify-center">
+                  {hoverCol === colIdx && isMyTurn && !isFinished && (
+                    <motion.span
+                      layoutId="c4HoverDisc"
+                      className="w-5 h-5 rounded-full bg-amber-400 shadow-[0_0_12px_#fbbf24]"
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <div className="p-2.5 rounded-2xl bg-gradient-to-b from-blue-900/90 to-blue-950 border-2 border-blue-400/45 shadow-[0_0_30px_rgba(37,99,235,0.35)] grid grid-cols-7 gap-1.5">
               {(match.c4Board || Array.from({ length: 6 }, () => Array(7).fill(null))).map(
                 (row: Array<string | null>, rIdx: number) =>
                   row.map((cell, cIdx) => (
@@ -302,14 +250,18 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
                       key={`${rIdx}-${cIdx}`}
                       type="button"
                       disabled={isFinished || !isMyTurn}
-                      onClick={() => onMove({ col: cIdx })}
+                      onMouseEnter={() => setHoverCol(cIdx)}
+                      onClick={() => {
+                        setHoverCol(cIdx);
+                        onMove({ col: cIdx });
+                      }}
                       className="aspect-square rounded-full bg-[#070b14] border border-blue-300/20 p-0.5 flex items-center justify-center cursor-pointer overflow-hidden"
                     >
                       {cell && (
                         <motion.span
-                          initial={{ y: -140, scale: 0.85 }}
-                          animate={{ y: 0, scale: 1 }}
-                          transition={{ type: 'spring', stiffness: 360, damping: 20 }}
+                          initial={{ y: -(rIdx + 1) * 42 }}
+                          animate={{ y: 0 }}
+                          transition={{ type: 'spring', stiffness: 380, damping: 19 }}
                           className={`w-full h-full rounded-full ${
                             cell === 'P1'
                               ? 'bg-gradient-to-br from-amber-200 via-amber-400 to-amber-600 shadow-[0_0_12px_#f59e0b]'
@@ -324,30 +276,39 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           </motion.div>
         )}
 
-        {/* 3. ROCK, PAPER, SCISSORS (3D Clash Shake Animation) */}
+        {/* 3. ROCK, PAPER, SCISSORS (3D Dual Clash Shake + Shockwave Reveal) */}
         {gType === 'rps' && (() => {
           const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
           return (
             <div className="w-full max-w-sm space-y-3.5 text-center">
-              <div className="p-4 rounded-2xl cyber-panel border border-amber-500/30 space-y-2">
+              <div className="p-4 rounded-2xl cyber-panel border border-amber-500/30 space-y-2 relative overflow-hidden">
                 <div className="text-xs font-bold text-amber-300">Round {match.round || 1}</div>
                 {rpsShaking ? (
                   <motion.div
-                    animate={{ y: [0, -18, 0, -18, 0] }}
-                    transition={{ duration: 0.38 }}
-                    className="flex items-center justify-center gap-10 py-2 text-4xl"
+                    animate={{
+                      y: [0, -22, 0, -22, 0],
+                      rotate: [0, -15, 0, -15, 0],
+                    }}
+                    transition={{ duration: 0.45 }}
+                    className="flex items-center justify-center gap-12 py-2 text-5xl"
                   >
                     <span>✊</span>
-                    <span>✊</span>
+                    <span className="scale-x-[-1]">✊</span>
                   </motion.div>
                 ) : match.rpsLastRound ? (
                   <motion.div
                     key={match.round}
-                    initial={{ scale: 0.6, opacity: 0 }}
+                    initial={{ scale: 0.5, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: 'spring', stiffness: 420, damping: 18 }}
-                    className="flex items-center justify-center gap-6 py-1"
+                    transition={{ type: 'spring', stiffness: 450, damping: 16 }}
+                    className="flex items-center justify-center gap-6 py-1 relative"
                   >
+                    <motion.div
+                      initial={{ scale: 0.4, opacity: 0.9 }}
+                      animate={{ scale: 2.2, opacity: 0 }}
+                      transition={{ duration: 0.55 }}
+                      className="absolute w-16 h-16 rounded-full border-2 border-amber-400 pointer-events-none"
+                    />
                     <div>
                       <div className="text-4xl">
                         {match.rpsLastRound.p1Choice === 'rock'
@@ -373,12 +334,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
                 ) : (
                   <div className="py-3 text-xs font-semibold text-slate-300">
                     {myPicked
-                      ? lang === 'my'
-                        ? 'ပြိုင်ဘက် ရွေးချယ်မှု စောင့်နေသည်...'
-                        : 'Waiting for opponent choice...'
-                      : lang === 'my'
-                      ? 'လက်သင်္ကေတ တစ်ခု ရွေးချယ်ပါ'
-                      : 'Choose your move'}
+                      ? lang === 'my' ? 'ပြိုင်ဘက် ရွေးချယ်မှု စောင့်နေသည်...' : 'Waiting for opponent...'
+                      : lang === 'my' ? 'လက်သင်္ကေတ တစ်ခု ရွေးချယ်ပါ' : 'Choose your move'}
                   </div>
                 )}
               </div>
@@ -391,8 +348,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
                 ].map((item) => (
                   <motion.button
                     key={item.id}
-                    whileHover={{ y: -4, scale: 1.03 }}
-                    whileTap={{ scale: 0.9 }}
+                    whileHover={{ y: -4, scale: 1.04 }}
+                    whileTap={{ scale: 0.88 }}
                     type="button"
                     disabled={isFinished || myPicked || rpsShaking}
                     onClick={() => handleRpsPick(item.id)}
@@ -407,7 +364,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           );
         })()}
 
-        {/* 4. SAKAR-HTAR WITH 3D WISE OWL (ပညာရှိ ဇီးကွက် မေးခွန်းမေးသည့်ပုံစံ) */}
+        {/* 4. ဉာဏ်စမ်းပဟေဠိ WITH 3D WISE OWL ASKING QUESTIONS */}
         {gType === 'sakarhtar' && (() => {
           const riddles = match.riddles || [];
           const idx = Math.min(match.riddleIndex || 0, Math.max(0, riddles.length - 1));
@@ -434,24 +391,25 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
                 </div>
               )}
 
-              {/* 3D Animated Wise Owl Mascot */}
-              <WiseOwl3D mood={owlMood} />
+              {/* 3D Animated Wise Owl Asking the Question */}
+              <WiseOwl3D mood={owlMood} questionNumber={idx + 1} />
 
-              {/* Wise Owl Speech Scroll */}
+              {/* Golden Question Parchment Scroll */}
               <AnimatePresence mode="wait">
                 <motion.div
                   key={idx}
-                  initial={{ opacity: 0, rotateX: -20, y: 12 }}
-                  animate={{ opacity: 1, rotateX: 0, y: 0 }}
+                  initial={{ opacity: 0, scaleY: 0.7, y: 10 }}
+                  animate={{ opacity: 1, scaleY: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  transition={{ type: 'spring', stiffness: 320, damping: 24 }}
-                  style={{ perspective: 900 }}
+                  transition={{ type: 'spring', stiffness: 340, damping: 22 }}
                   className="p-3.5 rounded-2xl cyber-gold-active relative"
                 >
                   <div className="flex items-center justify-between text-[11px] text-amber-300 font-bold mb-1">
                     <span className="flex items-center gap-1">
                       <Sparkles className="w-3.5 h-3.5" />
-                      {lang === 'my' ? `ပညာရှိ ဇီးကွက် မေးခွန်း (${idx + 1}/${riddles.length})` : `Wise Owl Riddle (${idx + 1}/${riddles.length})`}
+                      {lang === 'my'
+                        ? `ပညာရှိ ဇီးကွက် မေးခွန်း (${idx + 1}/${riddles.length})`
+                        : `Wise Owl Quiz (${idx + 1}/${riddles.length})`}
                     </span>
                     <span>{match.scores?.[currentUser.id] ?? 0} PTS</span>
                   </div>
@@ -467,20 +425,31 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-2">
-                  {opts.map((opt, oIdx) => (
-                    <motion.button
-                      key={`${idx}_${oIdx}`}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.94 }}
-                      type="button"
-                      disabled={isFinished}
-                      onClick={() => handleSakarAnswer(oIdx, current.answerIndex)}
-                      className="p-2.5 sm:p-3 rounded-xl cyber-panel hover:border-amber-400 text-left text-xs font-bold text-white cursor-pointer"
-                    >
-                      <span className="text-amber-400 font-mono mr-1.5">{oIdx + 1}.</span>
-                      {opt}
-                    </motion.button>
-                  ))}
+                  {opts.map((opt, oIdx) => {
+                    const isFlashed = lastAnsFlash?.idx === oIdx;
+                    const flashClass = isFlashed
+                      ? lastAnsFlash.correct
+                        ? '!bg-emerald-500/30 !border-emerald-400'
+                        : '!bg-rose-500/30 !border-rose-400'
+                      : '';
+                    return (
+                      <motion.button
+                        key={`${idx}_${oIdx}`}
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: oIdx * 0.05 }}
+                        whileHover={{ scale: 1.02 }}
+                        whileTap={{ scale: 0.94 }}
+                        type="button"
+                        disabled={isFinished || Boolean(lastAnsFlash)}
+                        onClick={() => handleQuizAnswer(oIdx, current.answerIndex)}
+                        className={`p-2.5 sm:p-3 rounded-xl cyber-panel hover:border-amber-400 text-left text-xs font-bold text-white cursor-pointer transition-colors ${flashClass}`}
+                      >
+                        <span className="text-amber-400 font-mono mr-1.5">{oIdx + 1}.</span>
+                        {opt}
+                      </motion.button>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -565,16 +534,10 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             <div>
               <h3 className="text-xl font-display font-bold text-white">
                 {match.isDraw
-                  ? lang === 'my'
-                    ? 'သရေပွဲ!'
-                    : 'Draw Match!'
+                  ? lang === 'my' ? 'သရေပွဲ!' : 'Draw Match!'
                   : didWin
-                  ? lang === 'my'
-                    ? 'အနိုင်ရရှိပါသည်!'
-                    : 'Victory!'
-                  : lang === 'my'
-                  ? 'ရှုံးနိမ့်သွားပါသည်'
-                  : 'Defeat'}
+                  ? lang === 'my' ? 'အနိုင်ရရှိပါသည်!' : 'Victory!'
+                  : lang === 'my' ? 'ရှုံးနိမ့်သွားပါသည်' : 'Defeat'}
               </h3>
               <p className="text-sm font-mono font-bold text-amber-400 mt-1">
                 {match.isDraw ? '+25 XP' : didWin ? '+75 XP' : '-20 XP'}
