@@ -20,12 +20,15 @@ import {
   Volume2,
   VolumeX,
   Wifi,
+  Wrench,
   X,
 } from 'lucide-react';
+import { arrayRemove, arrayUnion, doc, updateDoc } from 'firebase/firestore';
 import { GAME_REGISTRY } from './games/registry.ts';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
+import { db, isFirebaseConfigured } from './lib/firebase.ts';
 import {
   ACTIVE_USER_KEY,
   getPatchedLandingContent,
@@ -156,7 +159,6 @@ function VanguardAppCore() {
     setKickBanner(reason);
   }, []);
 
-  // Run initial bootstrap & session restore ONCE on mount (prevents overwriting fresh login state)
   React.useEffect(() => {
     let active = true;
     const init = async () => {
@@ -244,7 +246,7 @@ function VanguardAppCore() {
     [socket]
   );
 
-  // ALWAYS declare all hooks (useMemo) BEFORE any conditional early return!
+  // All Hooks declared before conditional returns
   const mergedLeaderboard = React.useMemo(() => {
     if (!user) return socket.leaderboard;
     const exists = socket.leaderboard.some((u) => u.id === user.id);
@@ -295,6 +297,26 @@ function VanguardAppCore() {
     else if (data.match) socket.setActiveMatch(data.match);
   };
 
+  const handleJoinTournament = async (tid: string) => {
+    if (!user) return;
+    if (socket.featureLocks.tournaments) {
+      socket.pushToast('error', 'ပြိုင်ပွဲစနစ်ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+      return;
+    }
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayUnion(user.id) }).catch(() => {});
+    }
+    socket.pushToast('success', 'ပြိုင်ပွဲစာရင်း သွင်းပြီးပါပြီ!');
+  };
+
+  const handleLeaveTournament = async (tid: string) => {
+    if (!user) return;
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayRemove(user.id) }).catch(() => {});
+    }
+    socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
+  };
+
   const handleAddFriend = async (targetUserId: string) => {
     if (!token) return;
     await fetch('/api/social/request', {
@@ -317,6 +339,10 @@ function VanguardAppCore() {
 
   const handleCreateSakarRoom = async (title: string, maxPlayers: number, gameType: GameType = 'sakarhtar') => {
     if (!token) return;
+    if (socket.featureLocks.customRooms) {
+      socket.pushToast('error', 'Custom Room ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+      return;
+    }
     const res = await fetch('/api/sakar/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -331,6 +357,10 @@ function VanguardAppCore() {
 
   const handleJoinSakarRoom = async (codeOrId: string) => {
     if (!token) return;
+    if (socket.featureLocks.customRooms) {
+      socket.pushToast('error', 'Custom Room ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+      return;
+    }
     const res = await fetch('/api/sakar/rooms/join', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
@@ -411,6 +441,28 @@ function VanguardAppCore() {
   }
 
   const isActualAdmin = token === 'admin-token' && user.role === 'admin';
+
+  // Global Maintenance Mode Gate (Admin can bypass freely)
+  if (socket.maintenanceMode && !isActualAdmin) {
+    return (
+      <div className={`min-h-dvh-safe cyber-bg text-slate-100 flex items-center justify-center p-4 ${rootClass}`}>
+        <div className="max-w-md w-full cyber-panel rounded-2xl border border-amber-400/50 p-7 text-center space-y-4 shadow-2xl">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center">
+            <Wrench className="w-7 h-7 text-amber-400 animate-pulse" />
+          </div>
+          <h2 className="text-xl font-display font-bold text-white">System Maintenance</h2>
+          <p className="text-sm text-amber-100/90 leading-relaxed">{socket.maintenanceMessage}</p>
+          <button
+            type="button"
+            onClick={handleLogout}
+            className="w-full h-11 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white cursor-pointer"
+          >
+            Sign Out
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (isActualAdmin && adminViewMode === 'admin') {
     return (
@@ -651,8 +703,8 @@ function VanguardAppCore() {
             featureLocks={socket.featureLocks}
             currentUser={user}
             frames={socket.frames}
-            onJoin={() => socket.pushToast('success', 'Registered!')}
-            onLeave={() => socket.pushToast('info', 'Withdrawn.')}
+            onJoin={handleJoinTournament}
+            onLeave={handleLeaveTournament}
             onLaunchBracketMatch={() => {}}
           />
         ) : activeTab === 'leaderboard' ? (
