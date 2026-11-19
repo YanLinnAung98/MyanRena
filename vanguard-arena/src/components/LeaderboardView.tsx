@@ -1,17 +1,15 @@
 import React from 'react';
-import { Award, HelpCircle, Trophy } from 'lucide-react';
-import { TRANSLATIONS } from '../i18n/translations.ts';
-import type { Language, ProfileFrame, UserProfile } from '../types.ts';
-import { getRankInfo } from '../utils/rank.ts';
+import { motion } from 'motion/react';
+import { Crown, Search, Trophy } from 'lucide-react';
+import type { Language, UserProfile } from '../types.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import { RankGuideModal } from './RankGuideModal.tsx';
 
 interface LeaderboardViewProps {
   lang: Language;
   leaderboard: UserProfile[];
   currentUserId: string;
-  currentUserRp?: number;
-  frames: ProfileFrame[];
+  currentUserRp: number;
+  frames: any[];
   onInspectPlayer: (userId: string) => void;
 }
 
@@ -19,115 +17,151 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({
   lang,
   leaderboard,
   currentUserId,
-  currentUserRp,
   frames,
   onInspectPlayer,
 }) => {
-  const t = TRANSLATIONS[lang];
-  const [guideOpen, setGuideOpen] = React.useState(false);
-  const rankedPlayers = leaderboard.filter((p) => p.role !== 'admin');
-  const resolvedUserRp =
-    currentUserRp ?? rankedPlayers.find((p) => p.id === currentUserId)?.xp ?? 0;
+  const [search, setSearch] = React.useState('');
+
+  const sortedAll = React.useMemo(() => {
+    return [...(leaderboard || [])].sort((a, b) => (b.xp || 0) - (a.xp || 0));
+  }, [leaderboard]);
+
+  const filtered = React.useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return sortedAll;
+    return sortedAll.filter(
+      (u) =>
+        (u.displayName || '').toLowerCase().includes(q) ||
+        (u.username || '').toLowerCase().includes(q) ||
+        (u.gameId || '').toLowerCase().includes(q)
+    );
+  }, [sortedAll, search]);
+
+  const myRankIndex = sortedAll.findIndex((u) => u.id === currentUserId);
+  const nowMs = Date.now();
 
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-5 space-y-3.5">
+      {/* Header & Search */}
+      <div className="cyber-panel rounded-2xl p-3.5 sm:p-4 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-display font-bold text-white">{t.leaderboard.title}</h1>
-          <p className="text-sm text-slate-400 mt-1">{t.leaderboard.subtitle}</p>
+          <h2 className="text-base sm:text-lg font-display font-bold text-white flex items-center gap-2">
+            <Trophy className="w-5 h-5 text-amber-400" />
+            <span>{lang === 'my' ? 'Real-Time ထိပ်တန်းအဆင့်သတ်မှတ်ချက်' : 'Global Live Leaderboard'}</span>
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {lang === 'my'
+              ? `စုစုပေါင်း ကစားသမား ${sortedAll.length} ဦး • သင့်အဆင့်: #${myRankIndex >= 0 ? myRankIndex + 1 : '-'}`
+              : `${sortedAll.length} Ranked Players • Your Rank: #${myRankIndex >= 0 ? myRankIndex + 1 : '-'}`}
+          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="text-xs text-slate-400 flex items-center gap-2">
-            <Trophy className="w-4 h-4 text-amber-400 shrink-0" />
-            <span>{t.leaderboard.tiersLine}</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => setGuideOpen(true)}
-            className="min-h-[38px] px-3.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-300 text-xs font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-          >
-            <HelpCircle className="w-3.5 h-3.5" />
-            <span>{t.rankGuide.buttonLabel}</span>
-          </button>
+
+        <div className="relative w-full sm:w-64">
+          <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder={lang === 'my' ? 'အမည် သို့မဟုတ် Game ID ရှာရန်...' : 'Search player or ID...'}
+            className="w-full h-10 pl-9 pr-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+          />
         </div>
       </div>
 
-      <RankGuideModal open={guideOpen} lang={lang} userRp={resolvedUserRp} onClose={() => setGuideOpen(false)} />
+      {/* Top 3 Podium Cards */}
+      {!search && sortedAll.length > 0 && (
+        <div className="grid grid-cols-3 gap-2 sm:gap-3">
+          {sortedAll.slice(0, 3).map((u, idx) => {
+            const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : '🥉';
+            const isMe = u.id === currentUserId;
+            return (
+              <motion.button
+                key={u.id}
+                whileHover={{ y: -3 }}
+                type="button"
+                onClick={() => onInspectPlayer(u.id)}
+                className={`p-3 rounded-2xl flex flex-col items-center text-center gap-1.5 cursor-pointer ${
+                  idx === 0 ? 'cyber-gold-active' : 'cyber-panel border border-white/10'
+                }`}
+              >
+                <span className="text-lg leading-none">{medal}</span>
+                <AvatarWithFrame
+                  avatarUrl={u.avatarUrl}
+                  frameId={u.frameId}
+                  frames={frames}
+                  displayName={u.displayName}
+                  size="md"
+                />
+                <div className="text-xs font-bold text-white truncate max-w-full">
+                  {u.displayName} {isMe ? '(သင်)' : ''}
+                </div>
+                <div className="text-[11px] font-mono font-bold text-amber-400">{u.xp || 0} XP</div>
+              </motion.button>
+            );
+          })}
+        </div>
+      )}
 
-      <div className="rounded-2xl bg-[#121826] border border-white/10 overflow-hidden">
-        {rankedPlayers.length === 0 ? (
-          <div className="p-12 text-center text-sm text-slate-400">{t.leaderboard.empty}</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-white/10 text-xs font-semibold text-slate-400 bg-[#0E131F]">
-                  <th className="py-3.5 px-4">{t.leaderboard.rank}</th>
-                  <th className="py-3.5 px-4">{t.leaderboard.competitor}</th>
-                  <th className="py-3.5 px-4">{t.leaderboard.tier}</th>
-                  <th className="py-3.5 px-4 text-right">{t.leaderboard.wld}</th>
-                  <th className="py-3.5 px-4 text-right">{t.leaderboard.winRate}</th>
-                  <th className="py-3.5 px-4 text-right">{t.leaderboard.xp}</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-white/10 text-sm">
-                {rankedPlayers.map((player, idx) => {
-                  const rankInfo = getRankInfo(player.xp);
-                  const total = player.wins + player.losses + player.draws;
-                  const winRate = total > 0 ? Math.round((player.wins / total) * 100) : 0;
-                  const isMe = player.id === currentUserId;
+      {/* Full Live Ranked Table (Displays ALL Registered Accounts) */}
+      <div className="cyber-panel rounded-2xl overflow-hidden border border-white/10">
+        <div className="divide-y divide-white/5">
+          {filtered.length === 0 ? (
+            <div className="p-8 text-center text-xs text-slate-400">
+              {lang === 'my' ? 'ကစားသမား ရှာမတွေ့ပါ။' : 'No players found.'}
+            </div>
+          ) : (
+            filtered.map((u) => {
+              const rankNum = sortedAll.findIndex((x) => x.id === u.id) + 1;
+              const isMe = u.id === currentUserId;
+              const isOnline = Boolean((u as any).online && nowMs - Number((u as any).lastSeenMs || 0) < 60000);
 
-                  return (
-                    <tr
-                      key={player.id}
-                      onClick={() => onInspectPlayer(player.id)}
-                      className={`hover:bg-white/[0.04] transition-colors cursor-pointer ${
-                        isMe ? 'bg-amber-500/10' : ''
-                      }`}
-                    >
-                      <td className="py-3 px-4 font-mono font-bold tabular-nums text-slate-300">
-                        #{idx + 1}
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex items-center gap-3 min-w-[180px]">
-                          <AvatarWithFrame
-                            avatarUrl={player.avatarUrl}
-                            frameId={player.frameId}
-                            frames={frames}
-                            displayName={player.displayName}
-                            size="sm"
-                          />
-                          <div>
-                            <div className="font-semibold text-white">
-                              {player.displayName} {isMe ? '(You)' : ''}
-                            </div>
-                            <div className="text-xs font-mono text-slate-500">{player.gameId}</div>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-4 whitespace-nowrap">
-                        <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${rankInfo.colorClass}`}>
-                          <Award className="w-3.5 h-3.5" />
-                          <span>{rankInfo.tier}</span>
-                          <span className="text-slate-500 font-mono">Lv {rankInfo.level}</span>
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono text-xs text-slate-300 tabular-nums whitespace-nowrap">
-                        {player.wins} / {player.losses} / {player.draws}
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono text-xs text-slate-300 tabular-nums">
-                        {winRate}%
-                      </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-amber-400 tabular-nums">
-                        {player.xp.toLocaleString()}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+              return (
+                <button
+                  key={u.id}
+                  type="button"
+                  onClick={() => onInspectPlayer(u.id)}
+                  className={`w-full px-3 sm:px-4 py-2.5 flex items-center justify-between gap-2 text-left transition-colors cursor-pointer ${
+                    isMe ? 'bg-amber-500/15' : 'hover:bg-white/5'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <span className="w-7 text-center font-mono text-xs font-bold text-amber-300 shrink-0">
+                      {rankNum === 1 ? '🥇' : rankNum === 2 ? '🥈' : rankNum === 3 ? '🥉' : `#${rankNum}`}
+                    </span>
+                    <AvatarWithFrame
+                      avatarUrl={u.avatarUrl}
+                      frameId={u.frameId}
+                      frames={frames}
+                      displayName={u.displayName}
+                      size="sm"
+                      status={isOnline ? 'online' : 'offline'}
+                    />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs sm:text-sm font-bold text-white truncate">{u.displayName}</span>
+                        {isMe && (
+                          <span className="px-1.5 py-0.5 rounded bg-amber-500 text-slate-950 text-[10px] font-extrabold">
+                            သင်
+                          </span>
+                        )}
+                        {u.role === 'admin' && <Crown className="w-3.5 h-3.5 text-amber-400 shrink-0" />}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-400">
+                        {u.gameId} · {u.rank || 'Silver'} · {u.wins || 0}W/{u.losses || 0}L
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="text-right shrink-0">
+                    <div className="text-xs sm:text-sm font-mono font-extrabold text-amber-400">
+                      {u.xp || 0} XP
+                    </div>
+                  </div>
+                </button>
+              );
+            })
+          )}
+        </div>
       </div>
     </div>
   );
