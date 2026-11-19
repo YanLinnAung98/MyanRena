@@ -6,10 +6,6 @@ import {
   Copy,
   KeyRound,
   Lock,
-  Shield,
-  Swords,
-  Trophy,
-  Users,
   Volume2,
   VolumeX,
   X,
@@ -17,9 +13,10 @@ import {
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { db, isFirebaseConfigured } from '../lib/firebase.ts';
-import { saveActiveSessionUser } from '../lib/serverlessApi.ts';
+import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
+import { normalizeGameId, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
+import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { LanguageSwitcher } from './LanguageSwitcher.tsx';
@@ -73,8 +70,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
   const buildPlayerProfile = (base: Partial<UserProfile> & { id: string; username: string }): UserProfile => {
     const name = base.displayName || base.username;
-    return {
+    const dev = detectClientDevice();
+    return stripUndefined({
       ...base,
+      ...dev,
+      online: true,
+      lastSeenMs: Date.now(),
       id: base.id,
       username: base.username,
       displayName: name,
@@ -88,9 +89,10 @@ export const LandingView: React.FC<LandingViewProps> = ({
       draws: base.draws || 0,
       role: 'player',
       isAdmin: false,
+      status: 'active',
       friends: base.friends || [],
       blocked: base.blocked || [],
-    } as UserProfile;
+    }) as UserProfile;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -100,6 +102,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
     const cleanUser = username.trim().toLowerCase();
     const cleanPass = password.trim();
+    const dev = detectClientDevice();
 
     try {
       if (!cleanUser || !cleanPass) {
@@ -108,7 +111,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
       if (authMode === 'signin') {
         if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
-          const adminProfile = {
+          const adminProfile = stripUndefined({
             id: 'admin_yanlinnaung',
             username: 'yanlinnaung',
             displayName: 'Yan Linn Aung',
@@ -121,14 +124,20 @@ export const LandingView: React.FC<LandingViewProps> = ({
             losses: 2,
             draws: 1,
             frameId: 'legend',
+            status: 'active',
+            online: true,
+            lastSeenMs: Date.now(),
+            ...dev,
             avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
             friends: [],
             blocked: [],
-          } as unknown as UserProfile;
+          }) as unknown as UserProfile;
 
           saveActiveSessionUser(adminProfile);
           if (isFirebaseConfigured && db) {
-            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }).catch(() => {});
+            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }).catch((err) =>
+              console.error('Admin sync error:', err)
+            );
           }
 
           soundEngine.playNotify();
@@ -152,9 +161,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         if (!foundRecord) {
           const localRaw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-          if (localRaw) {
-            foundRecord = JSON.parse(localRaw);
-          }
+          if (localRaw) foundRecord = JSON.parse(localRaw);
         }
 
         if (!foundRecord) {
@@ -171,12 +178,22 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         if (foundRecord.status === 'banned' || foundRecord.status === 'suspended') {
           throw new Error(
-            lang === 'my' ? 'သင့်အကောင့်ကို ပိတ်သိမ်းထားပါသည်။' : 'Your account is suspended or banned.'
+            lang === 'my' ? 'သင့်အကောင့်ကို Admin မှ ပိတ်သိမ်းထားပါသည်။' : 'Your account is suspended or banned.'
           );
         }
 
         const playerProfile = buildPlayerProfile({ ...foundRecord, id: playerId, username: cleanUser });
         saveActiveSessionUser(playerProfile);
+
+        // Immediately push live device + account to Firestore so Admin & Ranking see it instantly
+        if (isFirebaseConfigured && db) {
+          await setDoc(
+            doc(db, 'users', playerId),
+            stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }),
+            { merge: true }
+          ).catch((err) => console.error('Player login sync error:', err));
+        }
+
         soundEngine.playNotify();
         onAuthenticated(`token_${playerId}`, playerProfile, rememberMe);
       } else {
@@ -195,13 +212,13 @@ export const LandingView: React.FC<LandingViewProps> = ({
           rank: 'Silver',
         });
 
-        const recordToSave = {
+        const recordToSave = stripUndefined({
           ...newUser,
           password: cleanPass,
           recoveryPin,
           status: 'active',
           createdAt: Date.now(),
-        };
+        });
 
         if (isFirebaseConfigured && db) {
           const userRef = doc(db, 'users', newId);
@@ -213,7 +230,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 : 'Username already exists. Please choose another.'
             );
           }
-          await setDoc(userRef, recordToSave).catch(() => {});
+          await setDoc(userRef, recordToSave);
         }
 
         localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(recordToSave));
@@ -240,7 +257,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecError('');
     setRecSuccess('');
     setRecLoading(true);
-
     try {
       const cleanUser = recUsername.trim().toLowerCase();
       let updated = false;
@@ -251,7 +267,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
         if (snap && snap.exists()) {
           const data = snap.data() as { recoveryPin?: string };
           if (data.recoveryPin !== recPin.trim()) {
-            throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
+            throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
           }
           await updateDoc(userRef, { password: recNewPassword.trim() });
           updated = true;
@@ -261,22 +277,15 @@ export const LandingView: React.FC<LandingViewProps> = ({
       const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed.recoveryPin !== recPin.trim()) {
-          throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
-        }
+        if (parsed.recoveryPin !== recPin.trim()) throw new Error('Invalid Recovery PIN.');
         parsed.password = recNewPassword.trim();
         localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
         updated = true;
       }
 
-      if (!updated) {
-        throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
-      }
-
+      if (!updated) throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
       setRecSuccess(
-        lang === 'my'
-          ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။'
-          : 'Password updated successfully! You can now sign in.'
+        lang === 'my' ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Password updated successfully!'
       );
     } catch (err: any) {
       setRecError(err?.message || 'Recovery failed.');
@@ -289,13 +298,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const heroSubtitle = lang === 'my' ? landingContent.heroSubtitleMy : landingContent.heroSubtitleEn;
 
   return (
-    <div className="h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible bg-[#0A0D14] text-slate-100 flex flex-col">
-      {/* Compact Header */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/90 backdrop-blur-md shrink-0">
+    <div className="h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="text-base sm:text-xl font-display font-bold tracking-tight text-white truncate">
-              {t.brandName}
+            <span className="vanguard-brand-box px-3 py-1 rounded-lg text-sm sm:text-base font-display font-extrabold text-sky-300">
+              Vanguard
             </span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold shrink-0">
               ● {onlineCount}
@@ -307,8 +315,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
             <button
               type="button"
               onClick={toggleMute}
-              aria-label={muted ? 'Unmute audio' : 'Mute audio'}
-              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-white/10 text-slate-300 hover:text-white cursor-pointer"
+              className="w-10 h-10 flex items-center justify-center rounded-xl border border-white/10 text-slate-300 cursor-pointer"
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -316,74 +323,49 @@ export const LandingView: React.FC<LandingViewProps> = ({
         </div>
       </header>
 
-      {/* Main Viewport — Fits 100% on Mobile Without Scrolling */}
       <main className="flex-1 flex flex-col justify-center lg:block relative overflow-hidden">
-        <div className="absolute inset-0 pointer-events-none">
-          <img
-            src={GAME_ARTWORKS.heroBanner}
-            alt="Vanguard Arena Stage"
-            className="w-full h-full object-cover opacity-35"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-[#0A0D14]/70 via-[#0A0D14]/85 to-[#0A0D14]" />
-        </div>
-
-        <div className="relative max-w-7xl mx-auto w-full px-3 sm:px-6 py-3 lg:py-16 grid lg:grid-cols-12 gap-4 lg:gap-12 items-center">
-          {/* Desktop Hero Column (Hidden on Mobile so Auth Form fits with Zero Scroll) */}
+        <div className="relative max-w-7xl mx-auto w-full px-3 sm:px-6 py-3 lg:py-14 grid lg:grid-cols-12 gap-4 lg:gap-12 items-center">
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="hidden lg:block lg:col-span-7 space-y-6"
+            className="hidden lg:block lg:col-span-7 space-y-5"
           >
-            <div className="flex items-center gap-3 text-xs font-medium text-amber-400">
-              <span>{onlineCount} {t.landing.playersOnlineNow}</span>
-              <span className="text-slate-600">·</span>
-              <span className="text-slate-300">{t.landing.lowLatency}</span>
-              <span className="text-slate-600">·</span>
-              <span className="text-slate-300">{t.landing.rankedAndTournaments}</span>
-            </div>
-            <h1 className="fluid-hero font-display font-bold tracking-tight text-white">
-              {heroTitle}
-            </h1>
-            <p className="text-base text-slate-300 max-w-2xl leading-relaxed">
-              {heroSubtitle}
-            </p>
-            <div className="grid grid-cols-3 gap-4 pt-2 max-w-xl">
-              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                <div className="text-2xl font-display font-bold text-white">4</div>
-                <div className="text-xs text-slate-400 mt-1">{t.landing.competitiveTitles}</div>
-              </div>
-              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                <div className="text-2xl font-display font-bold text-amber-400">1-8P</div>
-                <div className="text-xs text-slate-400 mt-1">Custom & Sakar-Htar</div>
-              </div>
-              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                <div className="text-2xl font-display font-bold text-sky-400">Live</div>
-                <div className="text-xs text-slate-400 mt-1">Real-Time PvP</div>
-              </div>
+            <h1 className="fluid-hero font-display font-bold tracking-tight text-white">{heroTitle}</h1>
+            <p className="text-base text-slate-300 max-w-2xl leading-relaxed">{heroSubtitle}</p>
+            <div className="grid grid-cols-4 gap-3 pt-2">
+              {GAME_LIST.map((g) => {
+                const nid = normalizeGameId(g.id);
+                const title = nid === 'sakarhtar' ? 'ဉာဏ်စမ်းပဟေဠိ' : lang === 'my' ? g.nameMy : g.name;
+                return (
+                  <div key={g.id} className="cyber-panel rounded-2xl p-2 text-center">
+                    <img src={GAME_ARTWORKS[nid]} alt={title} className="w-full h-20 object-cover rounded-xl mb-1.5" />
+                    <div className="text-xs font-bold text-white truncate">{title}</div>
+                  </div>
+                );
+              })}
             </div>
           </motion.div>
 
-          {/* Sign In / Sign Up Card — Directly Visible Above Fold on Mobile */}
           <div id="auth-card" className="lg:col-span-5 w-full max-w-md mx-auto">
-            <div className="p-5 sm:p-7 rounded-2xl bg-[#121826]/95 backdrop-blur-xl border border-white/10 shadow-2xl space-y-4">
+            <div className="p-5 sm:p-7 rounded-2xl cyber-panel border border-amber-500/25 shadow-2xl space-y-4">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-lg sm:text-xl font-display font-bold text-white">
                     {authMode === 'signin' ? t.auth.signInTitle : t.auth.signUpTitle}
                   </h2>
-                  <p className="text-[11px] text-slate-400 lg:hidden">
-                    Connect 4 · Tic-Tac-Toe · RPS · စကားထာ
+                  <p className="text-[11px] text-amber-300/80 lg:hidden">
+                    ၄ လုံးတန်း · Tic-Tac-Toe · RPS · ဉာဏ်စမ်းပဟေဠိ
                   </p>
                 </div>
-                <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0A0D14] border border-white/10 shrink-0">
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-[#070b14] border border-white/10 shrink-0">
                   <button
                     type="button"
                     onClick={() => {
                       setAuthMode('signin');
                       setError('');
                     }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                      authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${
+                      authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400'
                     }`}
                   >
                     {t.auth.signIn}
@@ -394,8 +376,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
                       setAuthMode('signup');
                       setError('');
                     }}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
-                      authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg cursor-pointer ${
+                      authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'text-slate-400'
                     }`}
                   >
                     {t.auth.signUp}
@@ -405,9 +387,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
               <form onSubmit={handleSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    {t.auth.username}
-                  </label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.username}</label>
                   <input
                     type="text"
                     required
@@ -415,60 +395,50 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     placeholder={t.auth.usernamePlaceholder}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                    className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
                   />
                 </div>
 
                 {authMode === 'signup' && (
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
-                      {t.auth.displayName}
-                    </label>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.displayName}</label>
                     <input
                       type="text"
                       value={displayName}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder={t.auth.displayNamePlaceholder}
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                      className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
                     />
                   </div>
                 )}
 
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">
-                    {t.auth.password}
-                  </label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.password}</label>
                   <input
                     type="password"
                     required
-                    autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     placeholder={t.auth.passwordPlaceholder}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                    className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
                   />
                 </div>
 
                 {authMode === 'signin' && (
-                  <div className="flex items-center justify-between gap-2 text-xs">
-                    <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer select-none">
+                  <div className="flex items-center justify-between text-xs">
+                    <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer">
                       <input
                         type="checkbox"
                         checked={rememberMe}
                         onChange={(e) => setRememberMe(e.target.checked)}
-                        className="w-4 h-4 rounded border-white/20 bg-[#0A0D14] accent-amber-500 cursor-pointer"
+                        className="w-4 h-4 accent-amber-500"
                       />
                       <span>{t.auth.rememberMe}</span>
                     </label>
-
                     <button
                       type="button"
-                      onClick={() => {
-                        setRecoveryOpen(true);
-                        setRecError('');
-                        setRecSuccess('');
-                      }}
-                      className="text-amber-400 hover:text-amber-300 font-medium cursor-pointer"
+                      onClick={() => setRecoveryOpen(true)}
+                      className="text-amber-400 font-medium cursor-pointer"
                     >
                       {t.auth.forgotPassword}
                     </button>
@@ -476,7 +446,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 )}
 
                 {error && (
-                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+                  <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs text-rose-200">
                     {error}
                   </div>
                 )}
@@ -484,7 +454,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full h-12 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                  className="w-full h-12 rounded-xl cyber-cta-gold disabled:opacity-60 text-slate-950 font-extrabold text-sm flex items-center justify-center gap-2 cursor-pointer"
                 >
                   <span>
                     {loading
@@ -497,40 +467,15 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 </button>
               </form>
 
-              <div className="pt-1 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+              <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
                 <Lock className="w-3 h-3 text-amber-400" />
-                <span>{lang === 'my' ? 'အကောင့်သစ်ဖွင့်လျှင် 6-Digit PIN ရရှိပါမည်' : 'Instant account with 6-Digit Recovery PIN'}</span>
+                <span>{lang === 'my' ? 'Real-Time Cloud Sync ဖြင့် ချိတ်ဆက်ထားပါသည်' : 'Secured Real-Time Cloud Sync'}</span>
               </div>
             </div>
           </div>
         </div>
-
-        {/* Desktop Game Showcase */}
-        <section id="games" className="hidden lg:block max-w-7xl mx-auto px-6 py-14 space-y-8 relative">
-          <h2 className="text-3xl font-display font-bold text-white">{t.landing.featuredTitles}</h2>
-          <div className="grid grid-cols-4 gap-6">
-            {GAME_LIST.map((game) => {
-              const gameTitle = lang === 'my' ? game.nameMy : game.name;
-              const gameTagline = lang === 'my' ? game.taglineMy : game.tagline;
-              return (
-                <article key={game.id} className="rounded-2xl bg-[#121826] border border-white/10 overflow-hidden flex flex-col">
-                  <div className="aspect-[4/3] bg-[#0B101B]">
-                    <img src={GAME_ARTWORKS[game.id]} alt={gameTitle} className="w-full h-full object-cover" />
-                  </div>
-                  <div className="p-5 flex-1 flex flex-col justify-between">
-                    <div>
-                      <h3 className="text-lg font-display font-bold text-white">{gameTitle}</h3>
-                      <p className="text-xs text-slate-400 mt-1">{gameTagline}</p>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
       </main>
 
-      {/* One-Time 6-Digit Backup Recovery PIN Modal */}
       <AnimatePresence>
         {signupPinModal && (
           <motion.div
@@ -539,18 +484,16 @@ export const LandingView: React.FC<LandingViewProps> = ({
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
-            <div className="w-full max-w-md rounded-2xl bg-[#121826] border border-amber-400/50 p-6 space-y-4 shadow-2xl">
+            <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 p-6 space-y-4 shadow-2xl">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center shrink-0">
-                  <KeyRound className="w-5 h-5 text-amber-400" />
-                </div>
+                <KeyRound className="w-6 h-6 text-amber-400 shrink-0" />
                 <div>
-                  <h3 className="text-base font-display font-bold text-white">{t.auth.pinModalTitle}</h3>
+                  <h3 className="text-base font-bold text-white">{t.auth.pinModalTitle}</h3>
                   <p className="text-xs font-mono text-amber-300">{signupPinModal.user.gameId}</p>
                 </div>
               </div>
-              <p className="text-xs text-slate-300 leading-relaxed">{t.auth.pinModalDesc}</p>
-              <div className="p-3.5 rounded-xl bg-[#0A0D14] border border-white/10 flex items-center justify-between gap-3">
+              <p className="text-xs text-slate-300">{t.auth.pinModalDesc}</p>
+              <div className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 flex items-center justify-between">
                 <span className="text-2xl font-mono font-bold tracking-[0.25em] text-amber-400">
                   {signupPinModal.pin}
                 </span>
@@ -574,7 +517,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   setSignupPinModal(null);
                   onAuthenticated(payload.token, payload.user, payload.rememberMe);
                 }}
-                className="w-full h-11 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm cursor-pointer"
+                className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-sm cursor-pointer"
               >
                 {t.auth.pinSavedBtn}
               </button>
@@ -583,7 +526,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
         )}
       </AnimatePresence>
 
-      {/* PIN Password Recovery Modal */}
       <AnimatePresence>
         {recoveryOpen && (
           <motion.div
@@ -592,14 +534,10 @@ export const LandingView: React.FC<LandingViewProps> = ({
             exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
-            <div className="w-full max-w-md rounded-2xl bg-[#121826] border border-white/15 p-6 space-y-4 shadow-2xl">
+            <div className="w-full max-w-md rounded-2xl cyber-panel border border-white/15 p-6 space-y-4">
               <div className="flex items-center justify-between">
-                <h3 className="text-base font-display font-bold text-white">{t.auth.recoveryTitle}</h3>
-                <button
-                  type="button"
-                  onClick={() => setRecoveryOpen(false)}
-                  className="w-9 h-9 rounded-xl bg-white/5 text-slate-300 flex items-center justify-center cursor-pointer"
-                >
+                <h3 className="text-base font-bold text-white">{t.auth.recoveryTitle}</h3>
+                <button type="button" onClick={() => setRecoveryOpen(false)} className="text-slate-300 cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
@@ -610,7 +548,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   value={recUsername}
                   onChange={(e) => setRecUsername(e.target.value)}
                   placeholder={t.auth.usernamePlaceholder}
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
                 <input
                   type="text"
@@ -619,7 +557,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   value={recPin}
                   onChange={(e) => setRecPin(e.target.value.replace(/\D/g, ''))}
                   placeholder={t.auth.recoveryPinPlaceholder}
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm font-mono tracking-widest text-white"
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm font-mono text-white"
                 />
                 <input
                   type="password"
@@ -628,14 +566,14 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   value={recNewPassword}
                   onChange={(e) => setRecNewPassword(e.target.value)}
                   placeholder={t.auth.newPasswordLabel}
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
-                {recError && <div className="p-2.5 rounded-xl bg-rose-500/10 text-xs text-rose-300">{recError}</div>}
-                {recSuccess && <div className="p-2.5 rounded-xl bg-emerald-500/10 text-xs text-emerald-300">{recSuccess}</div>}
+                {recError && <div className="text-xs text-rose-300">{recError}</div>}
+                {recSuccess && <div className="text-xs text-emerald-300">{recSuccess}</div>}
                 <button
                   type="submit"
                   disabled={recLoading}
-                  className="w-full h-11 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm cursor-pointer"
+                  className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-sm cursor-pointer"
                 >
                   {t.auth.resetPasswordBtn}
                 </button>
