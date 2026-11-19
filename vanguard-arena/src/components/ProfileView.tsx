@@ -1,8 +1,25 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Camera, Check, Lock, Save, Sparkles, Upload, X, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  Award,
+  Camera,
+  Check,
+  Copy,
+  Crown,
+  Flame,
+  Lock,
+  Palette,
+  Save,
+  Sparkles,
+  Trophy,
+  Upload,
+  X,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import type { Language, UserProfile } from '../types.ts';
 import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
+import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 
 interface ProfileViewProps {
@@ -14,6 +31,36 @@ interface ProfileViewProps {
   onNotify: (level: string, message: string) => void;
 }
 
+const BANNER_THEMES = [
+  { id: 'imperial', name: 'Imperial Gold', bg: 'from-amber-900/70 via-slate-900 to-[#0a0f1c]' },
+  { id: 'cyber', name: 'Cyber Sapphire', bg: 'from-sky-900/70 via-indigo-950 to-[#0a0f1c]' },
+  { id: 'crimson', name: 'Crimson Flame', bg: 'from-rose-900/70 via-slate-900 to-[#0a0f1c]' },
+  { id: 'emerald', name: 'Jade Forest', bg: 'from-emerald-900/70 via-teal-950 to-[#0a0f1c]' },
+  { id: 'amethyst', name: 'Mythic Violet', bg: 'from-purple-900/70 via-fuchsia-950 to-[#0a0f1c]' },
+];
+
+const PLAYER_TITLES = [
+  { id: 'rookie', labelMy: 'အာရီနာ ကစားသမား', labelEn: 'Arena Challenger', minXp: 0 },
+  { id: 'tactician', labelMy: 'ဗျူဟာပညာရှင်', labelEn: 'Grand Tactician', minXp: 1100 },
+  { id: 'owl_sage', labelMy: 'ပညာရှိ ဇီးကွက်တပည့်', labelEn: 'Wise Owl Scholar', minXp: 1300 },
+  { id: 'champion', labelMy: 'ရွှေတံဆိပ် ချန်ပီယံ', labelEn: 'Golden Champion', minXp: 1800 },
+  { id: 'mythic', labelMy: 'ဒဏ္ဍာရီ သူရဲကောင်း', labelEn: 'Mythic Sovereign', minXp: 2400 },
+];
+
+function getRankProgress(xp: number) {
+  const tiers = [
+    { name: 'Bronze', min: 0, max: 1000 },
+    { name: 'Silver', min: 1000, max: 1300 },
+    { name: 'Gold', min: 1300, max: 1900 },
+    { name: 'Diamond', min: 1900, max: 2500 },
+    { name: 'Legend', min: 2500, max: 3500 },
+  ];
+  const current = tiers.find((t) => xp >= t.min && xp < t.max) || tiers[tiers.length - 1];
+  const pct = Math.min(100, Math.max(4, Math.round(((xp - current.min) / (current.max - current.min)) * 100)));
+  const level = Math.max(1, Math.floor(xp / 150) + 1);
+  return { current, pct, level, remaining: Math.max(0, current.max - xp) };
+}
+
 export const ProfileView: React.FC<ProfileViewProps> = ({
   lang,
   token,
@@ -21,9 +68,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onUserUpdated,
   onNotify,
 }) => {
+  const uAny = user as any;
   const [displayName, setDisplayName] = React.useState(user.displayName || '');
+  const [bio, setBio] = React.useState(uAny.bio || '');
   const [selectedFrame, setSelectedFrame] = React.useState(user.frameId || 'bronze');
+  const [selectedBanner, setSelectedBanner] = React.useState(uAny.bannerTheme || 'imperial');
+  const [selectedTitle, setSelectedTitle] = React.useState(uAny.titleId || 'rookie');
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'frames' | 'customize'>('overview');
   const [saving, setSaving] = React.useState(false);
+  const [copiedId, setCopiedId] = React.useState(false);
 
   // Image Cropper State
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -33,6 +86,33 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [dragging, setDragging] = React.useState(false);
   const dragStartRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const imgRef = React.useRef<HTMLImageElement | null>(null);
+
+  const xp = Number(user.xp || 1000);
+  const wins = Number(user.wins || 0);
+  const losses = Number(user.losses || 0);
+  const draws = Number(user.draws || 0);
+  const totalGames = wins + losses + draws;
+  const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
+  const rankProg = getRankProgress(xp);
+  const bannerObj = BANNER_THEMES.find((b) => b.id === selectedBanner) || BANNER_THEMES[0];
+  const titleObj = PLAYER_TITLES.find((t) => t.id === selectedTitle) || PLAYER_TITLES[0];
+
+  const achievements = [
+    { id: 'first', icon: '⚔️', title: lang === 'my' ? 'ပထမဆုံး အောင်ပွဲ' : 'First Victory', unlocked: wins >= 1 },
+    { id: 'five', icon: '🔥', title: lang === 'my' ? '၅ ပွဲနိုင် စစ်သည်' : '5-Win Striker', unlocked: wins >= 5 },
+    { id: 'gold', icon: '🥇', title: lang === 'my' ? 'Gold အဆင့်ရောက်' : 'Gold Tier', unlocked: xp >= 1300 },
+    { id: 'diamond', icon: '💎', title: lang === 'my' ? 'Diamond သခင်' : 'Diamond Tier', unlocked: xp >= 1900 },
+    { id: 'social', icon: '🤝', title: lang === 'my' ? 'မိတ်ဆွေပေါသူ' : 'Social Star', unlocked: (user.friends || []).length >= 1 },
+    { id: 'legend', icon: '👑', title: lang === 'my' ? 'ဒဏ္ဍာရီ ချန်ပီယံ' : 'Arena Legend', unlocked: xp >= 2500 },
+  ];
+
+  const handleCopyId = () => {
+    navigator.clipboard?.writeText(user.gameId || user.id);
+    soundEngine.playClick();
+    setCopiedId(true);
+    onNotify('success', `Copied Game ID: ${user.gameId}`);
+    setTimeout(() => setCopiedId(false), 1800);
+  };
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -62,12 +142,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     });
   };
 
-  const handlePointerUp = () => setDragging(false);
-
   const applyCroppedAvatar = async () => {
     const img = imgRef.current;
     if (!img) return;
-
     const canvas = document.createElement('canvas');
     const size = 256;
     canvas.width = size;
@@ -75,7 +152,6 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    // Circular Clipping Mask
     ctx.clearRect(0, 0, size, size);
     ctx.save();
     ctx.beginPath();
@@ -88,7 +164,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const baseScale = Math.max(size / naturalW, size / naturalH);
     const drawW = naturalW * baseScale * zoom;
     const drawH = naturalH * baseScale * zoom;
-    const ratio = size / 220; // Viewport is 220x220
+    const ratio = size / 220;
     const drawX = (size - drawW) / 2 + offset.x * ratio;
     const drawY = (size - drawH) / 2 + offset.y * ratio;
 
@@ -100,18 +176,18 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
     const updatedUser = { ...user, avatarUrl: croppedDataUrl };
     onUserUpdated(updatedUser);
-
     await fetch('/api/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ avatarUrl: croppedDataUrl }),
     });
-    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Profile picture updated!');
+    soundEngine.playNotify();
+    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
   };
 
   const handleEquipFrame = async (frameId: string, unlocked: boolean) => {
     if (!unlocked) {
-      onNotify('error', lang === 'my' ? 'ဤ Frame ကို ရရှိရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock this frame.');
+      onNotify('error', lang === 'my' ? 'ဤ Frame ရရှိရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock.');
       return;
     }
     setSelectedFrame(frameId);
@@ -122,173 +198,366 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ frameId }),
     });
-    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Profile frame equipped!');
+    soundEngine.playClick();
+    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Frame equipped!');
   };
 
-  const handleSaveProfile = async (e: React.FormEvent) => {
+  const handleSaveCustomization = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const updatedUser = {
-        ...user,
+      const patch = {
         displayName: displayName.trim() || user.displayName,
+        bio: bio.trim().slice(0, 120),
+        bannerTheme: selectedBanner,
+        titleId: selectedTitle,
         frameId: selectedFrame,
       };
+      const updatedUser = { ...user, ...patch } as UserProfile;
       onUserUpdated(updatedUser);
       await fetch('/api/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ displayName: updatedUser.displayName, frameId: selectedFrame }),
+        body: JSON.stringify(patch),
       });
-      onNotify('success', lang === 'my' ? 'Profile သိမ်းဆည်းပြီးပါပြီ!' : 'Profile saved!');
+      soundEngine.playNotify();
+      onNotify('success', lang === 'my' ? 'Profile အချက်အလက်အားလုံး သိမ်းဆည်းပြီးပါပြီ!' : 'Profile updated!');
     } finally {
       setSaving(false);
     }
   };
 
   return (
-    <div className="max-w-3xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4">
-      {/* Top Avatar + Crop Upload Card */}
-      <div className="cyber-panel rounded-2xl p-4 sm:p-6 border border-amber-500/25 flex flex-col sm:flex-row items-center gap-4">
-        <div className="relative">
-          <AvatarWithFrame
-            avatarUrl={user.avatarUrl}
-            frameId={selectedFrame}
-            displayName={user.displayName}
-            size="xl"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="absolute -bottom-1 -left-1 z-30 w-9 h-9 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-lg cursor-pointer"
-            title={lang === 'my' ? 'ပုံတင်ပြီး Crop လုပ်ရန်' : 'Upload & Crop Photo'}
-          >
-            <Camera className="w-4 h-4" />
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            onChange={handleFileSelected}
-            className="hidden"
-          />
+    <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-5 space-y-4">
+      {/* PREMIUM HERO PROFILE HEADER CARD */}
+      <div className="cyber-panel rounded-3xl overflow-hidden border border-amber-400/25 shadow-2xl">
+        {/* Dynamic Gradient Cover Banner */}
+        <div className={`h-24 sm:h-32 bg-gradient-to-r ${bannerObj.bg} relative overflow-hidden`}>
+          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#fbbf24_1px,transparent_1px)] [background-size:18px_18px]" />
+          <div className="absolute top-3 right-3 flex items-center gap-2">
+            <span className="px-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-amber-400/40 text-[11px] font-mono font-bold text-amber-300 flex items-center gap-1">
+              <Crown className="w-3.5 h-3.5" /> LV.{rankProg.level} · {user.rank || rankProg.current.name}
+            </span>
+          </div>
         </div>
 
-        <div className="flex-1 text-center sm:text-left space-y-1.5">
-          <h2 className="text-lg sm:text-xl font-display font-bold text-white">{user.displayName}</h2>
-          <div className="text-xs font-mono text-amber-400">
-            {user.gameId} • {user.xp} XP ({user.rank || 'Silver'})
-          </div>
-          <div className="pt-1 flex flex-wrap justify-center sm:justify-start gap-2">
+        {/* Overlapping Avatar + Identity Info */}
+        <div className="px-4 sm:px-6 pb-5 -mt-12 sm:-mt-14 relative z-10 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div className="flex items-end gap-4">
+              <div className="relative">
+                <AvatarWithFrame
+                  avatarUrl={user.avatarUrl}
+                  frameId={selectedFrame}
+                  displayName={user.displayName}
+                  size="xl"
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="absolute bottom-0 right-0 z-30 w-9 h-9 rounded-full cyber-cta-gold text-slate-950 flex items-center justify-center shadow-lg cursor-pointer"
+                  title="Change & Crop Avatar"
+                >
+                  <Camera className="w-4 h-4" />
+                </button>
+                <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileSelected} className="hidden" />
+              </div>
+
+              <div className="pb-1 space-y-1 min-w-0">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-400/30 text-[10px] font-bold text-amber-300">
+                  <Sparkles className="w-3 h-3" />
+                  {lang === 'my' ? titleObj.labelMy : titleObj.labelEn}
+                </span>
+                <h1 className="text-xl sm:text-2xl font-display font-extrabold text-white truncate">
+                  {user.displayName}
+                </h1>
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyId}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/5 hover:bg-amber-500/20 border border-white/10 text-xs font-mono text-amber-300 cursor-pointer transition-colors"
+                  >
+                    <span>ID: {user.gameId}</span>
+                    {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <span className="text-xs font-mono text-slate-400">@{user.username}</span>
+                </div>
+              </div>
+            </div>
+
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-xs font-bold text-amber-300 flex items-center gap-1.5 cursor-pointer"
+              className="px-4 h-10 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-xs font-bold text-white flex items-center justify-center gap-1.5 cursor-pointer shrink-0"
             >
-              <Upload className="w-3.5 h-3.5" />
-              <span>{lang === 'my' ? 'ဓာတ်ပုံတင်ပြီး Crop ညှိမည်' : 'Upload & Crop Photo'}</span>
+              <Upload className="w-3.5 h-3.5 text-amber-400" />
+              <span>{lang === 'my' ? 'ပုံတင် & Crop ညှိမည်' : 'Upload & Crop'}</span>
             </button>
           </div>
-        </div>
 
-        <div className="grid grid-cols-3 gap-2 text-center bg-[#070b14] p-3 rounded-xl border border-white/10 text-xs shrink-0">
-          <div>
-            <div className="text-slate-400">Win</div>
-            <div className="font-bold text-emerald-400 text-sm">{user.wins || 0}</div>
-          </div>
-          <div>
-            <div className="text-slate-400">Loss</div>
-            <div className="font-bold text-rose-400 text-sm">{user.losses || 0}</div>
-          </div>
-          <div>
-            <div className="text-slate-400">Draw</div>
-            <div className="font-bold text-sky-400 text-sm">{user.draws || 0}</div>
+          {bio && (
+            <p className="text-xs sm:text-sm text-slate-300 bg-[#070b13]/80 border border-white/5 rounded-xl px-3.5 py-2.5 italic">
+              “{bio}”
+            </p>
+          )}
+
+          {/* Next Rank XP Progress Bar */}
+          <div className="space-y-1.5 pt-1">
+            <div className="flex items-center justify-between text-xs">
+              <span className="font-semibold text-slate-300">
+                {rankProg.current.name} Tier Progress
+              </span>
+              <span className="font-mono font-bold text-amber-400">
+                {xp} / {rankProg.current.max} XP ({rankProg.pct}%)
+              </span>
+            </div>
+            <div className="h-2.5 rounded-full bg-[#070b13] border border-white/10 overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${rankProg.pct}%` }}
+                transition={{ duration: 0.7, ease: 'easeOut' }}
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.5)]"
+              />
+            </div>
           </div>
         </div>
       </div>
 
-      {/* SVG Profile Frame Selector */}
-      <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-            <Sparkles className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'Profile Frame ဘောင်များ ရွေးချယ်ရန်' : 'Select Profile Frame'}</span>
-          </h3>
-          <span className="text-[11px] text-slate-400">XP: {user.xp}</span>
-        </div>
+      {/* Sub-Navigation Pills */}
+      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl cyber-panel text-xs font-bold">
+        {[
+          { id: 'overview', label: lang === 'my' ? '📊 မှတ်တမ်း & ဆုတံဆိပ်' : 'Stats & Medals' },
+          { id: 'frames', label: lang === 'my' ? '🖼️ Profile Frames' : 'Rank Frames' },
+          { id: 'customize', label: lang === 'my' ? '🎨 ပြင်ဆင်ရန်' : 'Customize' },
+        ].map((tb) => (
+          <button
+            key={tb.id}
+            type="button"
+            onClick={() => {
+              soundEngine.playClick();
+              setActiveTab(tb.id as any);
+            }}
+            className={`py-2.5 rounded-xl transition-all cursor-pointer ${
+              activeTab === tb.id ? 'cyber-gold-active text-amber-200' : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            {tb.label}
+          </button>
+        ))}
+      </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
-          {SVG_FRAME_TEMPLATES.map((tpl) => {
-            const unlocked = user.role === 'admin' || (user.xp || 0) >= tpl.minXp;
-            const equipped = selectedFrame === tpl.id;
-            return (
-              <motion.button
-                key={tpl.id}
-                whileTap={{ scale: 0.96 }}
-                type="button"
-                onClick={() => handleEquipFrame(tpl.id, unlocked)}
-                className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all cursor-pointer relative ${
-                  equipped
-                    ? 'cyber-gold-active'
-                    : unlocked
-                    ? 'bg-[#090d16] border-white/10 hover:border-amber-400/40'
-                    : 'bg-[#070a12] border-white/5 opacity-55'
-                }`}
-              >
-                <AvatarWithFrame
-                  avatarUrl={user.avatarUrl}
-                  frameId={tpl.id}
-                  displayName={user.displayName}
-                  size="md"
+      {/* TAB 1: STATS RING + ACHIEVEMENTS */}
+      {activeTab === 'overview' && (
+        <div className="grid md:grid-cols-12 gap-4">
+          {/* Win Rate Gauge & Match Counters */}
+          <div className="md:col-span-5 cyber-panel rounded-2xl p-5 flex flex-col items-center justify-center gap-4">
+            <div className="relative w-32 h-32 flex items-center justify-center">
+              <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
+                <circle cx="60" cy="60" r="50" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" />
+                <motion.circle
+                  cx="60"
+                  cy="60"
+                  r="50"
+                  fill="none"
+                  stroke="#fbbf24"
+                  strokeWidth="10"
+                  strokeLinecap="round"
+                  strokeDasharray={314}
+                  initial={{ strokeDashoffset: 314 }}
+                  animate={{ strokeDashoffset: 314 - (314 * winRate) / 100 }}
+                  transition={{ duration: 0.9, ease: 'easeOut' }}
                 />
-                <div className="text-[11px] font-bold text-white truncate max-w-full">
-                  {lang === 'my' ? tpl.nameMy : tpl.name}
+              </svg>
+              <div className="absolute text-center">
+                <div className="text-2xl font-display font-extrabold text-white">{winRate}%</div>
+                <div className="text-[10px] text-slate-400 uppercase tracking-wider">Win Rate</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-2 w-full text-center">
+              <div className="p-2.5 rounded-xl bg-[#070b13] border border-emerald-500/20">
+                <div className="text-lg font-mono font-extrabold text-emerald-400">{wins}</div>
+                <div className="text-[10px] text-slate-400">Wins</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-[#070b13] border border-rose-500/20">
+                <div className="text-lg font-mono font-extrabold text-rose-400">{losses}</div>
+                <div className="text-[10px] text-slate-400">Losses</div>
+              </div>
+              <div className="p-2.5 rounded-xl bg-[#070b13] border border-sky-500/20">
+                <div className="text-lg font-mono font-extrabold text-sky-400">{draws}</div>
+                <div className="text-[10px] text-slate-400">Draws</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Achievements / Medals Wall */}
+          <div className="md:col-span-7 cyber-panel rounded-2xl p-5 space-y-3">
+            <h3 className="text-sm font-bold text-white flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span>{lang === 'my' ? 'အောင်မြင်မှု ဆုတံဆိပ်များ (Achievements)' : 'Arena Achievements'}</span>
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {achievements.map((ach) => (
+                <div
+                  key={ach.id}
+                  className={`p-3 rounded-2xl border text-center space-y-1.5 transition-all ${
+                    ach.unlocked
+                      ? 'bg-amber-500/10 border-amber-400/35'
+                      : 'bg-[#070b13] border-white/5 opacity-45 grayscale'
+                  }`}
+                >
+                  <div className="text-2xl">{ach.icon}</div>
+                  <div className="text-[11px] font-bold text-white leading-tight">{ach.title}</div>
+                  <div className="text-[10px] font-mono text-amber-300">
+                    {ach.unlocked ? '✓ Unlocked' : 'Locked'}
+                  </div>
                 </div>
-                <div className="text-[10px] font-mono text-amber-300 flex items-center gap-1">
-                  {equipped ? (
-                    <>
-                      <Check className="w-3 h-3 text-emerald-400" /> Active
-                    </>
-                  ) : unlocked ? (
-                    'Unlocked'
-                  ) : (
-                    <>
-                      <Lock className="w-2.5 h-2.5" /> {tpl.minXp} XP
-                    </>
-                  )}
-                </div>
-              </motion.button>
-            );
-          })}
+              ))}
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      {/* Display Name Form */}
-      <form onSubmit={handleSaveProfile} className="cyber-panel rounded-2xl p-4 flex gap-2 items-center">
-        <input
-          type="text"
-          value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
-          placeholder="Display Name"
-          className="flex-1 h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-        />
-        <button
-          type="submit"
-          disabled={saving}
-          className="h-11 px-5 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
-        >
-          <Save className="w-4 h-4" />
-          <span>{lang === 'my' ? 'သိမ်းဆည်းမည်' : 'Save'}</span>
-        </button>
-      </form>
+      {/* TAB 2: SVG PROFILE FRAMES */}
+      {activeTab === 'frames' && (
+        <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3">
+          <div className="flex items-center justify-between">
+            <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+              <Award className="w-4 h-4 text-amber-400" />
+              <span>{lang === 'my' ? 'Profile Frame ဘောင်များ ရွေးချယ်ရန်' : 'Equip Rank Frame'}</span>
+            </h3>
+            <span className="text-xs font-mono text-amber-400">{xp} XP</span>
+          </div>
 
-      {/* Interactive Frame Crop Modal */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {SVG_FRAME_TEMPLATES.map((tpl) => {
+              const unlocked = user.role === 'admin' || xp >= tpl.minXp;
+              const equipped = selectedFrame === tpl.id;
+              return (
+                <motion.button
+                  key={tpl.id}
+                  whileTap={{ scale: 0.96 }}
+                  type="button"
+                  onClick={() => handleEquipFrame(tpl.id, unlocked)}
+                  className={`p-3 rounded-2xl border flex flex-col items-center gap-2 transition-all cursor-pointer ${
+                    equipped
+                      ? 'cyber-gold-active'
+                      : unlocked
+                      ? 'bg-[#080d17] border-white/10 hover:border-amber-400/40'
+                      : 'bg-[#070a12] border-white/5 opacity-55'
+                  }`}
+                >
+                  <AvatarWithFrame avatarUrl={user.avatarUrl} frameId={tpl.id} displayName={user.displayName} size="md" />
+                  <div className="text-xs font-bold text-white truncate max-w-full">
+                    {lang === 'my' ? tpl.nameMy : tpl.name}
+                  </div>
+                  <div className="text-[10px] font-mono text-amber-300 flex items-center gap-1">
+                    {equipped ? (
+                      <>
+                        <Check className="w-3 h-3 text-emerald-400" /> Active
+                      </>
+                    ) : unlocked ? (
+                      'Equip'
+                    ) : (
+                      <>
+                        <Lock className="w-2.5 h-2.5" /> {tpl.minXp} XP
+                      </>
+                    )}
+                  </div>
+                </motion.button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* TAB 3: CUSTOMIZE NAME, BIO, TITLE & COVER THEME */}
+      {activeTab === 'customize' && (
+        <form onSubmit={handleSaveCustomization} className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-4">
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">Display Name</label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-slate-400 mb-1">
+                {lang === 'my' ? 'ဘွဲ့အမည် (Title Badge)' : 'Player Title'}
+              </label>
+              <select
+                value={selectedTitle}
+                onChange={(e) => setSelectedTitle(e.target.value)}
+                className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+              >
+                {PLAYER_TITLES.map((tl) => {
+                  const locked = user.role !== 'admin' && xp < tl.minXp;
+                  return (
+                    <option key={tl.id} value={tl.id} disabled={locked}>
+                      {lang === 'my' ? tl.labelMy : tl.labelEn} {locked ? `(${tl.minXp} XP)` : ''}
+                    </option>
+                  );
+                })}
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-slate-400 mb-1">
+              {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio / Motto)' : 'Bio / Motto'}
+            </label>
+            <input
+              type="text"
+              maxLength={120}
+              value={bio}
+              onChange={(e) => setBio(e.target.value)}
+              placeholder={lang === 'my' ? 'သင့်အကြောင်း စာတစ်ကြောင်း ရေးထည့်ပါ...' : 'Write a short motto...'}
+              className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="block text-xs text-slate-400 flex items-center gap-1.5">
+              <Palette className="w-3.5 h-3.5 text-amber-400" />
+              {lang === 'my' ? 'Profile Banner အရောင် ရွေးချယ်ရန်' : 'Cover Banner Theme'}
+            </label>
+            <div className="grid grid-cols-5 gap-2">
+              {BANNER_THEMES.map((bn) => (
+                <button
+                  key={bn.id}
+                  type="button"
+                  onClick={() => setSelectedBanner(bn.id)}
+                  className={`h-12 rounded-xl bg-gradient-to-r ${bn.bg} border-2 cursor-pointer transition-all ${
+                    selectedBanner === bn.id ? 'border-amber-400 scale-105' : 'border-white/10 opacity-75'
+                  }`}
+                  title={bn.name}
+                />
+              ))}
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={saving}
+            className="w-full sm:w-auto px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Save className="w-4 h-4" />
+            <span>{saving ? '...' : lang === 'my' ? 'Profile သိမ်းဆည်းမည်' : 'Save Profile'}</span>
+          </button>
+        </form>
+      )}
+
+      {/* Interactive Circular Avatar Cropper Modal */}
       {cropSource && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/50 p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-bold text-white">
-                {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပြီး Crop ဖြတ်ပါ' : 'Fit & Crop Avatar in Frame'}
+                {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပြီး Crop ဖြတ်ပါ' : 'Fit & Crop Avatar'}
               </h3>
               <button
                 type="button"
@@ -299,37 +568,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               </button>
             </div>
 
-            <p className="text-[11px] text-slate-400 text-center">
-              {lang === 'my'
-                ? 'ပုံကို လက်ဖြင့်ဆွဲရွှေ့ပြီး အောက်မှ Zoom ဖြင့် အရွယ်အစား ချိန်ညှိပါ'
-                : 'Drag photo to center and adjust zoom slider'}
-            </p>
-
-            {/* 220x220 Interactive Circular Crop Viewport with Active Frame Guide */}
             <div className="flex justify-center">
               <div
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
-                onPointerUp={handlePointerUp}
-                onPointerLeave={handlePointerUp}
-                className="relative w-[220px] h-[220px] rounded-full overflow-hidden bg-[#070b14] border-4 border-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.45)] touch-none cursor-grab active:cursor-grabbing flex items-center justify-center"
+                onPointerUp={() => setDragging(false)}
+                onPointerLeave={() => setDragging(false)}
+                className="relative w-[220px] h-[220px] rounded-full overflow-hidden bg-[#070b13] border-4 border-amber-400 shadow-[0_0_24px_rgba(245,158,11,0.4)] touch-none cursor-grab active:cursor-grabbing flex items-center justify-center"
               >
                 <img
                   ref={imgRef}
                   src={cropSource}
                   alt="Crop Preview"
                   draggable={false}
-                  style={{
-                    transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
-                  }}
+                  style={{ transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})` }}
                   className="max-w-none w-full h-full object-cover select-none pointer-events-none"
                 />
-                {/* Crosshair Center Guide */}
                 <div className="absolute inset-0 rounded-full ring-2 ring-inset ring-white/30 pointer-events-none" />
               </div>
             </div>
 
-            {/* Zoom Slider */}
             <div className="flex items-center gap-3 px-2">
               <ZoomOut className="w-4 h-4 text-slate-400" />
               <input
@@ -355,7 +613,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <button
                 type="button"
                 onClick={applyCroppedAvatar}
-                className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
+                className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs cursor-pointer"
               >
                 {lang === 'my' ? '✓ Crop လုပ်ပြီး တင်မည်' : '✓ Crop & Save'}
               </button>
