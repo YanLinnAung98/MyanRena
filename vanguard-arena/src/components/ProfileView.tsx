@@ -1,326 +1,368 @@
 import React from 'react';
-import { AlertTriangle, Award, Check, Copy, HelpCircle, Lock, Upload } from 'lucide-react';
-import { GAME_REGISTRY } from '../games/registry.ts';
-import { TRANSLATIONS } from '../i18n/translations.ts';
-import type { Language, MatchHistoryRecord, ProfileFrame, UserProfile } from '../types.ts';
-import { canEquipFrame, getRankInfo } from '../utils/rank.ts';
+import { motion } from 'motion/react';
+import { Camera, Check, Lock, Save, Sparkles, Upload, X, ZoomIn, ZoomOut } from 'lucide-react';
+import type { Language, UserProfile } from '../types.ts';
+import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import { RankGuideModal } from './RankGuideModal.tsx';
 
 interface ProfileViewProps {
   lang: Language;
   token: string;
   user: UserProfile;
-  frames: ProfileFrame[];
+  frames: any[];
   onUserUpdated: (user: UserProfile) => void;
-  onNotify: (level: 'info' | 'error' | 'success', msg: string) => void;
+  onNotify: (level: string, message: string) => void;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
   lang,
   token,
   user,
-  frames,
   onUserUpdated,
   onNotify,
 }) => {
-  const t = TRANSLATIONS[lang];
-  const [displayName, setDisplayName] = React.useState(user.displayName);
-  const [selectedFrame, setSelectedFrame] = React.useState(user.frameId);
+  const [displayName, setDisplayName] = React.useState(user.displayName || '');
+  const [selectedFrame, setSelectedFrame] = React.useState(user.frameId || 'bronze');
   const [saving, setSaving] = React.useState(false);
-  const [copied, setCopied] = React.useState(false);
-  const [guideOpen, setGuideOpen] = React.useState(false);
-  const [history, setHistory] = React.useState<MatchHistoryRecord[]>([]);
+
+  // Image Cropper State
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
+  const [cropSource, setCropSource] = React.useState<string | null>(null);
+  const [zoom, setZoom] = React.useState<number>(1.15);
+  const [offset, setOffset] = React.useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [dragging, setDragging] = React.useState(false);
+  const dragStartRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const imgRef = React.useRef<HTMLImageElement | null>(null);
 
-  React.useEffect(() => {
-    setDisplayName(user.displayName);
-    setSelectedFrame(user.frameId);
-  }, [user.displayName, user.frameId]);
+  const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        setCropSource(reader.result);
+        setZoom(1.15);
+        setOffset({ x: 0, y: 0 });
+      }
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
 
-  React.useEffect(() => {
-    fetch('/api/matches/history', { headers: { Authorization: `Bearer ${token}` } })
-      .then((r) => (r.ok ? r.json() : { matches: [] }))
-      .then((d) => setHistory(d.matches || []))
-      .catch(() => {});
-  }, [token, user.wins, user.losses, user.draws]);
+  const handlePointerDown = (e: React.PointerEvent) => {
+    setDragging(true);
+    dragStartRef.current = { x: e.clientX - offset.x, y: e.clientY - offset.y };
+  };
 
-  const rank = getRankInfo(user.xp);
-  const totalGames = user.wins + user.losses + user.draws;
-  const winRate = totalGames > 0 ? Math.round((user.wins / totalGames) * 100) : 0;
+  const handlePointerMove = (e: React.PointerEvent) => {
+    if (!dragging) return;
+    setOffset({
+      x: Math.max(-110, Math.min(110, e.clientX - dragStartRef.current.x)),
+      y: Math.max(-110, Math.min(110, e.clientY - dragStartRef.current.y)),
+    });
+  };
 
-  const handleCopyGameId = () => {
-    navigator.clipboard.writeText(user.gameId);
-    setCopied(true);
-    onNotify('success', `Copied ${user.gameId} to clipboard`);
-    setTimeout(() => setCopied(false), 2000);
+  const handlePointerUp = () => setDragging(false);
+
+  const applyCroppedAvatar = async () => {
+    const img = imgRef.current;
+    if (!img) return;
+
+    const canvas = document.createElement('canvas');
+    const size = 256;
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Circular Clipping Mask
+    ctx.clearRect(0, 0, size, size);
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    ctx.closePath();
+    ctx.clip();
+
+    const naturalW = img.naturalWidth || 256;
+    const naturalH = img.naturalHeight || 256;
+    const baseScale = Math.max(size / naturalW, size / naturalH);
+    const drawW = naturalW * baseScale * zoom;
+    const drawH = naturalH * baseScale * zoom;
+    const ratio = size / 220; // Viewport is 220x220
+    const drawX = (size - drawW) / 2 + offset.x * ratio;
+    const drawY = (size - drawH) / 2 + offset.y * ratio;
+
+    ctx.drawImage(img, drawX, drawY, drawW, drawH);
+    ctx.restore();
+
+    const croppedDataUrl = canvas.toDataURL('image/webp', 0.88);
+    setCropSource(null);
+
+    const updatedUser = { ...user, avatarUrl: croppedDataUrl };
+    onUserUpdated(updatedUser);
+
+    await fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ avatarUrl: croppedDataUrl }),
+    });
+    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Profile picture updated!');
+  };
+
+  const handleEquipFrame = async (frameId: string, unlocked: boolean) => {
+    if (!unlocked) {
+      onNotify('error', lang === 'my' ? 'ဤ Frame ကို ရရှိရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock this frame.');
+      return;
+    }
+    setSelectedFrame(frameId);
+    const updatedUser = { ...user, frameId };
+    onUserUpdated(updatedUser);
+    await fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ frameId }),
+    });
+    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Profile frame equipped!');
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch('/api/profile', {
+      const updatedUser = {
+        ...user,
+        displayName: displayName.trim() || user.displayName,
+        frameId: selectedFrame,
+      };
+      onUserUpdated(updatedUser);
+      await fetch('/api/profile', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ displayName: displayName.trim(), frameId: selectedFrame }),
+        body: JSON.stringify({ displayName: updatedUser.displayName, frameId: selectedFrame }),
       });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify('error', data.error || 'Could not update profile.');
-      } else {
-        onUserUpdated(data.user);
-        onNotify('success', 'Profile updated.');
-      }
+      onNotify('success', lang === 'my' ? 'Profile သိမ်းဆည်းပြီးပါပြီ!' : 'Profile saved!');
     } finally {
       setSaving(false);
     }
   };
 
-  const handleAvatarUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      onNotify('error', 'Profile picture must be under 2 MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const dataUrl = String(reader.result || '');
-      const res = await fetch('/api/profile/avatar', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ dataUrl }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify('error', data.error || 'Failed to upload avatar.');
-      } else {
-        onUserUpdated(data.user);
-        onNotify('success', 'Profile picture updated.');
-      }
-    };
-    reader.readAsDataURL(file);
-  };
-
   return (
-    <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-8">
-      {/* Top Profile Summary & Stats */}
-      <div className="grid lg:grid-cols-12 gap-6">
-        <section className="lg:col-span-5 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-6">
-          <div className="flex items-center gap-4">
-            <AvatarWithFrame
-              avatarUrl={user.avatarUrl}
-              frameId={selectedFrame}
-              frames={frames}
-              displayName={displayName}
-              size="xl"
-              status="online"
-            />
-            <div className="space-y-1.5 min-w-0">
-              <h1 className="text-xl font-display font-bold text-white truncate">{user.displayName}</h1>
-              <button
-                type="button"
-                onClick={handleCopyGameId}
-                className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#0A0D14] border border-white/10 text-xs font-mono text-amber-300 hover:border-amber-400/50 cursor-pointer"
-              >
-                <span>{user.gameId}</span>
-                {copied ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-              <div className="text-xs text-slate-400 flex flex-wrap items-center gap-1.5 pt-1">
-                <Award className={`w-4 h-4 ${rank.colorClass}`} />
-                <span className={`font-semibold ${rank.colorClass}`}>{rank.tier}</span>
-                <span aria-hidden="true">·</span>
-                <span className="font-mono tabular-nums">Level {rank.level}</span>
-                {user.warningCount > 0 && (
-                  <span className="ml-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-500/15 border border-rose-400/30 text-rose-300 text-[11px] font-semibold">
-                    <AlertTriangle className="w-3 h-3" />
-                    {t.moderation.warningCounterLabel}: {user.warningCount}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setGuideOpen(true)}
-            className="w-full min-h-[40px] px-3.5 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-400/35 text-amber-300 text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <HelpCircle className="w-4 h-4" />
-            <span>{t.rankGuide.buttonLabel}</span>
-          </button>
-
-          {/* RP Progression Bar */}
-          <div className="space-y-2">
-            <div className="flex justify-between text-xs text-slate-400 font-mono tabular-nums">
-              <span>
-                {user.xp.toLocaleString()} {t.profile.totalXp}
-              </span>
-              <span>
-                {rank.nextTier
-                  ? `${rank.rpToNextTier.toLocaleString()} RP → ${rank.nextTier}`
-                  : `${rank.xpInLevel} / ${rank.xpForNextLevel} XP`}
-              </span>
-            </div>
-            <div className="h-2.5 rounded-full bg-[#0A0D14] overflow-hidden border border-white/5">
-              <div
-                className="h-full bg-gradient-to-r from-amber-500 to-sky-400 transition-all duration-300"
-                style={{ width: `${rank.progressPct}%` }}
-              />
-            </div>
-          </div>
-
-          {/* Win / Loss / Draw Stats */}
-          <div className="grid grid-cols-4 gap-2 text-center pt-1">
-            <div className="p-3 rounded-xl bg-[#0A0D14] border border-white/10">
-              <div className="text-lg font-display font-bold text-emerald-400 tabular-nums">{user.wins}</div>
-              <div className="text-[11px] text-slate-400">{t.profile.wins}</div>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0A0D14] border border-white/10">
-              <div className="text-lg font-display font-bold text-rose-400 tabular-nums">{user.losses}</div>
-              <div className="text-[11px] text-slate-400">{t.profile.losses}</div>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0A0D14] border border-white/10">
-              <div className="text-lg font-display font-bold text-slate-300 tabular-nums">{user.draws}</div>
-              <div className="text-[11px] text-slate-400">{t.profile.draws}</div>
-            </div>
-            <div className="p-3 rounded-xl bg-[#0A0D14] border border-white/10">
-              <div className="text-lg font-display font-bold text-amber-400 tabular-nums">{winRate}%</div>
-              <div className="text-[11px] text-slate-400">{t.profile.winRate}</div>
-            </div>
-          </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={handleAvatarUpload}
+    <div className="max-w-3xl mx-auto px-3 sm:px-6 py-3 sm:py-6 space-y-4">
+      {/* Top Avatar + Crop Upload Card */}
+      <div className="cyber-panel rounded-2xl p-4 sm:p-6 border border-amber-500/25 flex flex-col sm:flex-row items-center gap-4">
+        <div className="relative">
+          <AvatarWithFrame
+            avatarUrl={user.avatarUrl}
+            frameId={selectedFrame}
+            displayName={user.displayName}
+            size="xl"
           />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            className="w-full min-h-[44px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white flex items-center justify-center gap-2 cursor-pointer"
+            className="absolute -bottom-1 -left-1 z-30 w-9 h-9 rounded-full bg-amber-500 hover:bg-amber-400 text-slate-950 flex items-center justify-center shadow-lg cursor-pointer"
+            title={lang === 'my' ? 'ပုံတင်ပြီး Crop လုပ်ရန်' : 'Upload & Crop Photo'}
           >
-            <Upload className="w-4 h-4 text-sky-400" />
-            <span>{t.profile.uploadAvatar}</span>
+            <Camera className="w-4 h-4" />
           </button>
-        </section>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleFileSelected}
+            className="hidden"
+          />
+        </div>
 
-        {/* Edit Display Name & Frame Selector */}
-        <section className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10">
-          <form onSubmit={handleSaveProfile} className="space-y-6">
-            <div>
-              <h2 className="text-lg font-display font-bold text-white">{t.profile.customizeTitle}</h2>
-              <p className="text-xs text-slate-400 mt-0.5">{t.profile.customizeDesc}</p>
+        <div className="flex-1 text-center sm:text-left space-y-1.5">
+          <h2 className="text-lg sm:text-xl font-display font-bold text-white">{user.displayName}</h2>
+          <div className="text-xs font-mono text-amber-400">
+            {user.gameId} • {user.xp} XP ({user.rank || 'Silver'})
+          </div>
+          <div className="pt-1 flex flex-wrap justify-center sm:justify-start gap-2">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              className="px-3.5 py-2 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-xs font-bold text-amber-300 flex items-center gap-1.5 cursor-pointer"
+            >
+              <Upload className="w-3.5 h-3.5" />
+              <span>{lang === 'my' ? 'ဓာတ်ပုံတင်ပြီး Crop ညှိမည်' : 'Upload & Crop Photo'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2 text-center bg-[#070b14] p-3 rounded-xl border border-white/10 text-xs shrink-0">
+          <div>
+            <div className="text-slate-400">Win</div>
+            <div className="font-bold text-emerald-400 text-sm">{user.wins || 0}</div>
+          </div>
+          <div>
+            <div className="text-slate-400">Loss</div>
+            <div className="font-bold text-rose-400 text-sm">{user.losses || 0}</div>
+          </div>
+          <div>
+            <div className="text-slate-400">Draw</div>
+            <div className="font-bold text-sky-400 text-sm">{user.draws || 0}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* SVG Profile Frame Selector */}
+      <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
+            <Sparkles className="w-4 h-4 text-amber-400" />
+            <span>{lang === 'my' ? 'Profile Frame ဘောင်များ ရွေးချယ်ရန်' : 'Select Profile Frame'}</span>
+          </h3>
+          <span className="text-[11px] text-slate-400">XP: {user.xp}</span>
+        </div>
+
+        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+          {SVG_FRAME_TEMPLATES.map((tpl) => {
+            const unlocked = user.role === 'admin' || (user.xp || 0) >= tpl.minXp;
+            const equipped = selectedFrame === tpl.id;
+            return (
+              <motion.button
+                key={tpl.id}
+                whileTap={{ scale: 0.96 }}
+                type="button"
+                onClick={() => handleEquipFrame(tpl.id, unlocked)}
+                className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all cursor-pointer relative ${
+                  equipped
+                    ? 'cyber-gold-active'
+                    : unlocked
+                    ? 'bg-[#090d16] border-white/10 hover:border-amber-400/40'
+                    : 'bg-[#070a12] border-white/5 opacity-55'
+                }`}
+              >
+                <AvatarWithFrame
+                  avatarUrl={user.avatarUrl}
+                  frameId={tpl.id}
+                  displayName={user.displayName}
+                  size="md"
+                />
+                <div className="text-[11px] font-bold text-white truncate max-w-full">
+                  {lang === 'my' ? tpl.nameMy : tpl.name}
+                </div>
+                <div className="text-[10px] font-mono text-amber-300 flex items-center gap-1">
+                  {equipped ? (
+                    <>
+                      <Check className="w-3 h-3 text-emerald-400" /> Active
+                    </>
+                  ) : unlocked ? (
+                    'Unlocked'
+                  ) : (
+                    <>
+                      <Lock className="w-2.5 h-2.5" /> {tpl.minXp} XP
+                    </>
+                  )}
+                </div>
+              </motion.button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Display Name Form */}
+      <form onSubmit={handleSaveProfile} className="cyber-panel rounded-2xl p-4 flex gap-2 items-center">
+        <input
+          type="text"
+          value={displayName}
+          onChange={(e) => setDisplayName(e.target.value)}
+          placeholder="Display Name"
+          className="flex-1 h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
+        />
+        <button
+          type="submit"
+          disabled={saving}
+          className="h-11 px-5 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+        >
+          <Save className="w-4 h-4" />
+          <span>{lang === 'my' ? 'သိမ်းဆည်းမည်' : 'Save'}</span>
+        </button>
+      </form>
+
+      {/* Interactive Frame Crop Modal */}
+      {cropSource && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/50 p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-white">
+                {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပြီး Crop ဖြတ်ပါ' : 'Fit & Crop Avatar in Frame'}
+              </h3>
+              <button
+                type="button"
+                onClick={() => setCropSource(null)}
+                className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">{t.profile.displayName}</label>
-              <input
-                type="text"
-                minLength={2}
-                maxLength={32}
-                required
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                className="w-full h-11 px-4 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-              />
-            </div>
+            <p className="text-[11px] text-slate-400 text-center">
+              {lang === 'my'
+                ? 'ပုံကို လက်ဖြင့်ဆွဲရွှေ့ပြီး အောက်မှ Zoom ဖြင့် အရွယ်အစား ချိန်ညှိပါ'
+                : 'Drag photo to center and adjust zoom slider'}
+            </p>
 
-            <div className="space-y-2.5">
-              <label className="block text-xs font-medium text-slate-300">{t.profile.frameSelector}</label>
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-                {frames.map((frame) => {
-                  const unlocked = canEquipFrame(user.xp, frame.unlockTier);
-                  const active = selectedFrame === frame.id;
-                  return (
-                    <button
-                      key={frame.id}
-                      type="button"
-                      disabled={!unlocked}
-                      onClick={() => setSelectedFrame(frame.id)}
-                      className={`p-3 rounded-xl border text-left transition-all flex items-center gap-3 ${
-                        active
-                          ? 'bg-amber-500/15 border-amber-400'
-                          : unlocked
-                          ? 'bg-[#0A0D14] border-white/10 hover:border-white/25 cursor-pointer'
-                          : 'bg-[#0A0D14]/60 border-white/5 opacity-50 cursor-not-allowed'
-                      }`}
-                    >
-                      <AvatarWithFrame
-                        avatarUrl={user.avatarUrl}
-                        frameId={frame.id}
-                        frames={frames}
-                        displayName={user.displayName}
-                        size="sm"
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-semibold text-white truncate">{frame.name}</div>
-                        <div className="text-[11px] text-slate-400 flex items-center gap-1">
-                          {!unlocked && <Lock className="w-3 h-3 text-amber-400" />}
-                          <span>{frame.unlockTier === 'All' ? t.profile.unlocked : `${frame.unlockTier}+`}</span>
-                        </div>
-                      </div>
-                    </button>
-                  );
-                })}
+            {/* 220x220 Interactive Circular Crop Viewport with Active Frame Guide */}
+            <div className="flex justify-center">
+              <div
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                onPointerLeave={handlePointerUp}
+                className="relative w-[220px] h-[220px] rounded-full overflow-hidden bg-[#070b14] border-4 border-amber-400 shadow-[0_0_25px_rgba(245,158,11,0.45)] touch-none cursor-grab active:cursor-grabbing flex items-center justify-center"
+              >
+                <img
+                  ref={imgRef}
+                  src={cropSource}
+                  alt="Crop Preview"
+                  draggable={false}
+                  style={{
+                    transform: `translate(${offset.x}px, ${offset.y}px) scale(${zoom})`,
+                  }}
+                  className="max-w-none w-full h-full object-cover select-none pointer-events-none"
+                />
+                {/* Crosshair Center Guide */}
+                <div className="absolute inset-0 rounded-full ring-2 ring-inset ring-white/30 pointer-events-none" />
               </div>
             </div>
 
-            <div className="flex justify-end">
+            {/* Zoom Slider */}
+            <div className="flex items-center gap-3 px-2">
+              <ZoomOut className="w-4 h-4 text-slate-400" />
+              <input
+                type="range"
+                min="1"
+                max="3"
+                step="0.05"
+                value={zoom}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                className="flex-1 accent-amber-500 cursor-pointer"
+              />
+              <ZoomIn className="w-4 h-4 text-amber-400" />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2.5">
               <button
-                type="submit"
-                disabled={saving}
-                className="min-h-[44px] px-6 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm cursor-pointer"
+                type="button"
+                onClick={() => setCropSource(null)}
+                className="h-11 rounded-xl bg-white/10 text-xs font-bold text-white cursor-pointer"
               >
-                {saving ? t.profile.saving : t.profile.saveChanges}
+                {lang === 'my' ? 'မလုပ်တော့ပါ' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                onClick={applyCroppedAvatar}
+                className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
+              >
+                {lang === 'my' ? '✓ Crop လုပ်ပြီး တင်မည်' : '✓ Crop & Save'}
               </button>
             </div>
-          </form>
-        </section>
-      </div>
-
-      {/* Match History */}
-      <section className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-        <h2 className="text-lg font-display font-bold text-white">{t.profile.recentHistory}</h2>
-        {history.length === 0 ? (
-          <p className="text-sm text-slate-400 py-4">{t.profile.noHistory}</p>
-        ) : (
-          <div className="divide-y divide-white/10">
-            {history.map((m) => {
-              const plugin = GAME_REGISTRY[m.gameType];
-              const won = !m.isDraw && m.winnerId === user.id;
-              const outcome = m.isDraw ? t.profile.draw : won ? t.profile.victory : t.profile.defeat;
-              const opponentName = m.player1Id === user.id ? m.player2Name : m.player1Name;
-
-              return (
-                <div key={m.id} className="py-3 flex items-center justify-between gap-4 text-sm">
-                  <div>
-                    <div className="font-semibold text-white">
-                      {lang === 'my' ? plugin.nameMy : plugin.name} vs {opponentName}
-                    </div>
-                    <div className="text-xs text-slate-400">
-                      <span className="capitalize">{m.mode}</span>
-                      <span aria-hidden="true"> · </span>
-                      <span>{m.finishedAt ? new Date(m.finishedAt).toLocaleString() : ''}</span>
-                    </div>
-                  </div>
-                  <div
-                    className={`text-xs font-semibold ${
-                      m.isDraw ? 'text-slate-300' : won ? 'text-emerald-400' : 'text-rose-400'
-                    }`}
-                  >
-                    {outcome}
-                  </div>
-                </div>
-              );
-            })}
           </div>
-        )}
-      </section>
-      <RankGuideModal open={guideOpen} lang={lang} userRp={user.xp} onClose={() => setGuideOpen(false)} />
+        </div>
+      )}
     </div>
   );
 };
