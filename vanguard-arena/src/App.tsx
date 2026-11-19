@@ -265,6 +265,10 @@ export default function App() {
       if (!token) return;
       setAcknowledgingWarning(true);
       try {
+        await fetch(`/api/warnings/${encodeURIComponent(warningId)}/ack`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
         socket.dismissWarningLocal(warningId);
       } finally {
         setAcknowledgingWarning(false);
