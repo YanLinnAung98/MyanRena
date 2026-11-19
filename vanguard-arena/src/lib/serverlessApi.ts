@@ -11,8 +11,8 @@ import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { db, isFirebaseConfigured } from './firebase.ts';
 
-export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v4';
-export const ACTIVE_USER_KEY = 'vanguard_active_user_v4';
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v5';
+export const ACTIVE_USER_KEY = 'vanguard_active_user_v5';
 
 export const DEFAULT_SAKAR_RIDDLES = [
   {
@@ -136,7 +136,7 @@ export function readServerlessStore() {
         id: 'log_1',
         action: 'SYSTEM_READY',
         actor: 'yanlinnaung',
-        detail: 'Vanguard Arena Serverless Core Active',
+        detail: 'Vanguard Arena Real-Time Core Active',
         createdAt: new Date().toISOString(),
       },
     ],
@@ -155,7 +155,7 @@ export function readServerlessStore() {
     matchmakingSettings: {
       maxWaitSec: 30,
       xpRange: 400,
-      botFallbackSec: 15,
+      botFallbackSec: 8,
       defaultTurnTime: 20,
     },
   };
@@ -184,13 +184,15 @@ export function writeServerlessStore(store: any) {
 }
 
 export function buildPlayableMatch(
-  user: any,
+  playersList: any[],
   opts: {
+    matchId?: string;
     gameType?: string;
     mode?: string;
     difficulty?: string;
     bestOf?: 3 | 5;
     turnTimeLimit?: number;
+    isRealtimePvp?: boolean;
   }
 ) {
   const store = readServerlessStore();
@@ -199,17 +201,25 @@ export function buildPlayableMatch(
   const bestOf = opts.bestOf || 3;
   const turnTimeLimit = opts.turnTimeLimit || 20;
 
+  const p1 = playersList[0];
   const botPlayer = {
     id: 'aegis_bot',
     username: 'aegis_bot',
     displayName: `Aegis Bot (${difficulty.toUpperCase()})`,
     gameId: 'BOT-001',
-    xp: user?.xp || 1000,
+    xp: p1?.xp || 1000,
     rank: 'Gold',
     frameId: 'gold',
     avatarUrl: createAvatarSvg('AI', '#4f46e5', '#ffffff'),
     isBot: true,
   };
+
+  const finalPlayers = playersList.length >= 2 ? playersList : [p1, botPlayer];
+  const isRealtimePvp = Boolean(opts.isRealtimePvp && playersList.length >= 2);
+  const scores: Record<string, number> = {};
+  finalPlayers.forEach((p) => {
+    if (p?.id) scores[p.id] = 0;
+  });
 
   const tttBoard = Array(9).fill(null);
   const c4Board = Array.from({ length: 6 }, () => Array(7).fill(null));
@@ -217,23 +227,27 @@ export function buildPlayableMatch(
   const deadline = new Date(Date.now() + turnTimeLimit * 1000).toISOString();
 
   return {
-    id: `match_${Date.now()}`,
+    id: opts.matchId || `match_${Date.now()}_${Math.floor(Math.random() * 999)}`,
     gameType,
     mode: opts.mode || 'bot',
+    isRealtimePvp,
     difficulty,
     bestOf,
     turnTimeLimit,
     turnDeadline: deadline,
     status: 'active',
-    players: [user, botPlayer],
-    turnUserId: user.id,
-    scores: { [user.id]: 0, aegis_bot: 0 },
+    players: finalPlayers,
+    turnUserId: p1.id,
+    scores,
     round: 1,
     tttBoard,
     c4Board,
-    rpsLastRound: null as { playerChoice: string; botChoice: string; winner: 'player' | 'bot' | 'draw' } | null,
+    rpsPicks: {} as Record<string, string>,
+    rpsLastRound: null as { p1Choice: string; p2Choice: string; winnerId: string | null } | null,
     riddles,
     riddleIndex: 0,
+    roundAnswers: {} as Record<string, number>,
+    chat: [] as Array<{ id: number; sender: string; text: string; time: number }>,
     winnerId: null as string | null,
     isDraw: false,
     createdAt: new Date().toISOString(),
@@ -247,7 +261,6 @@ function jsonResponse(data: any, status = 200): Response {
   });
 }
 
-// Global broken-image auto-repair so no broken image icons ever appear on GitHub Pages
 if (typeof window !== 'undefined' && !(window as any).__vanguardImgGuard) {
   (window as any).__vanguardImgGuard = true;
   window.addEventListener(
@@ -295,7 +308,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     const store = readServerlessStore();
     const activeSaved = readActiveSessionUser();
 
-    // Strictly resolve user by token — NEVER fallback a regular user to admin_yanlinnaung
     let currentUser: any = null;
     if (token === 'admin-token') {
       currentUser = store.users.admin_yanlinnaung;
@@ -304,7 +316,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       currentUser =
         store.users[uid] ||
         (activeSaved && activeSaved.id === uid ? activeSaved : null) ||
-        Object.values(store.users).find((u: any) => u.id !== 'admin_yanlinnaung' && token.includes(u.id)) ||
         activeSaved;
       if (currentUser && currentUser.id !== 'admin_yanlinnaung') {
         currentUser.role = 'player';
@@ -340,27 +351,37 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
+    // Bot & Solo Matches
     if (path === '/api/matches/bot' && method === 'POST') {
-      return jsonResponse({ match: buildPlayableMatch(currentUser || activeSaved, body) });
+      const p = currentUser || activeSaved;
+      return jsonResponse({ match: buildPlayableMatch([p], body) });
     }
 
     if (path === '/api/sakar/solo' && method === 'POST') {
+      const p = currentUser || activeSaved;
       return jsonResponse({
-        match: buildPlayableMatch(currentUser || activeSaved, { gameType: 'sakarhtar', mode: 'solo', difficulty: 'medium' }),
+        match: buildPlayableMatch([p], { gameType: 'sakarhtar', mode: 'solo', difficulty: 'medium' }),
       });
     }
 
+    // Create Real-Time Room (Works for Sakar-Htar 1-8P AND 1v1 Games)
     if (path === '/api/sakar/rooms' && method === 'POST') {
       const host = currentUser || activeSaved;
       const code = 'MR-' + Math.floor(1000 + Math.random() * 9000);
+      const gameType = body.gameType || 'sakarhtar';
+      const maxPlayers = gameType === 'sakarhtar' ? Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)) : 2;
       const room = {
-        id: `room_${Date.now()}`,
+        id: `room_${Date.now()}_${Math.floor(Math.random() * 999)}`,
         code,
+        gameType,
         title: body.title || `${host.displayName}'s Room`,
         hostId: host.id,
-        maxPlayers: Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)),
+        maxPlayers,
         players: [host],
+        chat: [],
         status: 'waiting',
+        activeMatchId: null,
+        createdAt: Date.now(),
       };
       store.rooms.push(room);
       writeServerlessStore(store);
@@ -370,40 +391,116 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ room });
     }
 
+    // Join Real-Time Room by Code (e.g. MR-1234)
     if (path === '/api/sakar/rooms/join' && method === 'POST') {
       const player = currentUser || activeSaved;
-      const codeOrId = String(body.roomId || '').trim().toUpperCase();
-      let room = store.rooms.find(
-        (r: any) => r.id.toUpperCase() === codeOrId || r.code.toUpperCase() === codeOrId
+      const rawCode = String(body.roomId || '').trim().toUpperCase();
+      const normalized = rawCode.startsWith('MR-') ? rawCode : `MR-${rawCode}`;
+      let room: any = store.rooms.find(
+        (r: any) =>
+          r.id?.toUpperCase() === rawCode ||
+          r.code?.toUpperCase() === rawCode ||
+          r.code?.toUpperCase() === normalized
       );
+
       if (!room && isFirebaseConfigured && db) {
         const snap = await getDocs(collection(db, 'rooms')).catch(() => null);
         snap?.forEach((d) => {
           const data = d.data();
-          if (data.id?.toUpperCase() === codeOrId || data.code?.toUpperCase() === codeOrId) {
-            room = data as any;
+          if (
+            data.id?.toUpperCase() === rawCode ||
+            data.code?.toUpperCase() === rawCode ||
+            data.code?.toUpperCase() === normalized
+          ) {
+            room = data;
           }
         });
       }
-      if (!room) return jsonResponse({ error: 'Room not found.' }, 404);
+
+      if (!room) {
+        return jsonResponse({ error: 'Room code မတွေ့ပါ။ Code မှန်မမှန် ပြန်စစ်ပါ။' }, 404);
+      }
+      if (room.status !== 'waiting') {
+        return jsonResponse({ error: 'ဤအခန်းသည် ပွဲစတင်နေပြီ ဖြစ်ပါသည်။' }, 400);
+      }
       if (!room.players.some((p: any) => p.id === player.id)) {
+        if (room.players.length >= room.maxPlayers) {
+          return jsonResponse({ error: 'အခန်း လူပြည့်သွားပါပြီ။' }, 400);
+        }
         room.players.push(player);
-        writeServerlessStore(store);
+      }
+
+      store.rooms = [...store.rooms.filter((r: any) => r.id !== room.id), room];
+      writeServerlessStore(store);
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'rooms', room.id), room, { merge: true }).catch(() => {});
       }
       return jsonResponse({ room });
     }
 
     if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/leave$/) && method === 'POST') {
       const roomId = path.split('/')[4];
-      store.rooms = store.rooms.filter((r: any) => r.id !== roomId);
-      writeServerlessStore(store);
+      const player = currentUser || activeSaved;
+      let target = store.rooms.find((r: any) => r.id === roomId);
+      if (target) {
+        target.players = target.players.filter((p: any) => p.id !== player?.id);
+        if (target.players.length === 0) {
+          store.rooms = store.rooms.filter((r: any) => r.id !== roomId);
+          if (isFirebaseConfigured && db) await deleteDoc(doc(db, 'rooms', roomId)).catch(() => {});
+        } else {
+          if (target.hostId === player?.id) target.hostId = target.players[0].id;
+          if (isFirebaseConfigured && db) await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
+        }
+        writeServerlessStore(store);
+      }
       return jsonResponse({ ok: true });
     }
 
+    if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/kick$/) && method === 'POST') {
+      const roomId = path.split('/')[4];
+      const targetUserId = body.userId;
+      let target = store.rooms.find((r: any) => r.id === roomId);
+      if (!target && isFirebaseConfigured && db) {
+        const snap = await getDoc(doc(db, 'rooms', roomId)).catch(() => null);
+        if (snap && snap.exists()) target = snap.data();
+      }
+      if (target) {
+        target.players = target.players.filter((p: any) => p.id !== targetUserId);
+        store.rooms = [...store.rooms.filter((r: any) => r.id !== roomId), target];
+        writeServerlessStore(store);
+        if (isFirebaseConfigured && db) await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
+      }
+      return jsonResponse({ room: target });
+    }
+
+    // Start Real-Time Match from Room for ALL Players inside the Room
     if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/start$/) && method === 'POST') {
-      return jsonResponse({
-        match: buildPlayableMatch(currentUser || activeSaved, { gameType: 'sakarhtar', mode: 'custom' }),
+      const roomId = path.split('/')[4];
+      const host = currentUser || activeSaved;
+      let target = store.rooms.find((r: any) => r.id === roomId);
+      if (!target && isFirebaseConfigured && db) {
+        const snap = await getDoc(doc(db, 'rooms', roomId)).catch(() => null);
+        if (snap && snap.exists()) target = snap.data();
+      }
+
+      const roomPlayers = target?.players?.length ? target.players : [host];
+      const gameType = target?.gameType || 'sakarhtar';
+      const match = buildPlayableMatch(roomPlayers, {
+        gameType,
+        mode: 'custom',
+        difficulty: 'medium',
+        isRealtimePvp: roomPlayers.length >= 2,
       });
+
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'matches', match.id), match).catch(() => {});
+        if (target) {
+          target.status = 'playing';
+          target.activeMatchId = match.id;
+          await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
+        }
+      }
+      return jsonResponse({ match });
     }
 
     if (path.match(/^\/api\/tournaments\/[^/]+\/join$/) && method === 'POST') {
@@ -448,16 +545,21 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
+    // Admin Dashboard APIs — Always Merges Live Firestore Users
     if (path.startsWith('/api/admin')) {
-      let allUsers = Object.values(store.users);
+      const mergedMap: Record<string, any> = { ...store.users };
       if (isFirebaseConfigured && db) {
         const snap = await getDocs(collection(db, 'users')).catch(() => null);
         if (snap && !snap.empty) {
-          const fbUsers: any[] = [];
-          snap.forEach((d) => fbUsers.push(d.data()));
-          allUsers = fbUsers;
+          snap.forEach((d) => {
+            const u = d.data();
+            if (u?.id) mergedMap[u.id] = u;
+          });
+          store.users = mergedMap;
+          writeServerlessStore(store);
         }
       }
+      const allUsers = Object.values(mergedMap);
 
       if ((path.includes('lock') || path.includes('config')) && ['PUT', 'POST', 'PATCH'].includes(method)) {
         store.featureLocks = { ...store.featureLocks, ...(body.featureLocks || body) };
@@ -508,6 +610,9 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         if (store.users[targetId]) {
           Object.assign(store.users[targetId], updates);
           writeServerlessStore(store);
+        }
+        if (isFirebaseConfigured && db && targetId) {
+          await setDoc(doc(db, 'users', targetId), updates, { merge: true }).catch(() => {});
         }
         return jsonResponse({ ok: true });
       }
