@@ -10,6 +10,8 @@ import {
   Database,
   Download,
   Edit3,
+  Eye,
+  EyeOff,
   Flag,
   Gamepad2,
   KeyRound,
@@ -334,6 +336,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       if (snap.exists()) {
         const data = snap.data() as any;
         setEngineConfig((prev) => ({
+          hideAdminFromUsers:
+            typeof data.hideAdminFromUsers === 'boolean'
+              ? data.hideAdminFromUsers
+              : prev.hideAdminFromUsers,
           maintenanceMode: Boolean(data.maintenanceMode),
           maintenanceMessage: data.maintenanceMessage || prev.maintenanceMessage,
           featureLocks: { ...prev.featureLocks, ...(data.featureLocks || {}) },
@@ -372,7 +378,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const pendingReportsCount = reports.filter((r) => (r.status || 'pending') === 'pending').length;
   const allQuizzes = React.useMemo(() => [...customRiddles, ...QUIZ_BANK_100], [customRiddles]);
 
-  // Handle Report Resolution Actions (Warn / Suspend / Ban / Resolve / Dismiss)
+  // Handle Report Resolution Actions
   const handleResolveReport = async (
     rep: any,
     outcome: 'warn' | 'suspend24' | 'ban' | 'resolve' | 'dismiss'
@@ -392,7 +398,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     try {
       if (isFirebaseConfigured && db) {
-        // 1. Apply penalty to target user if applicable
         if (outcome === 'warn') {
           const nid = `warn_${Date.now()}`;
           await setDoc(
@@ -422,7 +427,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           await setDoc(doc(db, 'users', rep.targetUserId), { status: 'banned' }, { merge: true }).catch(() => {});
         }
 
-        // 2. Update Report status
         await setDoc(
           doc(db, 'reports', rep.id),
           stripUndefined({
@@ -435,7 +439,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           { merge: true }
         );
 
-        // 3. Notify Reporter of outcome
         if (rep.reporterId) {
           const feedbackId = `repfb_${Date.now()}`;
           await setDoc(
@@ -468,7 +471,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onNotify('info', 'Report မှတ်တမ်း ဖျက်ပြီးပါပြီ။');
   };
 
-  // Save Engine Config
+  // Save Engine Config (Includes Stealth Mode & Maintenance)
   const persistEngineConfig = async (nextCfg: EngineConfigState, toastLabel: string) => {
     setSavingConfig(true);
     try {
@@ -822,6 +825,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               <span>{cloudStatus === 'connected' ? `Cloud Live (${livePingMs}ms)` : 'Cloud Disconnected'}</span>
             </div>
 
+            {engineConfig.hideAdminFromUsers && (
+              <span className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-500/15 border border-sky-400/35 text-[10px] font-bold text-sky-300">
+                <EyeOff className="w-3 h-3" /> ADMIN STEALTH
+              </span>
+            )}
+
             {engineConfig.maintenanceMode && (
               <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400 text-[11px] font-bold text-amber-200 animate-pulse">
                 <Wrench className="w-3 h-3" /> MAINTENANCE ON
@@ -979,6 +988,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <Power className="w-4 h-4" /> Quick Master Controls
                   </h3>
 
+                  {/* Maintenance Mode Toggle */}
                   <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-xs font-bold text-white">Global Maintenance Mode</div>
@@ -996,13 +1006,50 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             : 'Maintenance Mode ပိတ်ပြီး ဂိမ်းပြန်ဖွင့်လိုက်ပါပြီ!'
                         )
                       }
-                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold cursor-pointer ${
+                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
                         engineConfig.maintenanceMode
                           ? 'bg-amber-500 text-slate-950'
                           : 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-300'
                       }`}
                     >
                       {engineConfig.maintenanceMode ? 'ON' : 'LIVE'}
+                    </button>
+                  </div>
+
+                  {/* Admin Stealth Visibility Toggle */}
+                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
+                        {engineConfig.hideAdminFromUsers ? (
+                          <EyeOff className="w-3.5 h-3.5 text-sky-400" />
+                        ) : (
+                          <Eye className="w-3.5 h-3.5 text-amber-400" />
+                        )}
+                        <span>Hide Admin Account (Stealth)</span>
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {engineConfig.hideAdminFromUsers
+                          ? 'User များ Ranking / Social / Lobby တွင် Admin Acc မမြင်ရပါ'
+                          : 'User များ Admin Acc ကို မြင်တွေ့နိုင်သည်'}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        persistEngineConfig(
+                          { ...engineConfig, hideAdminFromUsers: !engineConfig.hideAdminFromUsers },
+                          !engineConfig.hideAdminFromUsers
+                            ? 'Admin Account ကို User များမမြင်အောင် ဖျောက်ထားလိုက်ပါပြီ!'
+                            : 'Admin Account ကို User များမြင်နိုင်အောင် ပြန်ဖွင့်လိုက်ပါပြီ!'
+                        )
+                      }
+                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
+                        engineConfig.hideAdminFromUsers
+                          ? 'bg-sky-500 text-slate-950'
+                          : 'bg-white/10 border border-white/15 text-slate-300'
+                      }`}
+                    >
+                      {engineConfig.hideAdminFromUsers ? 'HIDDEN' : 'VISIBLE'}
                     </button>
                   </div>
 
@@ -1044,7 +1091,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     </span>
                     <span className="text-[11px] text-slate-400 font-mono">Latest {auditLogs.length}</span>
                   </h3>
-                  <div className="max-h-60 overflow-y-auto space-y-1.5 pr-1">
+                  <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
                     {auditLogs.length === 0 ? (
                       <div className="text-xs text-slate-500 text-center py-8">No admin actions logged yet.</div>
                     ) : (
@@ -1354,34 +1401,74 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           {/* SECTION 4: GAME ENGINE */}
           {section === 'engine' && (
             <div className="space-y-4">
-              <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/25">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Wrench className="w-4 h-4 text-amber-400" /> Global Maintenance Mode
-                    </h3>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      ဖွင့်ထားချိန်တွင် သာမန် Player များ ဂိမ်းဝင်မရတော့ဘဲ Maintenance Screen ကိုသာ မြင်ရပါမည်။
-                    </p>
+              {/* Stealth Mode & Maintenance Card */}
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/25">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        <Wrench className="w-4 h-4 text-amber-400" /> Global Maintenance Mode
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        ဖွင့်ထားချိန်တွင် သာမန် Player များ ဂိမ်းဝင်မရပါ။
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEngineConfig((prev) => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))
+                      }
+                      className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
+                        engineConfig.maintenanceMode ? 'bg-amber-500 text-slate-950' : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {engineConfig.maintenanceMode ? 'ENABLED' : 'DISABLED'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setEngineConfig((prev) => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))
-                    }
-                    className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                      engineConfig.maintenanceMode ? 'bg-amber-500 text-slate-950' : 'bg-white/10 text-slate-300'
-                    }`}
-                  >
-                    {engineConfig.maintenanceMode ? 'ENABLED' : 'DISABLED'}
-                  </button>
+                  <input
+                    type="text"
+                    value={engineConfig.maintenanceMessage}
+                    onChange={(e) => setEngineConfig((prev) => ({ ...prev, maintenanceMessage: e.target.value }))}
+                    className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                  />
                 </div>
-                <input
-                  type="text"
-                  value={engineConfig.maintenanceMessage}
-                  onChange={(e) => setEngineConfig((prev) => ({ ...prev, maintenanceMessage: e.target.value }))}
-                  className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
+
+                <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-sky-500/25 flex flex-col justify-between">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                        {engineConfig.hideAdminFromUsers ? (
+                          <EyeOff className="w-4 h-4 text-sky-400" />
+                        ) : (
+                          <Eye className="w-4 h-4 text-amber-400" />
+                        )}
+                        Hide Admin Account (Stealth Mode)
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        User များ၏ Ranking၊ Lobby နှင့် Social Search တွင် Admin Account ကို ဖျောက်/ဖော် ပြုလုပ်ရန်။
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEngineConfig((prev) => ({
+                          ...prev,
+                          hideAdminFromUsers: !prev.hideAdminFromUsers,
+                        }))
+                      }
+                      className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
+                        engineConfig.hideAdminFromUsers ? 'bg-sky-500 text-slate-950' : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {engineConfig.hideAdminFromUsers ? 'HIDDEN' : 'VISIBLE'}
+                    </button>
+                  </div>
+                  <div className="text-[11px] text-slate-400 bg-[#070b13] px-3 py-2 rounded-xl border border-white/10">
+                    {engineConfig.hideAdminFromUsers
+                      ? '🔒 လက်ရှိ: Admin Account ကို User များ လုံးဝမမြင်ရအောင် ဖျောက်ထားပါသည်။'
+                      : '👁️ လက်ရှိ: User များ Admin Account ကို မြင်တွေ့နိုင်ပါသည်။'}
+                  </div>
+                </div>
               </div>
 
               <div className="cyber-panel rounded-2xl p-4 space-y-3">
