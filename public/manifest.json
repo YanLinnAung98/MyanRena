@@ -1,12 +1,13 @@
 {
-  "name": "Vanguard Arena - MyanRena",
+  "name": "Vanguard Arena — MyanRena",
   "short_name": "MyanRena",
-  "description": "Real-time Myanmar Multiplayer Arena & Tournaments",
+  "description": "Real-Time Multiplayer Tabletop & Quiz Cyber Arena",
   "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
   "background_color": "#070b14",
-  "theme_color": "#0f172a",
+  "theme_color": "#0a0e17",
   "icons": [
     {
       "src": "https://cdn-icons-png.flaticon.com/512/686/686589.png",
