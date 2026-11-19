@@ -274,12 +274,22 @@ function VanguardAppCore() {
     [socket]
   );
 
-  // All Hooks declared before conditional returns
+  // All Hooks declared before conditional returns (Respects Hide Admin Stealth Mode)
   const mergedLeaderboard = React.useMemo(() => {
-    if (!user) return socket.leaderboard;
-    const exists = socket.leaderboard.some((u) => u.id === user.id);
-    return exists ? socket.leaderboard : [...socket.leaderboard, user];
-  }, [socket.leaderboard, user]);
+    const isAdminSession = token === 'admin-token' && user?.role === 'admin';
+    let list = socket.leaderboard;
+    if (socket.hideAdminFromUsers && !isAdminSession) {
+      list = list.filter((u) => u.role !== 'admin' && u.id !== 'admin_yanlinnaung');
+    }
+    if (!user) return list;
+    const isCurrentUserAdmin = user.role === 'admin' || user.id === 'admin_yanlinnaung';
+    const shouldHideCurrent = socket.hideAdminFromUsers && !isAdminSession && isCurrentUserAdmin;
+    const exists = list.some((u) => u.id === user.id);
+    if (!exists && !shouldHideCurrent) {
+      return [...list, user];
+    }
+    return list;
+  }, [socket.leaderboard, socket.hideAdminFromUsers, token, user]);
 
   const handleAuthenticated = (nextToken: string, nextUser: UserProfile, rememberMe: boolean) => {
     clearStoredToken();
@@ -339,7 +349,7 @@ function VanguardAppCore() {
     socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
   };
 
-  // Strictly sends a Pending Mutual Friend Request (never auto-adds without recipient acceptance)
+  // Mutual Friend Request (Pending until Recipient Accepts)
   const handleSendFriendRequest = async (targetUserId: string) => {
     if (!user || targetUserId === user.id) return;
     const target = mergedLeaderboard.find((u) => u.id === targetUserId);
@@ -696,6 +706,7 @@ function VanguardAppCore() {
             frames={socket.frames}
             featureLocks={socket.featureLocks}
             chatMessages={socket.matchChat}
+            botThinking={socket.botThinking}
             onMove={socket.sendMove}
             onForfeit={socket.forfeitMatch}
             onSendChat={socket.sendMatchChat}
