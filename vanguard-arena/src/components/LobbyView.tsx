@@ -1,82 +1,85 @@
 import React from 'react';
-import { motion } from 'motion/react';
 import {
   Award,
-  Bot,
   Check,
+  ChevronRight,
   Copy,
   Lock,
-  Play,
-  Plus,
+  Sparkles,
   Swords,
   Users,
-  Zap,
 } from 'lucide-react';
-import type { GameType, Language, Tournament, UserProfile } from '../types.ts';
-import { GAME_ARTWORKS, resolveBannerImage } from '../utils/gameArtworks.ts';
+import type { GameType, LandingContent, Language, Tournament, UserProfile } from '../types.ts';
+import { resolveBannerImage } from '../utils/gameArtworks.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
+import { GameStage3D, TiltCard3D } from './Game3DVisuals.tsx';
 import { GameBadgeIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { TournamentBillboard } from './TournamentBillboard.tsx';
 
 interface LobbyViewProps {
   lang: Language;
+  landingContent?: LandingContent;
   user: UserProfile;
   frames: any[];
   featureLocks: Record<string, boolean>;
   tournaments: Tournament[];
   onlinePlayers: UserProfile[];
-  openRooms: any[];
-  queuedGame: GameType | null;
-  onQuickMatch: (gameType: GameType) => void;
-  onCancelQueue: () => void;
-  onPlayBot: (gameType: GameType, difficulty: 'easy' | 'medium' | 'hard') => void;
-  onCreateRoom: (gameType: GameType) => void;
-  onJoinRoom: (roomIdOrCode: string) => void;
+  onSelectGame: (gameType: GameType) => void;
   onInspectPlayer: (userId: string) => void;
   onOpenTournaments: () => void;
   onOpenProfile: () => void;
   onNotify: (level: string, message: string) => void;
 }
 
-const GAMES: Array<{
+const FULL_GAME_CARDS: Array<{
   id: GameType;
-  titleEn: string;
   titleMy: string;
-  descMy: string;
-  descEn: string;
-  accent: string;
+  titleEn: string;
+  taglineMy: string;
+  taglineEn: string;
+  badgeText: string;
+  glow: string;
+  borderAccent: string;
 }> = [
   {
     id: 'connect4',
-    titleEn: '4 in a Row',
     titleMy: '၄ လုံးတန်း (Connect 4)',
-    descMy: 'ဗျူဟာကျကျ ၄ လုံးတန်းအောင် ချကစားပါ',
-    descEn: 'Drop discs strategically to connect four.',
-    accent: 'from-blue-600/25 to-amber-500/20',
+    titleEn: '4 in a Row',
+    taglineMy: '3D ဗျူဟာကျကျ ၄ လုံးတန်းအောင် ချကစားပါ',
+    taglineEn: 'Classic 3D tactical disc drop showdown',
+    badgeText: '1v1 STRATEGY',
+    glow: 'rgba(59, 130, 246, 0.35)',
+    borderAccent: 'hover:border-blue-400/70',
   },
   {
     id: 'tictactoe',
-    titleEn: 'Tic-Tac-Toe',
     titleMy: 'X / O အကွက်ချ',
-    descMy: 'မြန်ဆန်တိကျသော ၃x၃ ဉာဏ်ရည်ပြိုင်ပွဲ',
-    descEn: 'Fast-paced 3x3 tactical duel.',
-    accent: 'from-sky-500/25 to-indigo-500/20',
+    titleEn: 'Tic-Tac-Toe Neon',
+    taglineMy: 'မြန်ဆန်တိကျသော 3D Neon ဉာဏ်ရည်ပြိုင်ပွဲ',
+    taglineEn: 'Fast-paced 3D hologram 3×3 duel',
+    badgeText: 'FAST DUEL',
+    glow: 'rgba(56, 189, 248, 0.35)',
+    borderAccent: 'hover:border-sky-400/70',
   },
   {
     id: 'rps',
-    titleEn: 'Rock Paper Scissors',
     titleMy: 'ကျောက်တုံး စက္ကူ ကတ်ကြေး',
-    descMy: 'Best of 3 စိတ်ဖတ် ယှဉ်ပြိုင်မှု',
-    descEn: 'Best-of-3 reflex & mind game.',
-    accent: 'from-pink-600/25 to-amber-500/20',
+    titleEn: 'Rock Paper Scissors',
+    taglineMy: 'Best of 3 / 5 စိတ်ဖတ် ယှဉ်ပြိုင်မှု',
+    taglineEn: 'Best-of-3 / 5 mind-reading clash',
+    badgeText: 'REFLEX CLASH',
+    glow: 'rgba(244, 114, 182, 0.35)',
+    borderAccent: 'hover:border-pink-400/70',
   },
   {
     id: 'sakarhtar',
-    titleEn: 'Wise Owl Quiz',
     titleMy: 'ပညာရှိ ဇီးကွက် ဉာဏ်စမ်း',
-    descMy: 'မြန်မာ့စကားထာနှင့် ဗဟုသုတ ဉာဏ်စမ်း',
-    descEn: 'Myanmar riddles & rapid trivia showdown.',
-    accent: 'from-amber-600/25 to-orange-500/20',
+    titleEn: 'Wise Owl Quiz',
+    taglineMy: 'မြန်မာ့စကားထာနှင့် ဗဟုသုတ ဉာဏ်စမ်း (1–8 ဦး)',
+    taglineEn: 'Myanmar riddles & trivia (Up to 8P)',
+    badgeText: '1–8 PLAYERS',
+    glow: 'rgba(251, 191, 36, 0.38)',
+    borderAccent: 'hover:border-amber-400/70',
   },
 ];
 
@@ -87,22 +90,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   featureLocks,
   tournaments,
   onlinePlayers,
-  openRooms,
-  queuedGame,
-  onQuickMatch,
-  onCancelQueue,
-  onPlayBot,
-  onCreateRoom,
-  onJoinRoom,
+  onSelectGame,
   onInspectPlayer,
   onOpenTournaments,
   onOpenProfile,
   onNotify,
 }) => {
-  const [roomCodeInput, setRoomCodeInput] = React.useState('');
   const [copiedId, setCopiedId] = React.useState(false);
-  const [botDiff, setBotDiff] = React.useState<'easy' | 'medium' | 'hard'>('medium');
 
+  const safePlayers = Array.isArray(onlinePlayers) ? onlinePlayers : [];
+  const safeTourneys = Array.isArray(tournaments) ? tournaments : [];
   const bannerSrc = resolveBannerImage(user.bannerUrl, user.bannerId);
   const giftsCount = Array.isArray(user.gifts) ? user.gifts.length : 0;
 
@@ -118,14 +115,14 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       {/* 1. LIVE PREMIUM TOURNAMENT BILLBOARD */}
       <TournamentBillboard
         lang={lang}
-        tournaments={tournaments}
-        allUsers={onlinePlayers}
+        tournaments={safeTourneys}
+        allUsers={safePlayers}
         frames={frames}
         onInspectPlayer={onInspectPlayer}
         onOpenTournaments={onOpenTournaments}
       />
 
-      {/* 2. PLAYER BANNER IDENTITY CARD */}
+      {/* 2. PLAYER BANNER IDENTITY CARD (Real-Time Display Name & Bio) */}
       <div className="cyber-panel rounded-2xl overflow-hidden border border-amber-500/25 relative">
         <img
           src={bannerSrc}
@@ -177,233 +174,123 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             </div>
           </div>
 
-          {/* Join Private Room by Code */}
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (roomCodeInput.trim()) {
-                onJoinRoom(roomCodeInput.trim());
-                setRoomCodeInput('');
-              }
-            }}
-            className="flex items-center gap-2 w-full sm:w-auto"
+          <button
+            type="button"
+            onClick={onOpenProfile}
+            className="px-3.5 h-9 rounded-xl bg-white/10 hover:bg-amber-500/20 border border-white/15 hover:border-amber-400/40 text-xs font-bold text-white cursor-pointer"
           >
-            <input
-              type="text"
-              value={roomCodeInput}
-              onChange={(e) => setRoomCodeInput(e.target.value.toUpperCase())}
-              placeholder={lang === 'my' ? 'Room Code ထည့်ရန်...' : 'Enter Room Code...'}
-              className="flex-1 sm:w-44 h-9 px-3 rounded-xl bg-[#070b14]/90 border border-white/15 text-xs font-mono text-white focus:outline-none focus:border-amber-400"
-            />
-            <button
-              type="submit"
-              className="px-3.5 h-9 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold text-white cursor-pointer"
-            >
-              Join
-            </button>
-          </form>
+            {lang === 'my' ? 'Profile ပြင်မည်' : 'Edit Profile'}
+          </button>
         </div>
       </div>
 
-      {/* Matchmaking Banner if Queued */}
-      {queuedGame && (
-        <div className="p-3.5 rounded-2xl bg-amber-500/15 border border-amber-400/50 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 text-xs font-bold text-amber-200">
-            <Zap className="w-4 h-4 text-amber-400 animate-pulse" />
-            <span>
-              {lang === 'my'
-                ? `ပြိုင်ဘက် ရှာဖွေနေပါသည် (${queuedGame})...`
-                : `Searching for opponent (${queuedGame})...`}
-            </span>
-          </div>
-          <button
-            type="button"
-            onClick={onCancelQueue}
-            className="px-3 py-1 rounded-lg bg-rose-500/25 text-rose-200 text-xs font-bold cursor-pointer"
-          >
-            Cancel
-          </button>
-        </div>
-      )}
-
-      {/* 3. FOUR PREMIUM GAME ARENA CARDS */}
+      {/* 3. FULL-SIZE 3D INTERACTIVE GAME CARDS (Click -> Opens Next-Page Setup) */}
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h3 className="text-sm font-display font-bold text-white flex items-center gap-2">
+        <div className="flex items-center justify-between gap-2">
+          <h3 className="text-sm sm:text-base font-display font-bold text-white flex items-center gap-2">
             <Swords className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'ဂိမ်းကစားကွင်းများ ရွေးချယ်ပါ' : 'Select Game Arena'}</span>
+            <span>{lang === 'my' ? 'ကစားလိုသော ဂိမ်းကို ရွေးချယ်ပါ' : 'Choose Your Game Arena'}</span>
           </h3>
-
-          <div className="flex items-center gap-1.5 text-[11px]">
-            <span className="text-slate-400">Bot AI:</span>
-            {(['easy', 'medium', 'hard'] as const).map((d) => (
-              <button
-                key={d}
-                type="button"
-                onClick={() => setBotDiff(d)}
-                className={`px-2 py-0.5 rounded-md font-bold uppercase cursor-pointer ${
-                  botDiff === d
-                    ? 'bg-amber-500 text-slate-950'
-                    : 'bg-white/5 text-slate-400 hover:text-white'
-                }`}
-              >
-                {d}
-              </button>
-            ))}
-          </div>
+          <span className="text-[11px] text-amber-300/90 flex items-center gap-1">
+            <Sparkles className="w-3.5 h-3.5" />
+            {lang === 'my' ? 'နှိပ်ဝင်၍ စိတ်ကြိုက်ပြင်ဆင် ဆော့ပါ' : 'Tap card to configure & play'}
+          </span>
         </div>
 
-        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
-          {GAMES.map((g) => {
+        <div className="grid sm:grid-cols-2 gap-4">
+          {FULL_GAME_CARDS.map((g) => {
             const locked = Boolean(featureLocks?.[g.id]);
             return (
-              <motion.div
+              <TiltCard3D
                 key={g.id}
-                whileHover={{ y: -3 }}
-                className="cyber-panel rounded-2xl overflow-hidden border border-white/10 hover:border-amber-400/45 flex flex-col justify-between transition-all"
+                disabled={locked}
+                glowColor={g.glow}
+                onClick={() => onSelectGame(g.id)}
+                className={`cyber-panel overflow-hidden border border-white/15 ${g.borderAccent} shadow-xl`}
               >
-                <div className="h-36 relative bg-[#070b14] overflow-hidden">
-                  <img
-                    src={GAME_ARTWORKS[g.id]}
-                    alt={g.titleEn}
-                    className="w-full h-full object-cover"
-                  />
-                  <div className={`absolute inset-0 bg-gradient-to-t ${g.accent} via-transparent to-transparent`} />
-                  <div className="absolute top-2.5 left-2.5 p-1.5 rounded-xl bg-black/70 border border-white/15">
-                    <GameBadgeIcon gameType={g.id} className="w-5 h-5" />
-                  </div>
-                  {locked && (
-                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center gap-1.5 text-xs font-bold text-rose-300">
-                      <Lock className="w-4 h-4" /> Locked
+                <div className="relative flex flex-col h-full">
+                  {/* Full 3D Animated Game Stage */}
+                  <div className="relative overflow-hidden">
+                    <GameStage3D gameType={g.id} compact />
+
+                    {/* Top Floating Badges */}
+                    <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between">
+                      <span className="px-2.5 py-1 rounded-xl bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-mono font-bold text-amber-300 flex items-center gap-1.5">
+                        <GameBadgeIcon gameType={g.id} className="w-4 h-4" />
+                        <span>{g.badgeText}</span>
+                      </span>
+
+                      {locked && (
+                        <span className="px-2.5 py-1 rounded-xl bg-rose-600/90 text-[10px] font-bold text-white flex items-center gap-1">
+                          <Lock className="w-3 h-3" /> Locked
+                        </span>
+                      )}
                     </div>
-                  )}
-                </div>
-
-                <div className="p-3.5 space-y-3 flex-1 flex flex-col justify-between">
-                  <div>
-                    <h4 className="text-sm font-display font-bold text-white">
-                      {lang === 'my' ? g.titleMy : g.titleEn}
-                    </h4>
-                    <p className="text-[11px] text-slate-400 mt-0.5 line-clamp-2">
-                      {lang === 'my' ? g.descMy : g.descEn}
-                    </p>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <button
-                      type="button"
-                      disabled={locked}
-                      onClick={() => onQuickMatch(g.id)}
-                      className="w-full h-9 rounded-xl cyber-cta-gold disabled:opacity-40 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Play className="w-3.5 h-3.5 fill-current" />
-                      <span>{lang === 'my' ? 'အွန်လိုင်း ယှဉ်ပြိုင်မည်' : 'Quick Match'}</span>
-                    </button>
+                  {/* Clean Full-Card Footer */}
+                  <div className="p-4 bg-gradient-to-b from-[#0c1324] to-[#070b14] flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <h4 className="text-base sm:text-lg font-display font-extrabold text-white truncate">
+                        {lang === 'my' ? g.titleMy : g.titleEn}
+                      </h4>
+                      <p className="text-xs text-slate-400 truncate mt-0.5">
+                        {lang === 'my' ? g.taglineMy : g.taglineEn}
+                      </p>
+                    </div>
 
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <button
-                        type="button"
-                        disabled={locked}
-                        onClick={() => onPlayBot(g.id, botDiff)}
-                        className="h-8 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 border border-white/10 text-[11px] font-bold text-slate-200 flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Bot className="w-3.5 h-3.5 text-sky-400" /> Solo AI
-                      </button>
-                      <button
-                        type="button"
-                        disabled={locked}
-                        onClick={() => onCreateRoom(g.id)}
-                        className="h-8 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-40 border border-white/10 text-[11px] font-bold text-slate-200 flex items-center justify-center gap-1 cursor-pointer"
-                      >
-                        <Plus className="w-3.5 h-3.5 text-amber-400" /> Room
-                      </button>
+                    <div className="w-10 h-10 rounded-xl cyber-cta-gold text-slate-950 flex items-center justify-center shrink-0 shadow-[0_0_16px_rgba(245,158,11,0.4)]">
+                      <ChevronRight className="w-5 h-5" />
                     </div>
                   </div>
                 </div>
-              </motion.div>
+              </TiltCard3D>
             );
           })}
         </div>
       </div>
 
-      {/* 4. OPEN ROOMS & LIVE PLAYERS DIRECTORY */}
-      <div className="grid lg:grid-cols-12 gap-4">
-        {/* Open Rooms */}
-        <div className="lg:col-span-5 cyber-panel rounded-2xl p-4 space-y-2.5 border border-white/10">
-          <h3 className="text-xs font-bold text-amber-300 uppercase tracking-wider">
-            {lang === 'my' ? `ဖွင့်ထားသော အခန်းများ (${openRooms.length})` : `Open Rooms (${openRooms.length})`}
+      {/* 4. LIVE PLAYERS DIRECTORY (Click any player -> Inspect Banner, Bio & Gifts) */}
+      <div className="cyber-panel rounded-2xl p-4 space-y-2.5 border border-white/10">
+        <div className="flex items-center justify-between">
+          <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
+            <Users className="w-3.5 h-3.5" />
+            <span>
+              {lang === 'my'
+                ? `အွန်လိုင်း ကစားသမားများ (${safePlayers.length})`
+                : `Arena Players (${safePlayers.length})`}
+            </span>
           </h3>
-          {openRooms.length === 0 ? (
-            <div className="text-xs text-slate-500 py-4 text-center">
-              {lang === 'my' ? 'လက်ရှိ ဖွင့်ထားသော Room မရှိသေးပါ။' : 'No open rooms yet.'}
-            </div>
-          ) : (
-            <div className="space-y-2 max-h-44 overflow-y-auto">
-              {openRooms.map((rm) => (
-                <div
-                  key={rm.id}
-                  className="p-2.5 rounded-xl bg-[#070b14] border border-white/10 flex items-center justify-between gap-2 text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <GameBadgeIcon gameType={rm.gameType} className="w-6 h-6 shrink-0" />
-                    <div className="min-w-0">
-                      <div className="font-mono font-bold text-amber-300 truncate">{rm.code}</div>
-                      <div className="text-[10px] text-slate-400">
-                        {(rm.players || []).length}/{rm.maxPlayers || 2} Players
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => onJoinRoom(rm.id)}
-                    className="px-3 h-7 rounded-lg bg-amber-500 text-slate-950 font-bold text-[11px] cursor-pointer"
-                  >
-                    Join
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <span className="text-[10px] text-slate-400">
+            {lang === 'my' ? 'နှိပ်၍ Profile & Bio ကြည့်မည်' : 'Tap to inspect profile'}
+          </span>
         </div>
 
-        {/* Live Players Strip (Click to Inspect Profile) */}
-        <div className="lg:col-span-7 cyber-panel rounded-2xl p-4 space-y-2.5 border border-white/10">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" />
-              <span>{lang === 'my' ? `ကစားသမားများ (${onlinePlayers.length})` : `Arena Players (${onlinePlayers.length})`}</span>
-            </h3>
-            <span className="text-[10px] text-slate-400">
-              {lang === 'my' ? 'နှိပ်၍ Profile ကြည့်မည်' : 'Tap to inspect'}
-            </span>
-          </div>
-
-          <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
-            {onlinePlayers.slice(0, 16).map((p) => {
-              const isLive = Boolean(p.online && Date.now() - Number(p.lastSeenMs || 0) < 90000);
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => onInspectPlayer(p.id)}
-                  className="min-w-[145px] p-2.5 rounded-xl bg-[#070b14] border border-white/10 hover:border-amber-400/45 flex items-center gap-2 text-left shrink-0 cursor-pointer transition-all"
-                >
-                  <AvatarWithFrame
-                    avatarUrl={p.avatarUrl}
-                    frameId={p.frameId}
-                    frames={frames}
-                    displayName={p.displayName}
-                    size="xs"
-                    status={isLive ? 'online' : 'offline'}
-                  />
-                  <div className="min-w-0">
-                    <div className="text-xs font-bold text-white truncate">{p.displayName}</div>
-                    <div className="text-[10px] font-mono text-amber-300">{p.xp || 0} XP</div>
-                  </div>
-                </button>
-              );
-            })}
-          </div>
+        <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
+          {safePlayers.slice(0, 20).map((p) => {
+            const isLive = Boolean(p.online && Date.now() - Number(p.lastSeenMs || 0) < 90000);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() => onInspectPlayer(p.id)}
+                className="min-w-[156px] p-2.5 rounded-xl bg-[#070b14] border border-white/10 hover:border-amber-400/50 flex items-center gap-2.5 text-left shrink-0 cursor-pointer transition-all"
+              >
+                <AvatarWithFrame
+                  avatarUrl={p.avatarUrl}
+                  frameId={p.frameId}
+                  frames={frames}
+                  displayName={p.displayName}
+                  size="xs"
+                  status={isLive ? 'online' : 'offline'}
+                />
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-white truncate">{p.displayName}</div>
+                  <div className="text-[10px] font-mono text-amber-300">{p.xp || 0} XP</div>
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
