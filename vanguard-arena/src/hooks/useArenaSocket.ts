@@ -10,10 +10,10 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
+import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { db, isFirebaseConfigured } from '../lib/firebase.ts';
 import {
   buildPlayableMatch,
-  DEFAULT_SAKAR_RIDDLES,
   getPatchedLandingContent,
   normalizeGameId,
   readActiveSessionUser,
@@ -21,6 +21,7 @@ import {
   saveActiveSessionUser,
   writeServerlessStore,
 } from '../lib/serverlessApi.ts';
+import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import type {
   GameType,
@@ -47,6 +48,30 @@ function checkTTTWinner(board: Array<string | null>): 'X' | 'O' | 'DRAW' | null 
     if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a] as 'X' | 'O';
   }
   return board.every((c) => c !== null) ? 'DRAW' : null;
+}
+
+function pickSmartTTTMove(board: Array<string | null>, difficulty: string): number {
+  const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
+  if (empty.length === 0) return -1;
+  if (difficulty === 'easy') return empty[Math.floor(Math.random() * empty.length)];
+
+  const lines = [
+    [0, 1, 2], [3, 4, 5], [6, 7, 8],
+    [0, 3, 6], [1, 4, 7], [2, 5, 8],
+    [0, 4, 8], [2, 4, 6],
+  ];
+  for (const mark of ['O', 'X']) {
+    for (const [a, b, c] of lines) {
+      const vals = [board[a], board[b], board[c]];
+      if (vals.filter((v) => v === mark).length === 2 && vals.includes(null)) {
+        if (board[a] === null) return a;
+        if (board[b] === null) return b;
+        if (board[c] === null) return c;
+      }
+    }
+  }
+  if (difficulty === 'hard' && board[4] === null) return 4;
+  return empty[Math.floor(Math.random() * empty.length)];
 }
 
 function checkConnect4Winner(grid: Array<Array<string | null>>): 'P1' | 'P2' | 'DRAW' | null {
@@ -85,20 +110,21 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [pendingChallenge, setPendingChallenge] = useState<any | null>(null);
   const [pendingWarnings, setPendingWarnings] = useState<{ id: string; reason: string }[]>([]);
   const [socialRefreshTick, setSocialRefreshTick] = useState<number>(0);
-  const [incomingDMs] = useState<any[]>([]);
+  const [incomingDMs, setIncomingDMs] = useState<any[]>([]);
   const [toasts, setToasts] = useState<{ id: string; level: string; message: string }[]>([]);
 
   const queueTimerRef = useRef<number | null>(null);
   const queueRoomIdRef = useRef<string | null>(null);
   const knownUserCountRef = useRef<number>(0);
   const xpAwardedMatchRef = useRef<string | null>(null);
+  const seenMsgIdsRef = useRef<Set<string>>(new Set());
 
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
     setToasts((prev) => [...prev, { id, level, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3500);
+    }, 4000);
   }, []);
 
   const dismissWarningLocal = useCallback((warningId: string) => {
@@ -159,6 +185,15 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     [resolveCurrentPlayer, onUserUpdate]
   );
 
+  // Sync User Device Heartbeat to Firestore so Admin always sees live Device Info
+  useEffect(() => {
+    if (!token || !isFirebaseConfigured || !db) return;
+    const me = resolveCurrentPlayer();
+    if (!me?.id) return;
+    const dev = detectClientDevice();
+    setDoc(doc(db, 'users', me.id), { ...dev, online: true }, { merge: true }).catch(() => {});
+  }, [token, resolveCurrentPlayer]);
+
   useEffect(() => {
     if (!token) return;
     setConnectionState('connected');
@@ -168,11 +203,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     return () => clearInterval(timer);
   }, [token]);
 
-  // 1. Real-Time Users, Admin Announcements & User Warnings Sync
+  // 1. Real-Time Users, Admin Broadcasts, Direct Messages & Warnings
   useEffect(() => {
     if (!token) return;
 
-    // Immediate Local Storage Sync (for same-browser multi-tab testing)
     const syncFromLocal = () => {
       const store = readServerlessStore();
       const usersList = Object.values(store.users).sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0));
@@ -180,7 +214,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       setOnlinePlayers(usersList as UserProfile[]);
       if (store.activeBroadcast?.message) {
         setAnnouncement({
-          title: store.activeBroadcast.title || 'Announcement',
+          title: store.activeBroadcast.title || 'Admin ကြေညာချက်',
           message: store.activeBroadcast.message,
         });
       }
@@ -198,22 +232,29 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       return () => window.removeEventListener('storage', syncFromLocal);
     }
 
-    // Firestore Live Users Collection (No orderBy filter so zero accounts are ever skipped)
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       const list: UserProfile[] = [];
       const store = readServerlessStore();
       snap.forEach((d) => {
         const u = d.data() as any;
         if (u?.id) {
-          list.push(u as UserProfile);
-          store.users[u.id] = u;
+          const enriched = {
+            device: u.device || 'Mobile / Web Client',
+            deviceType: u.deviceType || 'Mobile',
+            os: u.os || 'Android / iOS',
+            browser: u.browser || 'Browser',
+            online: u.online !== false,
+            ...u,
+          };
+          list.push(enriched as UserProfile);
+          store.users[u.id] = enriched;
         }
       });
       list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
       writeServerlessStore(store);
 
       if (token === 'admin-token' && knownUserCountRef.current > 0 && list.length > knownUserCountRef.current) {
-        pushToast('success', `New Player Joined! (Total: ${list.length})`);
+        pushToast('success', `ကစားသမားအသစ် ဝင်ရောက်လာပါပြီ! (စုစုပေါင်း: ${list.length})`);
       }
       knownUserCountRef.current = list.length;
 
@@ -225,7 +266,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         const me = list.find((u) => u.id === uid) as any;
         if (me) {
           if (me.status === 'banned' || me.status === 'suspended') {
-            onKicked('Your account has been suspended or banned.');
+            onKicked('သင့်အကောင့်ကို Admin မှ ယာယီ/အပြီး ပိတ်သိမ်းထားပါသည်။');
           } else {
             onUserUpdate({ ...me, role: 'player', isAdmin: false });
           }
@@ -238,13 +279,38 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       if (snap.exists()) {
         const data = snap.data() as any;
         if (data?.message) {
-          setAnnouncement({ title: data.title || 'Announcement', message: data.message });
-          pushToast('info', `${data.title || 'Notice'}: ${data.message}`);
+          setAnnouncement({ title: data.title || 'Admin ကြေညာချက်', message: data.message });
+          if (data.id && !seenMsgIdsRef.current.has(data.id)) {
+            seenMsgIdsRef.current.add(data.id);
+            pushToast('info', `📢 ${data.title || 'Admin'}: ${data.message}`);
+          }
         }
       }
     });
 
-    // Live Admin Warnings Listener for Current Player
+    // Live Direct Messages Listener (Admin -> User or User -> User)
+    const unsubMessages = onSnapshot(collection(db, 'messages'), (snap) => {
+      const myId = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '');
+      const mine: any[] = [];
+      snap.forEach((d) => {
+        const m = d.data() as any;
+        if (m.toUserId === myId || m.fromUserId === myId) {
+          mine.push(m);
+          if (m.toUserId === myId && m.id && !seenMsgIdsRef.current.has(m.id)) {
+            seenMsgIdsRef.current.add(m.id);
+            pushToast('success', `💬 ${m.fromName || 'Admin'}: ${m.text}`);
+            setPendingWarnings((prev) => [
+              ...prev,
+              { id: m.id, reason: `💬 ${m.fromName || 'Admin'}: ${m.text}` },
+            ]);
+          }
+        }
+      });
+      setIncomingDMs(mine);
+      setSocialRefreshTick((n) => n + 1);
+    });
+
+    // Live Admin Warnings Listener
     const unsubWarns = onSnapshot(collection(db, 'warnings'), (snap) => {
       if (token === 'admin-token') return;
       const uid = token.replace(/^token_/, '');
@@ -255,7 +321,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           myWarns.push({ id: w.id || d.id, reason: w.reason });
         }
       });
-      setPendingWarnings(myWarns);
+      if (myWarns.length > 0) setPendingWarnings(myWarns);
     });
 
     const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
@@ -277,6 +343,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       window.removeEventListener('storage', syncFromLocal);
       unsubUsers();
       unsubAnn();
+      unsubMessages();
       unsubWarns();
       unsubTourneys();
       unsubRooms();
@@ -455,7 +522,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setActiveMatch(buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' }));
   }, [resolveCurrentPlayer]);
 
-  // 5. Move Handler for All 4 Games (Normalized GameType)
+  // 5. Move Handler for All 4 Games (with Smart Bot AI & 100 Quiz Bank)
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
@@ -495,9 +562,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         board[idx] = 'X';
         let outcome = checkTTTWinner(board);
         if (!outcome) {
-          const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
-          if (empty.length > 0) {
-            board[empty[Math.floor(Math.random() * empty.length)]] = 'O';
+          const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
+          if (botPick >= 0) {
+            board[botPick] = 'O';
             outcome = checkTTTWinner(board);
           }
         }
@@ -557,7 +624,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         if (!outcome) {
           const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
           if (validCols.length > 0) {
-            const botCol = validCols[Math.floor(Math.random() * validCols.length)];
+            const botCol =
+              next.difficulty === 'hard' && validCols.includes(3) && Math.random() > 0.4
+                ? 3
+                : validCols[Math.floor(Math.random() * validCols.length)];
             for (let r = 5; r >= 0; r--) {
               if (grid[r][botCol] === null) {
                 grid[r][botCol] = 'P2';
@@ -642,7 +712,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       }
 
       if (gType === 'sakarhtar') {
-        const riddles = next.riddles || DEFAULT_SAKAR_RIDDLES;
+        const riddles = next.riddles?.length ? next.riddles : QUIZ_BANK_100;
         const idx = next.riddleIndex || 0;
         const current = riddles[idx] || riddles[0];
         const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
@@ -673,7 +743,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         if (chosen === current.answerIndex) {
           next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
         }
-        if (Math.random() > 0.5) {
+        if (Math.random() > 0.55) {
           next.scores[p2.id] = (next.scores[p2.id] || 0) + 100;
         }
         const nextIdx = idx + 1;
