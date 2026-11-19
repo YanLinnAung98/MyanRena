@@ -1,18 +1,23 @@
-import React from 'react';
+import './styles/cyberArena.css';
+import './lib/serverlessApi.ts';
+import React, { Suspense } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
+  Award,
   Bell,
-  Globe,
-  LogOut,
-  MessageSquare,
+  CheckCheck,
+  Clock,
+  Gamepad2,
+  Megaphone,
+  RotateCcw,
   Settings,
-  Shield,
+  ShieldAlert,
   Swords,
   Trophy,
   User,
-  Volume2,
-  VolumeX,
+  Users,
+  Wifi,
   Wrench,
   X,
 } from 'lucide-react';
@@ -25,99 +30,297 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { db, isFirebaseConfigured, stripUndefined } from './lib/firebase.ts';
+import { useArenaSocket } from './hooks/useArenaSocket.ts';
+import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
+import { TRANSLATIONS } from './i18n/translations.ts';
+import { db, isFirebaseConfigured } from './lib/firebase.ts';
 import {
+  ACTIVE_USER_KEY,
   buildPlayableMatch,
+  getPatchedLandingContent,
+  normalizeGameId,
   readActiveSessionUser,
   saveActiveSessionUser,
 } from './lib/serverlessApi.ts';
-import { useArenaSocket } from './hooks/useArenaSocket.ts';
-import type { GameType, Language, UserProfile } from './types.ts';
+import type { GameType, LandingContent, Language, UserProfile } from './types.ts';
 import { soundEngine } from './utils/sound.ts';
-import { AdminPanel } from './components/AdminPanel.tsx';
+import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
+import { GameArenaSetupView } from './components/GameArenaSetupView.tsx';
 import { LandingView } from './components/LandingView.tsx';
+import { LanguageSwitcher } from './components/LanguageSwitcher.tsx';
 import { LeaderboardView } from './components/LeaderboardView.tsx';
 import { LobbyView } from './components/LobbyView.tsx';
 import { MatchArena } from './components/MatchArena.tsx';
+import { MatchmakingOverlay } from './components/MatchmakingOverlay.tsx';
 import { PlayerProfileModal } from './components/PlayerProfileModal.tsx';
 import { VanguardCrestIcon } from './components/PremiumIcons.tsx';
 import { ProfileView } from './components/ProfileView.tsx';
+import { SakarRoomLobby } from './components/SakarRoomLobby.tsx';
+import { SettingsModal } from './components/SettingsModal.tsx';
 import { SocialHub } from './components/SocialHub.tsx';
 import { TournamentView } from './components/TournamentView.tsx';
 
-type ActiveTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile' | 'admin';
+const AdminPanel = React.lazy(() =>
+  import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
+);
 
-export default function App() {
-  const [lang, setLang] = React.useState<Language>('my');
-  const [token, setToken] = React.useState<string | null>(() => localStorage.getItem('arena_token'));
-  const [user, setUser] = React.useState<UserProfile | null>(() => readActiveSessionUser());
-  const [activeTab, setActiveTab] = React.useState<ActiveTab>('lobby');
-  const [inspectingUserId, setInspectingUserId] = React.useState<string | null>(null);
-  const [chatTargetUserId, setChatTargetUserId] = React.useState<string | null>(null);
+type Difficulty = 'easy' | 'medium' | 'hard';
+type TurnTimeLimit = 15 | 20 | 30;
+type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
 
-  // System Maintenance & Locks
-  const [maintenance, setMaintenance] = React.useState(false);
+class GlobalErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Unexpected application error' };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-dvh cyber-bg text-white flex items-center justify-center p-4">
+          <div className="max-w-sm w-full cyber-panel rounded-2xl border border-amber-500/40 p-6 text-center space-y-4">
+            <ShieldAlert className="w-10 h-10 text-amber-400 mx-auto" />
+            <h2 className="text-base font-bold">Vanguard Auto-Recovery</h2>
+            <p className="text-xs font-mono text-rose-300 break-words bg-[#070b14] p-2.5 rounded-xl">
+              {this.state.message}
+            </p>
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>ပြန်လည်စတင်မည် (Reload)</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function readStoredToken(): string | null {
+  if (typeof window === 'undefined') return null;
+  return (
+    localStorage.getItem('vanguard_token') ||
+    sessionStorage.getItem('vanguard_token') ||
+    localStorage.getItem('arena_token')
+  );
+}
+
+function clearStoredToken() {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem('vanguard_token');
+  sessionStorage.removeItem('vanguard_token');
+  localStorage.removeItem('arena_token');
+  localStorage.removeItem(ACTIVE_USER_KEY);
+}
+
+function safeChallengeGameName(rawType: string | undefined, lang: Language): string {
+  const norm = normalizeGameId(rawType);
+  if (norm === 'connect4') return lang === 'my' ? '၄ လုံးတန်း' : '4 in a Row';
+  if (norm === 'tictactoe') return 'Tic-Tac-Toe';
+  if (norm === 'rps') return lang === 'my' ? 'ကျောက်တုံး စက္ကူ ကတ်ကြေး' : 'Rock Paper Scissors';
+  return lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz';
+}
+
+function VanguardAppCore() {
+  const [lang, setLang] = React.useState<Language>(() => {
+    if (typeof window === 'undefined') return 'my';
+    return localStorage.getItem('vanguard_lang') === 'en' ? 'en' : 'my';
+  });
+  const [token, setToken] = React.useState<string | null>(readStoredToken);
+  const [user, setUser] = React.useState<UserProfile | null>(null);
+  const [bootstrapping, setBootstrapping] = React.useState(true);
+  const [publicOnlineCount, setPublicOnlineCount] = React.useState(1);
+  const [publicLandingContent, setPublicLandingContent] = React.useState<LandingContent>(() =>
+    getPatchedLandingContent(DEFAULT_LANDING_CONTENT)
+  );
+  const [activeTab, setActiveTab] = React.useState<LobbyTab>('lobby');
+  const [selectedSetupGame, setSelectedSetupGame] = React.useState<GameType | null>(null);
+  const [adminViewMode, setAdminViewMode] = React.useState<'admin' | 'lobby'>('admin');
+  const [inspectUserId, setInspectUserId] = React.useState<string | null>(null);
+  const [initialChatUserId, setInitialChatUserId] = React.useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
+  const [kickBanner, setKickBanner] = React.useState<string | null>(null);
+  const [notiDrawerOpen, setNotiDrawerOpen] = React.useState(false);
+  const [nowTs, setNowTs] = React.useState(() => Date.now());
+
+  // Direct Real-Time Firestore Mirrors (guarantees real-time name/bio/noti/config sync)
+  const [liveUsers, setLiveUsers] = React.useState<UserProfile[]>([]);
+  const [liveNotifications, setLiveNotifications] = React.useState<any[]>([]);
+  const [liveAnnouncement, setLiveAnnouncement] = React.useState<{ title: string; message: string } | null>(null);
+  const [maintenanceMode, setMaintenanceMode] = React.useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = React.useState(
     'စနစ်အဆင့်မြှင့်တင်နေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပေးပါ။'
   );
   const [liveFeatureLocks, setLiveFeatureLocks] = React.useState<Record<string, boolean>>({});
 
-  // Notifications & Settings UI
-  const [notifications, setNotifications] = React.useState<any[]>([]);
-  const [notiOpen, setNotiOpen] = React.useState(false);
-  const [settingsOpen, setSettingsOpen] = React.useState(false);
-  const [muted, setMuted] = React.useState(false);
-  const [graphicsQuality, setGraphicsQuality] = React.useState<'low' | 'medium' | 'high'>('high');
+  const t = TRANSLATIONS[lang];
 
-  const isAdmin = Boolean(user && (user.role === 'admin' || token === 'admin-token'));
-
-  const handleUserUpdate = React.useCallback((updated: UserProfile) => {
-    setUser((prev) => {
-      const merged = prev ? { ...prev, ...updated } : updated;
-      saveActiveSessionUser(merged);
-      return merged;
-    });
+  const handleChangeLang = React.useCallback((next: Language) => {
+    setLang(next);
+    if (typeof window !== 'undefined') localStorage.setItem('vanguard_lang', next);
   }, []);
 
-  const handleLogout = React.useCallback(() => {
-    localStorage.removeItem('arena_token');
-    localStorage.removeItem('myanrena_active_user');
+  const handleLogout = React.useCallback(async () => {
+    soundEngine.stopAmbientMusic?.();
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
+    clearStoredToken();
     setToken(null);
     setUser(null);
-    setActiveTab('lobby');
-    setSettingsOpen(false);
+    setSelectedSetupGame(null);
+    setAdminViewMode('admin');
+  }, [token]);
+
+  const handleKicked = React.useCallback((reason: string) => {
+    soundEngine.stopAmbientMusic?.();
+    clearStoredToken();
+    setToken(null);
+    setUser(null);
+    setSelectedSetupGame(null);
+    setAdminViewMode('admin');
+    setKickBanner(reason);
   }, []);
 
-  const handleKicked = React.useCallback(
-    (reason: string) => {
-      alert(reason);
-      handleLogout();
-    },
-    [handleLogout]
-  );
+  // Bootstrap Session
+  React.useEffect(() => {
+    let active = true;
+    const init = async () => {
+      try {
+        const bootRes = await fetch('/api/bootstrap').catch(() => null);
+        if (bootRes?.ok && active) {
+          const boot = await bootRes.json();
+          setPublicOnlineCount(Number(boot.onlineCount || 1));
+          if (boot.landingContent) {
+            setPublicLandingContent(getPatchedLandingContent(boot.landingContent as LandingContent));
+          }
+        }
+        const initialToken = readStoredToken();
+        if (initialToken && active) {
+          const saved = readActiveSessionUser();
+          if (saved) {
+            setUser(
+              initialToken === 'admin-token'
+                ? saved
+                : ({ ...saved, role: 'user' } as UserProfile)
+            );
+          } else {
+            const meRes = await fetch('/api/auth/me', {
+              headers: { Authorization: `Bearer ${initialToken}` },
+            }).catch(() => null);
+            if (meRes?.ok && active) {
+              const me = await meRes.json();
+              if (me.user) setUser(me.user);
+            } else if (active) {
+              clearStoredToken();
+              setToken(null);
+            }
+          }
+        }
+      } finally {
+        if (active) setBootstrapping(false);
+      }
+    };
+    init();
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const socket = useArenaSocket({
-    token,
+    token: user ? token : null,
     lang,
-    onUserUpdate: handleUserUpdate,
+    onUserUpdate: React.useCallback(
+      (nextUser: UserProfile) => {
+        setUser((prev) => {
+          const merged = prev ? { ...prev, ...nextUser } : nextUser;
+          const enforced =
+            token === 'admin-token' ? merged : ({ ...merged, role: 'user' } as UserProfile);
+          saveActiveSessionUser(enforced);
+          return enforced;
+        });
+      },
+      [token]
+    ),
     onKicked: handleKicked,
   });
 
-  // Subscribe to System Config (Maintenance + Feature Locks) & Notifications
+  // REAL-TIME FIRESTORE SUBSCRIPTIONS (Direct User Doc + All Users + System Config + Notifications)
   React.useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
 
     const unsubCfg = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const d = snap.data() as any;
-        setMaintenance(Boolean(d.maintenance));
+        setMaintenanceMode(Boolean(d.maintenance));
         if (d.maintenanceMessage) setMaintenanceMessage(d.maintenanceMessage);
         if (d.featureLocks) setLiveFeatureLocks(d.featureLocks);
       }
     });
 
-    const unsubNoti = onSnapshot(collection(db, 'notifications'), (snap) => {
-      if (!user?.id) return;
+    const unsubAnn = onSnapshot(doc(db, 'system', 'announcement'), (snap) => {
+      if (snap.exists()) {
+        const d = snap.data() as any;
+        setLiveAnnouncement(d?.message ? { title: d.title || 'Notice', message: d.message } : null);
+      } else {
+        setLiveAnnouncement(null);
+      }
+    });
+
+    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
+      if (snap.exists()) {
+        const next = getPatchedLandingContent(snap.data() as LandingContent);
+        setPublicLandingContent(next);
+        socket.setLandingContent?.(next);
+      }
+    });
+
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      const list: UserProfile[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...(d.data() as any) } as UserProfile));
+      list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
+      setLiveUsers(list);
+    });
+
+    return () => {
+      unsubCfg();
+      unsubAnn();
+      unsubLanding();
+      unsubUsers();
+    };
+  }, []);
+
+  // Direct Real-Time Listener on Logged-in User Doc (Instant Name/Bio/XP/Gift Updates!)
+  React.useEffect(() => {
+    if (!user?.id || !isFirebaseConfigured || !db) return;
+
+    const unsubMe = onSnapshot(doc(db, 'users', user.id), (snap) => {
+      if (!snap.exists()) return;
+      const latest = { id: snap.id, ...(snap.data() as any) } as UserProfile;
+      if (latest.status === 'banned' && token !== 'admin-token') {
+        handleKicked('Your account has been banned by an Administrator.');
+        return;
+      }
+      setUser((prev) => {
+        const merged = prev ? { ...prev, ...latest } : latest;
+        saveActiveSessionUser(merged);
+        return merged;
+      });
+    });
+
+    const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
       const list: any[] = [];
       snap.forEach((d) => {
         const n = d.data() as any;
@@ -126,174 +329,302 @@ export default function App() {
         }
       });
       list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      setNotifications(list.slice(0, 25));
+      setLiveNotifications(list.slice(0, 30));
     });
 
-    return () => {
-      unsubCfg();
-      unsubNoti();
-    };
-  }, [user?.id]);
-
-  // Live Online Heartbeat
-  React.useEffect(() => {
-    if (!user?.id || !isFirebaseConfigured || !db) return;
+    // Live Presence Heartbeat
     const beat = () => {
-      setDoc(
-        doc(db, 'users', user.id),
-        { online: true, lastSeenMs: Date.now() },
-        { merge: true }
-      ).catch(() => {});
+      setDoc(doc(db, 'users', user.id), { online: true, lastSeenMs: Date.now() }, { merge: true }).catch(() => {});
     };
     beat();
-    const timer = window.setInterval(beat, 25000);
-    return () => window.clearInterval(timer);
-  }, [user?.id]);
+    const timer = window.setInterval(beat, 20000);
 
-  const handleAuthenticated = (
-    authToken: string,
-    profile: UserProfile,
-    _remember?: boolean
-  ) => {
-    const isAd = authToken === 'admin-token' || profile.role === 'admin';
-    const normalized: UserProfile = {
-      ...profile,
-      role: isAd ? 'admin' : 'user',
+    return () => {
+      unsubMe();
+      unsubNotis();
+      window.clearInterval(timer);
     };
-    localStorage.setItem('arena_token', authToken);
-    saveActiveSessionUser(normalized);
-    setToken(authToken);
-    setUser(normalized);
-    setActiveTab(isAd ? 'admin' : 'lobby');
+  }, [user?.id, token, handleKicked]);
+
+  const suspendedUntilMs = (user as any)?.suspendedUntil ? Date.parse((user as any).suspendedUntil) : 0;
+
+  React.useEffect(() => {
+    if (!suspendedUntilMs || suspendedUntilMs <= Date.now()) return;
+    setNowTs(Date.now());
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [suspendedUntilMs]);
+
+  const mergedUsers = React.useMemo(() => {
+    const base = liveUsers.length > 0 ? liveUsers : Array.isArray(socket.leaderboard) ? socket.leaderboard : [];
+    if (!user) return base;
+    const exists = base.some((u) => u.id === user.id);
+    return exists ? base.map((u) => (u.id === user.id ? { ...u, ...user } : u)) : [...base, user];
+  }, [liveUsers, socket.leaderboard, user]);
+
+  const mergedLocks = React.useMemo(
+    () => ({ ...(socket.featureLocks || {}), ...(liveFeatureLocks || {}) }),
+    [socket.featureLocks, liveFeatureLocks]
+  );
+
+  const handleAuthenticated = (nextToken: string, nextUser: UserProfile, rememberMe: boolean) => {
+    clearStoredToken();
+    const isAdminAccount = nextToken === 'admin-token' || nextUser.role === 'admin';
+    const cleanProfile: UserProfile = {
+      ...nextUser,
+      role: isAdminAccount ? 'admin' : 'user',
+      frameId: isAdminAccount ? 'legend' : nextUser.frameId || 'bronze',
+    };
+
+    saveActiveSessionUser(cleanProfile);
+    if (rememberMe) localStorage.setItem('vanguard_token', nextToken);
+    else sessionStorage.setItem('vanguard_token', nextToken);
+
+    setKickBanner(null);
+    setToken(nextToken);
+    setUser(cleanProfile);
+    setActiveTab('lobby');
+    setSelectedSetupGame(null);
+    setAdminViewMode(isAdminAccount ? 'admin' : 'lobby');
   };
 
-  // Tournament Join / Leave Handlers (Firestore Real-time)
-  const handleJoinTournament = async (tournamentId: string) => {
-    if (!user?.id) return;
-    if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'tournaments', tournamentId), {
-        participants: arrayUnion(user.id),
-      }).catch(() => {});
-    }
-    soundEngine.playNotify();
-    socket.pushToast(
-      'success',
-      lang === 'my' ? 'ပြိုင်ပွဲတွင် စာရင်းသွင်းပြီးပါပြီ!' : 'Registered for tournament!'
-    );
-  };
+  const handleUserProfileUpdated = React.useCallback(
+    (updated: UserProfile) => {
+      const isAd = token === 'admin-token' || user?.role === 'admin';
+      const enforced: UserProfile = isAd ? { ...updated, role: 'admin' } : { ...updated, role: 'user' };
+      saveActiveSessionUser(enforced);
+      setUser(enforced);
+      setLiveUsers((prev) => prev.map((u) => (u.id === enforced.id ? { ...u, ...enforced } : u)));
+    },
+    [token, user?.role]
+  );
 
-  const handleLeaveTournament = async (tournamentId: string) => {
-    if (!user?.id) return;
-    if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'tournaments', tournamentId), {
-        participants: arrayRemove(user.id),
-      }).catch(() => {});
-    }
-    socket.pushToast(
-      'info',
-      lang === 'my' ? 'ပြိုင်ပွဲမှ နုတ်ထွက်ပြီးပါပြီ။' : 'Withdrawn from tournament.'
-    );
-  };
-
-  // Play vs Bot / Create Room / Join Room
-  const handlePlayBot = (gameType: GameType, difficulty: 'easy' | 'medium' | 'hard') => {
-    if (!user) return;
-    const match = buildPlayableMatch([user], {
+  // Game Launchers (called from GameArenaSetupView)
+  const handleStartBot = async (
+    gameType: GameType,
+    difficulty: Difficulty,
+    bestOf: 3 | 5 = 3,
+    turnTimeLimit: TurnTimeLimit = 20
+  ) => {
+    if (!token || !user) return;
+    try {
+      const res = await fetch('/api/matches/bot', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ gameType, difficulty, bestOf, turnTimeLimit }),
+      });
+      const data = await res.json();
+      if (res.ok && data.match) {
+        socket.setActiveMatch(data.match);
+        setSelectedSetupGame(null);
+        return;
+      }
+    } catch {}
+    // Safe fallback if fetch interceptor isn't active
+    const fallbackMatch = buildPlayableMatch([user] as any, {
       gameType,
       mode: 'bot',
       difficulty,
-      bestOf: 3,
-      turnTimeLimit: 20,
+      bestOf,
+      turnTimeLimit,
       isRealtimePvp: false,
     });
-    socket.setActiveMatch(match);
+    socket.setActiveMatch(fallbackMatch);
+    setSelectedSetupGame(null);
   };
 
-  const handleCreateRoom = async (gameType: GameType) => {
-    if (!user) return;
-    const roomId = `room_${Date.now()}`;
-    const code = 'VG-' + Math.floor(1000 + Math.random() * 9000);
-    const room = stripUndefined({
-      id: roomId,
-      code,
-      gameType,
-      hostId: user.id,
-      maxPlayers: gameType === 'sakarhtar' ? 8 : 2,
-      players: [user],
-      status: 'waiting',
-      activeMatchId: null,
-      createdAtMs: Date.now(),
-    });
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'rooms', roomId), room).catch(() => {});
-    }
-    socket.setCurrentRoom(room);
-    socket.pushToast('success', `Room Created! Code: ${code}`);
+  const handleStartSakarSolo = async () => {
+    if (!token || !user) return;
+    try {
+      const res = await fetch('/api/sakar/solo', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok && data.match) {
+        socket.setActiveMatch(data.match);
+        setSelectedSetupGame(null);
+        return;
+      }
+    } catch {}
+    socket.setActiveMatch(buildPlayableMatch([user] as any, { gameType: 'sakarhtar', mode: 'solo' }));
+    setSelectedSetupGame(null);
   };
 
-  const handleJoinRoom = async (roomIdOrCode: string) => {
-    if (!user) return;
-    const target = socket.openRooms.find(
-      (r) => r.id === roomIdOrCode || String(r.code).toUpperCase() === roomIdOrCode.toUpperCase()
-    );
-    if (!target) {
-      socket.pushToast('error', lang === 'my' ? 'Room ရှာမတွေ့ပါ။' : 'Room not found.');
+  const handleCreateRoom = async (title: string, maxPlayers: number, gameType: GameType) => {
+    if (!token || !user) return;
+    if (mergedLocks.customRooms) {
+      socket.pushToast('error', 'Custom Room ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
       return;
     }
-    const existing = Array.isArray(target.players) ? target.players : [];
-    const nextPlayers = existing.some((p: any) => p.id === user.id)
-      ? existing
-      : [...existing, user];
-
-    if (nextPlayers.length >= 2) {
-      const liveMatch = buildPlayableMatch(nextPlayers, {
-        gameType: target.gameType,
-        mode: 'room',
-        bestOf: 3,
-        turnTimeLimit: 20,
-        isRealtimePvp: true,
+    try {
+      const res = await fetch('/api/sakar/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ title, maxPlayers, gameType }),
       });
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'matches', liveMatch.id), liveMatch).catch(() => {});
-        await updateDoc(doc(db, 'rooms', target.id), {
-          players: nextPlayers,
-          status: 'playing',
-          activeMatchId: liveMatch.id,
-        }).catch(() => {});
+      const data = await res.json();
+      if (data.room) {
+        socket.setRoomChat([]);
+        socket.setCurrentRoom(data.room);
+        setSelectedSetupGame(null);
+        return;
       }
-      socket.setActiveMatch(liveMatch);
-    } else {
-      socket.setCurrentRoom({ ...target, players: nextPlayers });
+    } catch {}
+    socket.pushToast('error', 'Unable to create room.');
+  };
+
+  const handleJoinRoom = async (codeOrId: string) => {
+    if (!token) return;
+    if (mergedLocks.customRooms) {
+      socket.pushToast('error', 'Custom Room ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+      return;
+    }
+    try {
+      const res = await fetch('/api/sakar/rooms/join', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ roomId: codeOrId }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        socket.pushToast('error', data.error || 'Room ရှာမတွေ့ပါ။');
+      } else if (data.room) {
+        socket.setRoomChat(data.room.chat || []);
+        socket.setCurrentRoom(data.room);
+        setSelectedSetupGame(null);
+      }
+    } catch {
+      socket.pushToast('error', 'Room ဝင်ရောက်၍ မရပါ။');
     }
   };
 
-  const mergedLocks = { ...(socket.featureLocks || {}), ...(liveFeatureLocks || {}) };
-  const unreadNotis = notifications.filter((n) => !n.read).length;
+  const handleLeaveRoom = async () => {
+    if (!token || !socket.currentRoom) return;
+    await fetch(`/api/sakar/rooms/${socket.currentRoom.id}/leave`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => {});
+    socket.setCurrentRoom(null);
+    socket.setRoomChat([]);
+  };
 
-  // 1. Unauthenticated -> Landing Login View
-  if (!token || !user) {
+  const handleKickRoomPlayer = async (targetUserId: string) => {
+    if (!token || !socket.currentRoom) return;
+    const res = await fetch(`/api/sakar/rooms/${socket.currentRoom.id}/kick`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId: targetUserId }),
+    }).catch(() => null);
+    if (res?.ok) {
+      const data = await res.json();
+      if (data.room) socket.setCurrentRoom(data.room);
+    }
+  };
+
+  const handleStartRoomMatch = async () => {
+    if (!token || !socket.currentRoom) return;
+    const res = await fetch(`/api/sakar/rooms/${socket.currentRoom.id}/start`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+    }).catch(() => null);
+    if (res?.ok) {
+      const data = await res.json();
+      if (data.match) {
+        socket.setCurrentRoom(null);
+        socket.setActiveMatch(data.match);
+      }
+    }
+  };
+
+  const handleJoinTournament = async (tid: string) => {
+    if (!user) return;
+    if (mergedLocks.tournaments) {
+      socket.pushToast('error', 'ပြိုင်ပွဲစနစ်ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+      return;
+    }
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayUnion(user.id) }).catch(() => {});
+    }
+    soundEngine.playNotify?.();
+    socket.pushToast('success', 'ပြိုင်ပွဲစာရင်း သွင်းပြီးပါပြီ!');
+  };
+
+  const handleLeaveTournament = async (tid: string) => {
+    if (!user) return;
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayRemove(user.id) }).catch(() => {});
+    }
+    socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
+  };
+
+  const markAllNotisRead = async () => {
+    setLiveNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
+    if (isFirebaseConfigured && db && user?.id) {
+      for (const n of liveNotifications) {
+        if (n.targetUserId === user.id && !n.read) {
+          await setDoc(doc(db, 'notifications', n.id), { read: true }, { merge: true }).catch(() => {});
+        }
+      }
+    }
+  };
+
+  const rootClass = lang === 'my' ? 'lang-my' : '';
+
+  if (bootstrapping) {
     return (
-      <LandingView
-        lang={lang}
-        setLang={setLang}
-        landingContent={socket.landingContent}
-        onAuthenticated={handleAuthenticated}
-      />
+      <div className={`min-h-dvh cyber-bg flex items-center justify-center text-sm text-amber-300 ${rootClass}`}>
+        {t.common.loading}
+      </div>
     );
   }
 
-  // 2. Maintenance Mode Screen (Regular Players Only)
-  if (maintenance && !isAdmin) {
+  if (!user || !token) {
     return (
-      <div className="min-h-dvh bg-[#070b14] text-white flex items-center justify-center p-6">
-        <div className="cyber-panel rounded-2xl p-8 max-w-md w-full text-center space-y-4 border border-amber-500/40">
-          <Wrench className="w-12 h-12 text-amber-400 mx-auto" />
-          <h1 className="text-xl font-display font-bold text-white">System Maintenance</h1>
-          <p className="text-sm text-slate-300">{maintenanceMessage}</p>
+      <div className={rootClass}>
+        {kickBanner && (
+          <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-2.5 text-xs text-rose-200 flex items-center justify-between gap-4">
+            <span>{kickBanner}</span>
+            <button type="button" onClick={() => setKickBanner(null)} className="text-rose-200 cursor-pointer">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+        <LandingView
+          lang={lang}
+          onChangeLang={handleChangeLang}
+          onlineCount={publicOnlineCount}
+          landingContent={publicLandingContent}
+          onAuthenticated={handleAuthenticated}
+        />
+      </div>
+    );
+  }
+
+  const isActualAdmin = token === 'admin-token' || user.role === 'admin';
+  const safeFrames = Array.isArray(socket.frames) ? socket.frames : [];
+  const safeMatchChat = Array.isArray(socket.matchChat) ? socket.matchChat : [];
+  const safeRoomChat = Array.isArray(socket.roomChat) ? socket.roomChat : [];
+  const safeTourneys = Array.isArray(socket.tournaments) ? socket.tournaments : [];
+  const safeRooms = Array.isArray(socket.openRooms) ? socket.openRooms : [];
+  const safeWarnings = Array.isArray(socket.pendingWarnings) ? socket.pendingWarnings : [];
+  const safeToasts = Array.isArray(socket.toasts) ? socket.toasts : [];
+  const unreadNotiCount = liveNotifications.filter((n) => !n.read).length;
+  const activeBannerAnnouncement = liveAnnouncement || socket.announcement;
+
+  if (maintenanceMode && !isActualAdmin) {
+    return (
+      <div className={`min-h-dvh cyber-bg text-slate-100 flex items-center justify-center p-4 ${rootClass}`}>
+        <div className="max-w-md w-full cyber-panel rounded-2xl border border-amber-400/50 p-7 text-center space-y-4 shadow-2xl">
+          <div className="w-14 h-14 mx-auto rounded-2xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center">
+            <Wrench className="w-7 h-7 text-amber-400 animate-pulse" />
+          </div>
+          <h2 className="text-xl font-display font-bold text-white">System Maintenance</h2>
+          <p className="text-sm text-amber-100/90 leading-relaxed">{maintenanceMessage}</p>
           <button
             type="button"
             onClick={handleLogout}
-            className="px-5 h-10 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold cursor-pointer"
+            className="w-full h-11 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-bold text-white cursor-pointer"
           >
             Sign Out
           </button>
@@ -302,106 +633,153 @@ export default function App() {
     );
   }
 
-  // 3. Active Match Full-Screen Arena
-  if (socket.activeMatch) {
+  if (isActualAdmin && adminViewMode === 'admin') {
     return (
-      <MatchArena
-        lang={lang}
-        match={socket.activeMatch}
-        currentUser={user}
-        frames={socket.frames}
-        matchChat={socket.matchChat}
-        onMove={socket.sendMove}
-        onForfeit={socket.forfeitMatch}
-        onSendChat={socket.sendMatchChat}
-        onExit={() => socket.setActiveMatch(null)}
-        onRematch={() => {
-          const g = socket.activeMatch?.gameType || 'connect4';
-          handlePlayBot(g, 'medium');
-        }}
-      />
+      <div className={rootClass}>
+        <Suspense
+          fallback={
+            <div className="min-h-screen cyber-bg flex items-center justify-center text-sm text-amber-300">
+              {t.common.loading}
+            </div>
+          }
+        >
+          <AdminPanel
+            token={token}
+            currentUser={user}
+            livePingMs={socket.pingMs}
+            lang={lang}
+            onChangeLang={handleChangeLang}
+            onSwitchToLobby={() => setAdminViewMode('lobby')}
+            landingContent={publicLandingContent}
+            onLandingUpdated={(next) => {
+              setPublicLandingContent(next);
+              socket.setLandingContent?.(next);
+            }}
+            onLogout={handleLogout}
+            onNotify={socket.pushToast}
+          />
+        </Suspense>
+        <ToastStack toasts={safeToasts} />
+      </div>
     );
   }
 
+  const navItems: { id: LobbyTab; label: string; icon: React.ReactNode }[] = [
+    { id: 'lobby', label: t.nav.lobby, icon: <Gamepad2 className="w-5 h-5" /> },
+    { id: 'tournaments', label: t.nav.tournaments, icon: <Swords className="w-5 h-5" /> },
+    { id: 'leaderboard', label: t.nav.leaderboard, icon: <Trophy className="w-5 h-5" /> },
+    { id: 'social', label: t.nav.social, icon: <Users className="w-5 h-5" /> },
+    { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
+  ];
+
   return (
-    <div className="min-h-dvh bg-[#070b14] text-slate-100 flex flex-col">
-      {/* Top Cyber Esports Header */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080d18]/90 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
-          {/* Brand Logo */}
-          <button
-            type="button"
-            onClick={() => setActiveTab('lobby')}
-            className="flex items-center gap-2 text-left cursor-pointer shrink-0"
-          >
-            <VanguardCrestIcon className="w-7 h-7" />
-            <span className="font-display font-extrabold text-sm sm:text-base tracking-tight text-white">
-              VANGUARD <span className="text-amber-400">ARENA</span>
-            </span>
-          </button>
-
-          {/* Desktop Navigation Tabs */}
-          <nav className="hidden md:flex items-center gap-1">
-            {(
-              [
-                { id: 'lobby', label: lang === 'my' ? 'ကစားကွင်း' : 'Lobby', icon: Swords },
-                { id: 'tournaments', label: lang === 'my' ? 'ပြိုင်ပွဲ' : 'Tournaments', icon: Trophy },
-                { id: 'leaderboard', label: lang === 'my' ? 'အဆင့်ဇယား' : 'Ranks', icon: Shield },
-                { id: 'social', label: lang === 'my' ? 'မိတ်ဆွေ' : 'Social', icon: MessageSquare },
-                { id: 'profile', label: 'Profile', icon: User },
-                ...(isAdmin ? [{ id: 'admin' as ActiveTab, label: 'Admin', icon: Shield }] : []),
-              ] as Array<{ id: ActiveTab; label: string; icon: any }>
-            ).map((item) => {
-              const Icon = item.icon;
-              const active = activeTab === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActiveTab(item.id)}
-                  className={`px-3 h-9 rounded-xl text-xs font-bold flex items-center gap-1.5 cursor-pointer transition-all ${
-                    active
-                      ? 'cyber-gold-active text-amber-200'
-                      : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                  }`}
-                >
-                  <Icon className="w-3.5 h-3.5" />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* Utility Actions (Noti Bell, Lang, Settings) */}
-          <div className="flex items-center gap-1.5">
+    <div
+      className={`min-h-dvh cyber-bg text-slate-100 flex flex-col ${
+        !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
+      } ${rootClass}`}
+    >
+      {/* Top Cyber Header */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
+        <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-4 min-w-0">
             <button
               type="button"
-              onClick={() => setNotiOpen((v) => !v)}
-              className="relative w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
-              title="Notifications"
+              onClick={() => {
+                setActiveTab('lobby');
+                setSelectedSetupGame(null);
+              }}
+              className="flex items-center gap-2 text-sm sm:text-base font-display font-extrabold tracking-wide text-white cursor-pointer shrink-0"
+            >
+              <VanguardCrestIcon className="w-7 h-7" />
+              <span>
+                Vanguard <span className="text-amber-400">Arena</span>
+              </span>
+            </button>
+
+            <nav className="hidden lg:flex items-center gap-1 text-xs font-semibold">
+              {navItems.map((item) => {
+                const active = activeTab === item.id;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(item.id);
+                      setSelectedSetupGame(null);
+                    }}
+                    className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                      active
+                        ? 'text-amber-300 bg-amber-500/10 border-b-2 border-amber-400'
+                        : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </nav>
+          </div>
+
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            {isActualAdmin && (
+              <button
+                type="button"
+                onClick={() => setAdminViewMode('admin')}
+                className="h-9 px-2.5 sm:px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
+              >
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Admin</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => setNotiDrawerOpen((v) => !v)}
+              aria-label="Notifications"
+              className="relative w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-white/10 border border-white/10 text-amber-300 flex items-center justify-center cursor-pointer"
             >
               <Bell className="w-4 h-4" />
-              {unreadNotis > 0 && (
-                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-500 text-white text-[9px] font-bold flex items-center justify-center">
-                  {unreadNotis}
+              {unreadNotiCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {unreadNotiCount}
                 </span>
               )}
             </button>
 
+            <LanguageSwitcher lang={lang} onChange={handleChangeLang} />
+
+            <div className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-[#0d1322] border border-emerald-500/25 text-emerald-300">
+              <Wifi className="w-3 h-3 text-emerald-400" />
+              <span>{socket.pingMs}ms</span>
+            </div>
+
             <button
               type="button"
-              onClick={() => setLang((l) => (l === 'my' ? 'en' : 'my'))}
-              className="px-2.5 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-bold text-amber-300 flex items-center gap-1 cursor-pointer"
+              onClick={() => {
+                setActiveTab('profile');
+                setSelectedSetupGame(null);
+              }}
+              className="cursor-pointer"
+              title={user.displayName}
             >
-              <Globe className="w-3.5 h-3.5" />
-              <span>{lang.toUpperCase()}</span>
+              <AvatarWithFrame
+                avatarUrl={user.avatarUrl}
+                frameId={user.frameId}
+                frames={safeFrames}
+                displayName={user.displayName}
+                size="sm"
+              />
             </button>
 
             <button
               type="button"
-              onClick={() => setSettingsOpen(true)}
-              className="w-9 h-9 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center text-slate-200 cursor-pointer"
-              title="Settings"
+              onClick={() => {
+                soundEngine.playClick?.();
+                setSettingsOpen(true);
+              }}
+              aria-label="Settings"
+              className="w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-amber-500/20 border border-white/10 text-slate-200 hover:text-amber-300 flex items-center justify-center cursor-pointer"
             >
               <Settings className="w-4 h-4" />
             </button>
@@ -409,305 +787,394 @@ export default function App() {
         </div>
       </header>
 
-      {/* Live Global Broadcast Strip */}
-      {socket.announcement?.message && (
-        <div className="bg-amber-500/15 border-b border-amber-400/30 px-4 py-1.5 text-center text-xs text-amber-200">
-          <span className="font-bold text-amber-300">{socket.announcement.title}: </span>
-          <span>{socket.announcement.message}</span>
-        </div>
-      )}
-
-      {/* Main Active View Content */}
-      <main className="flex-1 pb-20 md:pb-6">
-        <AnimatePresence mode="wait">
+      {/* Global Broadcast Strip */}
+      <AnimatePresence>
+        {activeBannerAnnouncement && (
           <motion.div
-            key={activeTab}
-            initial={{ opacity: 0, y: 6 }}
+            initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ duration: 0.16 }}
+            exit={{ opacity: 0, y: -12 }}
+            className="bg-amber-500/15 border-b border-amber-400/40 px-4 py-2 shrink-0"
           >
-            {activeTab === 'lobby' && (
-              <LobbyView
-                lang={lang}
-                user={user}
-                frames={socket.frames}
-                featureLocks={mergedLocks}
-                tournaments={socket.tournaments}
-                onlinePlayers={socket.onlinePlayers}
-                openRooms={socket.openRooms}
-                queuedGame={socket.queuedGame}
-                onQuickMatch={(g) => socket.joinQueue(g)}
-                onCancelQueue={socket.leaveQueue}
-                onPlayBot={handlePlayBot}
-                onCreateRoom={handleCreateRoom}
-                onJoinRoom={handleJoinRoom}
-                onInspectPlayer={(uid) => setInspectingUserId(uid)}
-                onOpenTournaments={() => setActiveTab('tournaments')}
-                onOpenProfile={() => setActiveTab('profile')}
-                onNotify={socket.pushToast}
-              />
-            )}
-
-            {activeTab === 'tournaments' && (
-              <TournamentView
-                lang={lang}
-                tournaments={socket.tournaments}
-                featureLocks={mergedLocks}
-                currentUser={user}
-                allUsers={socket.onlinePlayers}
-                frames={socket.frames}
-                onJoin={handleJoinTournament}
-                onLeave={handleLeaveTournament}
-                onInspectPlayer={(uid) => setInspectingUserId(uid)}
-                onLaunchBracketMatch={() => {}}
-              />
-            )}
-
-            {activeTab === 'leaderboard' && (
-              <LeaderboardView
-                lang={lang}
-                leaderboard={socket.leaderboard}
-                currentUser={user}
-                frames={socket.frames}
-                onInspectPlayer={(uid) => setInspectingUserId(uid)}
-              />
-            )}
-
-            {activeTab === 'social' && (
-              <SocialHub
-                lang={lang}
-                token={token}
-                currentUser={user}
-                allUsers={socket.onlinePlayers}
-                frames={socket.frames}
-                incomingDMs={socket.incomingDMs}
-                refreshTick={socket.socialRefreshTick}
-                initialChatUserId={chatTargetUserId || undefined}
-                onInspectPlayer={(uid) => setInspectingUserId(uid)}
-                onChallenge={(uid, g) => socket.sendChallenge(uid, g)}
-                onUserUpdated={handleUserUpdate}
-                onNotify={socket.pushToast}
-              />
-            )}
-
-            {activeTab === 'profile' && (
-              <ProfileView
-                lang={lang}
-                token={token}
-                user={user}
-                frames={socket.frames}
-                onUserUpdated={handleUserUpdate}
-                onNotify={socket.pushToast}
-              />
-            )}
-
-            {activeTab === 'admin' && isAdmin && (
-              <AdminPanel
-                lang={lang}
-                token={token}
-                currentUser={user}
-                users={socket.onlinePlayers}
-                tournaments={socket.tournaments}
-                rooms={socket.openRooms}
-                featureLocks={mergedLocks}
-                onSwitchToLobby={() => setActiveTab('lobby')}
-                onNotify={socket.pushToast}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
-      </main>
-
-      {/* Mobile Bottom Tab Bar */}
-      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#080d18]/95 backdrop-blur-md border-t border-white/10 px-2 py-1.5 flex items-center justify-around">
-        {(
-          [
-            { id: 'lobby', label: 'Arena', icon: Swords },
-            { id: 'tournaments', label: 'Tourney', icon: Trophy },
-            { id: 'leaderboard', label: 'Ranks', icon: Shield },
-            { id: 'social', label: 'Social', icon: MessageSquare },
-            { id: 'profile', label: 'Profile', icon: User },
-            ...(isAdmin ? [{ id: 'admin' as ActiveTab, label: 'Admin', icon: Shield }] : []),
-          ] as Array<{ id: ActiveTab; label: string; icon: any }>
-        ).map((item) => {
-          const Icon = item.icon;
-          const active = activeTab === item.id;
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setActiveTab(item.id)}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1 rounded-xl text-[10px] font-bold cursor-pointer ${
-                active ? 'text-amber-400' : 'text-slate-400'
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-
-      {/* Player Profile Inspection Modal (with Banner, Bio, Gifts & Multi-Game Duel) */}
-      {inspectingUserId && (
-        <PlayerProfileModal
-          lang={lang}
-          token={token}
-          userId={inspectingUserId}
-          currentUser={user}
-          allUsers={socket.onlinePlayers}
-          frames={socket.frames}
-          onClose={() => setInspectingUserId(null)}
-          onUserUpdated={handleUserUpdate}
-          onOpenChatWith={(uid) => {
-            setChatTargetUserId(uid);
-            setActiveTab('social');
-          }}
-          onChallenge={(uid, g) => socket.sendChallenge(uid, g)}
-          onNotify={socket.pushToast}
-        />
-      )}
-
-      {/* Notification Inbox Drawer */}
-      {notiOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex justify-end p-3">
-          <div className="w-full max-w-sm cyber-panel rounded-2xl border border-amber-400/35 p-4 flex flex-col max-h-[85vh]">
-            <div className="flex items-center justify-between pb-3 border-b border-white/10">
-              <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                <Bell className="w-4 h-4 text-amber-400" />
-                <span>{lang === 'my' ? 'အသိပေးချက်များ' : 'Notifications'}</span>
-              </h3>
+            <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2 text-xs">
+                <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="font-bold text-amber-300">{activeBannerAnnouncement.title}:</span>
+                <span className="text-slate-100 truncate">{activeBannerAnnouncement.message}</span>
+              </div>
               <button
                 type="button"
-                onClick={() => setNotiOpen(false)}
-                className="w-7 h-7 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+                onClick={() => {
+                  setLiveAnnouncement(null);
+                  socket.setAnnouncement?.(null);
+                }}
+                className="text-slate-300 cursor-pointer"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-y-auto space-y-2 pt-3">
-              {notifications.length === 0 ? (
-                <div className="text-xs text-slate-500 text-center py-8">
-                  {lang === 'my' ? 'အသိပေးချက် မရှိသေးပါ။' : 'No notifications yet.'}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {suspendedUntilMs > nowTs && (
+        <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-1.5 shrink-0">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-xs">
+            <span className="font-bold text-rose-300 flex items-center gap-1.5">
+              <AlertTriangle className="w-3.5 h-3.5" />
+              Account Suspended
+            </span>
+            <span className="font-mono text-rose-200 flex items-center gap-1">
+              <Clock className="w-3.5 h-3.5" />
+              {formatCountdown(suspendedUntilMs - nowTs)}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Main Content */}
+      <main className="flex-1 min-h-0">
+        {socket.activeMatch ? (
+          <MatchArena
+            lang={lang}
+            token={token}
+            match={socket.activeMatch}
+            currentUser={user}
+            frames={safeFrames}
+            featureLocks={mergedLocks}
+            chatMessages={safeMatchChat}
+            onMove={socket.sendMove}
+            onForfeit={socket.forfeitMatch}
+            onSendChat={socket.sendMatchChat}
+            onLeaveFinished={() => socket.setActiveMatch(null)}
+            onNotify={socket.pushToast}
+          />
+        ) : activeTab === 'lobby' && socket.currentRoom ? (
+          <SakarRoomLobby
+            lang={lang}
+            room={socket.currentRoom}
+            currentUser={user}
+            frames={safeFrames}
+            featureLocks={mergedLocks}
+            chatMessages={safeRoomChat}
+            onLeaveRoom={handleLeaveRoom}
+            onStartMatch={handleStartRoomMatch}
+            onKickPlayer={handleKickRoomPlayer}
+            onSendChat={socket.sendRoomChat}
+          />
+        ) : activeTab === 'lobby' && selectedSetupGame ? (
+          <GameArenaSetupView
+            lang={lang}
+            gameType={selectedSetupGame}
+            featureLocks={mergedLocks}
+            openRooms={safeRooms}
+            queuedGame={socket.queuedGame}
+            onBack={() => setSelectedSetupGame(null)}
+            onJoinQueue={socket.joinQueue}
+            onLeaveQueue={socket.leaveQueue}
+            onStartBot={handleStartBot}
+            onStartSakarSolo={handleStartSakarSolo}
+            onCreateRoom={handleCreateRoom}
+            onJoinRoom={handleJoinRoom}
+          />
+        ) : activeTab === 'lobby' ? (
+          <LobbyView
+            lang={lang}
+            landingContent={publicLandingContent}
+            user={user}
+            frames={safeFrames}
+            featureLocks={mergedLocks}
+            tournaments={safeTourneys}
+            onlinePlayers={mergedUsers}
+            onSelectGame={(g) => setSelectedSetupGame(g)}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+            onOpenTournaments={() => setActiveTab('tournaments')}
+            onOpenProfile={() => setActiveTab('profile')}
+            onNotify={socket.pushToast}
+          />
+        ) : activeTab === 'tournaments' ? (
+          <TournamentView
+            lang={lang}
+            tournaments={safeTourneys}
+            featureLocks={mergedLocks}
+            currentUser={user}
+            allUsers={mergedUsers}
+            frames={safeFrames}
+            onJoin={handleJoinTournament}
+            onLeave={handleLeaveTournament}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+            onLaunchBracketMatch={() => {}}
+          />
+        ) : activeTab === 'leaderboard' ? (
+          <LeaderboardView
+            lang={lang}
+            leaderboard={mergedUsers}
+            currentUser={user}
+            frames={safeFrames}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+          />
+        ) : activeTab === 'social' ? (
+          <SocialHub
+            lang={lang}
+            token={token}
+            currentUser={user}
+            allUsers={mergedUsers}
+            frames={safeFrames}
+            featureLocks={mergedLocks}
+            initialChatUserId={initialChatUserId}
+            onClearInitialChat={() => setInitialChatUserId(null)}
+            onUserUpdated={handleUserProfileUpdated}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+            onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
+            onNotify={socket.pushToast}
+          />
+        ) : (
+          <ProfileView
+            lang={lang}
+            token={token}
+            user={user}
+            frames={safeFrames}
+            onUserUpdated={handleUserProfileUpdated}
+            onNotify={socket.pushToast}
+          />
+        )}
+      </main>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        lang={lang}
+        onChangeLang={handleChangeLang}
+        user={user}
+        isAdmin={isActualAdmin}
+        onOpenAdmin={() => setAdminViewMode('admin')}
+        onLogout={handleLogout}
+        onNotify={socket.pushToast}
+      />
+
+      {/* Notifications Drawer */}
+      <AnimatePresence>
+        {notiDrawerOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-16 right-3 z-50 w-80 max-w-[calc(100vw-1.5rem)] rounded-2xl cyber-panel border border-amber-400/40 p-3.5 shadow-2xl space-y-2.5"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                <Bell className="w-4 h-4" /> Notifications ({liveNotifications.length})
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={markAllNotisRead}
+                  className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" /> Read All
+                </button>
+                <button type="button" onClick={() => setNotiDrawerOpen(false)} className="text-slate-400 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {liveNotifications.length === 0 ? (
+                <div className="text-xs text-slate-500 text-center py-6">
+                  {lang === 'my' ? 'Notification အသစ် မရှိသေးပါ။' : 'No notifications yet.'}
                 </div>
               ) : (
-                notifications.map((n) => (
+                liveNotifications.map((n) => (
                   <div
                     key={n.id}
-                    className="p-3 rounded-xl bg-[#070b14] border border-white/10 space-y-1"
+                    className={`p-2.5 rounded-xl border text-xs space-y-1 ${
+                      n.read ? 'bg-[#090d16] border-white/5 opacity-75' : 'bg-amber-500/10 border-amber-400/40'
+                    }`}
                   >
-                    <div className="text-xs font-bold text-amber-300">{n.title}</div>
-                    <div className="text-xs text-slate-200">{n.message}</div>
-                    <div className="text-[10px] text-slate-500">
-                      {n.senderName || 'Vanguard System'}
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-300">{n.title}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {n.createdAtMs
+                          ? new Date(n.createdAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                          : ''}
+                      </span>
                     </div>
+                    <p className="text-slate-200 leading-relaxed">{n.message}</p>
                   </div>
                 ))
               )}
             </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Bottom Nav */}
+      {!socket.activeMatch && (
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
+          <div className="grid grid-cols-5 h-16 items-center">
+            {navItems.map((item) => {
+              const active = activeTab === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => {
+                    setActiveTab(item.id);
+                    setSelectedSetupGame(null);
+                  }}
+                  className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                    active ? 'text-amber-400' : 'text-slate-400'
+                  }`}
+                >
+                  {item.icon}
+                  <span className="text-[10px] font-semibold truncate max-w-full px-1">{item.label}</span>
+                </button>
+              );
+            })}
           </div>
-        </div>
+        </nav>
       )}
 
-      {/* Settings Modal */}
-      {settingsOpen && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm cyber-panel rounded-2xl border border-amber-400/40 p-5 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-base font-bold text-white flex items-center gap-2">
-                <Settings className="w-4 h-4 text-amber-400" /> Settings
-              </h3>
-              <button
-                type="button"
-                onClick={() => setSettingsOpen(false)}
-                className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
+      {/* Matchmaking Overlay */}
+      <AnimatePresence>
+        {socket.queueStatus && !socket.activeMatch && (
+          <MatchmakingOverlay
+            lang={lang}
+            queueStatus={socket.queueStatus}
+            sakarCount={socket.sakarQuickCount}
+            onCancel={socket.leaveQueue}
+            onStartSakarNow={socket.startSakarQuickNow}
+          />
+        )}
+      </AnimatePresence>
 
-            <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between p-3 rounded-xl bg-[#070b14] border border-white/10">
-                <span className="font-bold text-white">Sound Effects</span>
-                <button
-                  type="button"
-                  onClick={() => setMuted((m) => !m)}
-                  className="px-3 py-1 rounded-lg bg-white/10 text-amber-300 font-bold flex items-center gap-1 cursor-pointer"
-                >
-                  {muted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
-                  {muted ? 'Muted' : 'ON'}
-                </button>
-              </div>
-
-              <div className="p-3 rounded-xl bg-[#070b14] border border-white/10 space-y-2">
-                <div className="font-bold text-white">Graphics Quality</div>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {(['low', 'medium', 'high'] as const).map((q) => (
-                    <button
-                      key={q}
-                      type="button"
-                      onClick={() => setGraphicsQuality(q)}
-                      className={`h-8 rounded-lg font-bold uppercase cursor-pointer ${
-                        graphicsQuality === q
-                          ? 'bg-amber-500 text-slate-950'
-                          : 'bg-white/5 text-slate-400'
-                      }`}
-                    >
-                      {q}
-                    </button>
-                  ))}
+      {/* Direct Challenge Popup */}
+      {socket.pendingChallenge && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/40 p-6 space-y-5 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <AvatarWithFrame
+                avatarUrl={socket.pendingChallenge.from.avatarUrl}
+                frameId={socket.pendingChallenge.from.frameId}
+                frames={safeFrames}
+                displayName={socket.pendingChallenge.from.displayName}
+                size="md"
+              />
+              <div>
+                <div className="text-xs font-semibold text-amber-400">{t.common.directChallenge}</div>
+                <div className="text-base font-bold text-white">{socket.pendingChallenge.from.displayName}</div>
+                <div className="text-xs text-slate-400">
+                  {safeChallengeGameName(socket.pendingChallenge.gameType, lang)}
                 </div>
               </div>
-
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <button
                 type="button"
-                onClick={handleLogout}
-                className="w-full h-10 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-200 font-bold flex items-center justify-center gap-2 cursor-pointer"
+                onClick={() => socket.respondChallenge(socket.pendingChallenge!.id, false)}
+                className="min-h-[44px] rounded-xl bg-white/10 text-xs font-semibold text-white cursor-pointer"
               >
-                <LogOut className="w-4 h-4" />
-                <span>{lang === 'my' ? 'အကောင့်မှ ထွက်မည် (Sign Out)' : 'Sign Out'}</span>
+                {t.common.decline}
+              </button>
+              <button
+                type="button"
+                onClick={() => socket.respondChallenge(socket.pendingChallenge!.id, true)}
+                className="min-h-[44px] rounded-xl cyber-cta-gold text-slate-950 text-xs font-bold cursor-pointer"
+              >
+                {t.common.acceptMatch}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Pending Admin Warnings / Instant Messages Popup */}
-      {socket.pendingWarnings.length > 0 && (
-        <div className="fixed inset-0 z-50 bg-black/75 flex items-center justify-center p-4">
-          <div className="w-full max-w-sm cyber-panel rounded-2xl border border-amber-400/60 p-5 space-y-3 text-center">
-            <AlertTriangle className="w-9 h-9 text-amber-400 mx-auto" />
-            <h3 className="text-sm font-bold text-white">Admin Notice</h3>
-            <p className="text-xs text-slate-200">{socket.pendingWarnings[0].reason}</p>
+      {/* Player Profile Inspection Modal */}
+      {inspectUserId && (
+        <PlayerProfileModal
+          lang={lang}
+          token={token}
+          userId={inspectUserId}
+          currentUser={user}
+          allUsers={mergedUsers}
+          frames={safeFrames}
+          onClose={() => setInspectUserId(null)}
+          onUserUpdated={handleUserProfileUpdated}
+          onOpenChatWith={(targetId) => {
+            setInitialChatUserId(targetId);
+            setActiveTab('social');
+          }}
+          onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
+          onNotify={socket.pushToast}
+        />
+      )}
+
+      {/* Pending Admin Warnings */}
+      {safeWarnings.length > 0 && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/60 p-6 space-y-4 shadow-2xl">
+            <h3 className="text-base font-bold text-white flex items-center gap-2">
+              <Bell className="w-5 h-5 text-amber-400" /> Admin Notice
+            </h3>
+            <div className="rounded-xl bg-[#070b14] border border-white/10 p-3.5 text-sm text-amber-100">
+              {safeWarnings[0].reason}
+            </div>
             <button
               type="button"
-              onClick={() => socket.dismissWarningLocal(socket.pendingWarnings[0].id)}
-              className="w-full h-9 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
+              onClick={() => socket.dismissWarningLocal(safeWarnings[0].id)}
+              className="w-full min-h-[44px] rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
             >
-              OK
+              နားလည်ပါပြီ (OK)
             </button>
           </div>
         </div>
       )}
 
-      {/* Floating Toast Notifications */}
-      <div className="fixed top-16 right-3 z-50 space-y-2 max-w-xs w-full pointer-events-none">
-        {socket.toasts.map((t) => (
-          <div
+      <ToastStack toasts={safeToasts} />
+    </div>
+  );
+}
+
+export default function App() {
+  return (
+    <GlobalErrorBoundary>
+      <VanguardAppCore />
+    </GlobalErrorBoundary>
+  );
+}
+
+function formatCountdown(ms: number): string {
+  const totalSec = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function ToastStack({ toasts }: { toasts: { id: string; level: string; message: string }[] }) {
+  if (!toasts || toasts.length === 0) return null;
+  return (
+    <div className="fixed bottom-20 lg:bottom-6 right-4 z-50 space-y-2 max-w-xs w-full pointer-events-none">
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
             key={t.id}
-            className={`px-3.5 py-2.5 rounded-xl text-xs font-bold shadow-xl border backdrop-blur-md ${
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
+            className={`px-4 py-3 rounded-xl border text-xs font-medium shadow-xl pointer-events-auto flex items-center gap-2 ${
               t.level === 'error'
-                ? 'bg-rose-950/90 border-rose-500/50 text-rose-100'
+                ? 'bg-rose-950/95 border-rose-500/40 text-rose-100'
                 : t.level === 'success'
-                ? 'bg-emerald-950/90 border-emerald-500/50 text-emerald-100'
-                : 'bg-slate-900/95 border-amber-400/40 text-amber-100'
+                ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-100'
+                : 'bg-[#121a2d]/95 border-amber-400/35 text-slate-100'
             }`}
           >
-            {t.message}
-          </div>
+            <Award className="w-4 h-4 shrink-0 text-amber-400" />
+            <span>{t.message}</span>
+          </motion.div>
         ))}
-      </div>
+      </AnimatePresence>
     </div>
   );
 }
