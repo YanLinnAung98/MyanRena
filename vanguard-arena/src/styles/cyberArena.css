@@ -1,0 +1,88 @@
+/* Vanguard Cyber-Esports Theme & Smooth Animations */
+.cyber-bg {
+  background: radial-gradient(circle at 50% 0%, #172038 0%, #0a0e17 55%, #060911 100%);
+}
+
+.cyber-panel {
+  background: linear-gradient(160deg, rgba(21, 29, 48, 0.92) 0%, rgba(11, 15, 25, 0.96) 100%);
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.cyber-gold-active {
+  background: linear-gradient(180deg, rgba(245, 158, 11, 0.24) 0%, rgba(180, 83, 9, 0.14) 100%);
+  border: 1.5px solid #f59e0b !important;
+  box-shadow:
+    0 0 18px rgba(245, 158, 11, 0.35),
+    inset 0 0 12px rgba(245, 158, 11, 0.18);
+}
+
+.cyber-violet-active {
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.28) 0%, rgba(67, 56, 202, 0.16) 100%);
+  border: 1.5px solid #818cf8 !important;
+  box-shadow:
+    0 0 16px rgba(99, 102, 241, 0.35),
+    inset 0 0 10px rgba(129, 140, 248, 0.2);
+}
+
+.cyber-cta-gold {
+  position: relative;
+  overflow: hidden;
+  background: linear-gradient(180deg, #fbbf24 0%, #d97706 55%, #b45309 100%);
+  border: 1.5px solid #fde68a;
+  box-shadow:
+    0 0 24px rgba(245, 158, 11, 0.48),
+    inset 0 2px 1px rgba(255, 255, 255, 0.45),
+    inset 0 -2px 4px rgba(120, 53, 15, 0.6);
+  transition: filter 0.2s ease, box-shadow 0.2s ease;
+}
+
+.cyber-cta-gold:hover {
+  filter: brightness(1.07);
+  box-shadow:
+    0 0 34px rgba(251, 191, 36, 0.72),
+    inset 0 2px 2px rgba(255, 255, 255, 0.6);
+}
+
+.cyber-cta-gold::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: -60%;
+  width: 45%;
+  height: 200%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.38),
+    transparent
+  );
+  transform: rotate(22deg);
+  animation: cyberShimmer 3.4s infinite ease-in-out;
+  pointer-events: none;
+}
+
+@keyframes cyberShimmer {
+  0% {
+    left: -60%;
+  }
+  45%,
+  100% {
+    left: 140%;
+  }
+}
+
+.vanguard-brand-box {
+  position: relative;
+  border: 1.5px solid rgba(56, 189, 248, 0.65);
+  background: linear-gradient(180deg, rgba(14, 116, 144, 0.28), rgba(15, 23, 42, 0.9));
+  box-shadow: 0 0 14px rgba(56, 189, 248, 0.28);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
