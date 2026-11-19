@@ -129,7 +129,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [notifications, setNotifications] = useState<ArenaNotification[]>([]);
   const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
 
-  // Live Admin-Controlled System State
+  // Admin-Controlled System Flags (Includes Hide Admin Account from Users)
+  const [hideAdminFromUsers, setHideAdminFromUsers] = useState<boolean>(true);
   const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState<string>(
     'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။'
@@ -148,6 +149,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [openRooms, setOpenRooms] = useState<any[]>([]);
   const [activeMatch, setActiveMatch] = useState<any | null>(null);
+  const [botThinking, setBotThinking] = useState<boolean>(false);
   const [currentRoom, setCurrentRoom] = useState<any | null>(null);
   const [matchChat, setMatchChat] = useState<any[]>([]);
   const [roomChat, setRoomChat] = useState<any[]>([]);
@@ -162,11 +164,22 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const queueTimerRef = useRef<number | null>(null);
   const queueRoomIdRef = useRef<string | null>(null);
+  const botTimerRef = useRef<number | null>(null);
+  const botThinkingRef = useRef<boolean>(false);
   const xpAwardedMatchRef = useRef<string | null>(null);
   const alertedNotiIdsRef = useRef<Set<string>>(new Set());
   const sessionStartedAtRef = useRef<number>(Date.now());
   const xpRulesRef = useRef(xpRules);
   xpRulesRef.current = xpRules;
+
+  const cancelBotTimer = useCallback(() => {
+    if (botTimerRef.current) {
+      window.clearTimeout(botTimerRef.current);
+      botTimerRef.current = null;
+    }
+    botThinkingRef.current = false;
+    setBotThinking(false);
+  }, []);
 
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
@@ -205,11 +218,14 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const setAdminSocketMode = useCallback((_mode: 'admin' | 'lobby') => {}, []);
 
-  // Uses live Admin-configured XP rules!
   const applyXpDelta = useCallback(
     async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
       if (matchId && xpAwardedMatchRef.current === matchId) return;
       if (matchId) xpAwardedMatchRef.current = matchId;
+
+      if (outcome === 'win') soundEngine.playWin();
+      else if (outcome === 'loss') soundEngine.playCry();
+      else soundEngine.playNotify();
 
       const player = resolveCurrentPlayer();
       if (!player) return;
@@ -295,14 +311,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
     const handleBeforeUnload = () => pushHeartbeat(false);
     window.addEventListener('beforeunload', handleBeforeUnload);
-
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, [token, activeMatch?.id, currentRoom?.id, resolveCurrentPlayer]);
 
-  // 2. Real-Time Platform Subscriptions (Users, Config, Landing, Custom Quizzes, Notifications, Tournaments)
+  // 2. Real-Time Platform Subscriptions
   useEffect(() => {
     if (!token) return;
     const myId = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '').replace(/^local_/, '');
@@ -427,6 +442,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const cfg = snap.data() as any;
+        if (typeof cfg.hideAdminFromUsers === 'boolean') {
+          setHideAdminFromUsers(cfg.hideAdminFromUsers);
+        }
         setMaintenanceMode(Boolean(cfg.maintenanceMode));
         if (cfg.maintenanceMessage) setMaintenanceMessage(cfg.maintenanceMessage);
         if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
@@ -527,7 +545,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     return () => unsubMatch();
   }, [activeMatch?.id, activeMatch?.isRealtimePvp, resolveCurrentPlayer, applyXpDelta]);
 
-  // 5. Matchmaking Queue (Respects Admin botFallbackSec)
+  // 5. Matchmaking Queue
   const joinQueue = useCallback(
     async (rawGameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
       if (featureLocks.matchmaking) {
@@ -661,7 +679,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setActiveMatch(match);
   }, [resolveCurrentPlayer]);
 
-  // 6. Unified Move Handler
+  // 6. Unified Move Handler (Includes 1.5s Bot Thinking Delay for TTT & Connect 4 + Rich SFX!)
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
@@ -674,7 +692,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       const next = JSON.parse(JSON.stringify(activeMatch));
       next.gameType = gType;
 
+      // --- A. TIC-TAC-TOE (With Scratch Sound & 1.5s Bot Thinking) ---
       if (gType === 'tictactoe') {
+        if (!isPvp && botThinkingRef.current) return;
         const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
         const idx = typeof move === 'number' ? move : move?.index ?? -1;
         if (idx < 0 || idx > 8 || board[idx] !== null) return;
@@ -683,7 +703,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           if (next.turnUserId !== me?.id) return;
           board[idx] = me?.id === p1.id ? 'X' : 'O';
           next.tttBoard = board;
+          next.lastMove = { actor: me?.id === p1.id ? 'p1' : 'p2', index: idx, ts: Date.now() };
           next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
+          soundEngine.playScratch();
+
           const outcome = checkTTTWinner(board);
           if (outcome) {
             next.status = 'finished';
@@ -698,33 +721,75 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
+        // Player Move Immediately
         board[idx] = 'X';
-        let outcome = checkTTTWinner(board);
-        if (!outcome) {
-          const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
-          if (botPick >= 0) {
-            board[botPick] = 'O';
-            outcome = checkTTTWinner(board);
-          }
-        }
         next.tttBoard = board;
-        if (outcome) {
+        next.lastMove = { actor: 'p1', index: idx, ts: Date.now() };
+        soundEngine.playScratch();
+
+        const p1Outcome = checkTTTWinner(board);
+        if (p1Outcome) {
           next.status = 'finished';
-          if (outcome === 'DRAW') {
+          if (p1Outcome === 'DRAW') {
             next.isDraw = true;
             applyXpDelta('draw', next.id);
           } else {
-            const p1Won = outcome === 'X';
-            next.winnerId = p1Won ? p1.id : p2.id;
-            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+            next.winnerId = p1.id;
+            next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
+            applyXpDelta('win', next.id);
           }
+          setActiveMatch(next);
+          return;
         }
+
+        // Bot Thinks for 1.5 Seconds (1500ms) Before Playing
+        next.turnUserId = p2.id;
         setActiveMatch(next);
+        botThinkingRef.current = true;
+        setBotThinking(true);
+        soundEngine.playThinking();
+
+        const matchIdSnap = next.id;
+        botTimerRef.current = window.setTimeout(() => {
+          botThinkingRef.current = false;
+          setBotThinking(false);
+          setActiveMatch((curr: any) => {
+            if (!curr || curr.id !== matchIdSnap || curr.status === 'finished') return curr;
+            const bCopy = [...(curr.tttBoard || Array(9).fill(null))];
+            const botPick = pickSmartTTTMove(bCopy, curr.difficulty || 'medium');
+            if (botPick < 0) return curr;
+            bCopy[botPick] = 'O';
+            soundEngine.playScratch();
+
+            const updated = {
+              ...curr,
+              tttBoard: bCopy,
+              turnUserId: p1.id,
+              lastMove: { actor: 'p2', index: botPick, ts: Date.now() },
+              scores: { ...(curr.scores || {}) },
+            };
+
+            const botOutcome = checkTTTWinner(bCopy);
+            if (botOutcome) {
+              updated.status = 'finished';
+              if (botOutcome === 'DRAW') {
+                updated.isDraw = true;
+                applyXpDelta('draw', updated.id);
+              } else {
+                updated.winnerId = p2.id;
+                updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
+                applyXpDelta('loss', updated.id);
+              }
+            }
+            return updated;
+          });
+        }, 1500);
         return;
       }
 
+      // --- B. CONNECT 4 (With Drop Bounce Sound & 1.5s Bot Thinking) ---
       if (gType === 'connect4') {
+        if (!isPvp && botThinkingRef.current) return;
         const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
         const col = typeof move === 'number' ? move : move?.col ?? -1;
         if (col < 0 || col > 6) return;
@@ -741,6 +806,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           }
         }
         if (!placed) return;
+        soundEngine.playDrop();
 
         if (isPvp) {
           next.c4Board = grid;
@@ -759,40 +825,76 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        let outcome = checkConnect4Winner(grid);
-        if (!outcome) {
-          const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
-          if (validCols.length > 0) {
-            const botCol =
-              next.difficulty === 'hard' && validCols.includes(3) && Math.random() > 0.4
-                ? 3
-                : validCols[Math.floor(Math.random() * validCols.length)];
-            for (let r = 5; r >= 0; r--) {
-              if (grid[r][botCol] === null) {
-                grid[r][botCol] = 'P2';
-                break;
-              }
-            }
-            outcome = checkConnect4Winner(grid);
-          }
-        }
         next.c4Board = grid;
-        if (outcome) {
+        const p1Outcome = checkConnect4Winner(grid);
+        if (p1Outcome) {
           next.status = 'finished';
-          if (outcome === 'DRAW') {
+          if (p1Outcome === 'DRAW') {
             next.isDraw = true;
             applyXpDelta('draw', next.id);
           } else {
-            const p1Won = outcome === 'P1';
-            next.winnerId = p1Won ? p1.id : p2.id;
-            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+            next.winnerId = p1.id;
+            next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
+            applyXpDelta('win', next.id);
           }
+          setActiveMatch(next);
+          return;
         }
+
+        // Bot Thinks for 1.5 Seconds (1500ms) Before Dropping Disc
+        next.turnUserId = p2.id;
         setActiveMatch(next);
+        botThinkingRef.current = true;
+        setBotThinking(true);
+        soundEngine.playThinking();
+
+        const matchIdSnap = next.id;
+        botTimerRef.current = window.setTimeout(() => {
+          botThinkingRef.current = false;
+          setBotThinking(false);
+          setActiveMatch((curr: any) => {
+            if (!curr || curr.id !== matchIdSnap || curr.status === 'finished') return curr;
+            const gCopy: Array<Array<string | null>> = curr.c4Board.map((r: any) => [...r]);
+            const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => gCopy[0][c] === null);
+            if (validCols.length === 0) return curr;
+
+            const botCol =
+              curr.difficulty === 'hard' && validCols.includes(3) && Math.random() > 0.35
+                ? 3
+                : validCols[Math.floor(Math.random() * validCols.length)];
+            for (let r = 5; r >= 0; r--) {
+              if (gCopy[r][botCol] === null) {
+                gCopy[r][botCol] = 'P2';
+                break;
+              }
+            }
+            soundEngine.playDrop();
+
+            const updated = {
+              ...curr,
+              c4Board: gCopy,
+              turnUserId: p1.id,
+              scores: { ...(curr.scores || {}) },
+            };
+            const botOutcome = checkConnect4Winner(gCopy);
+            if (botOutcome) {
+              updated.status = 'finished';
+              if (botOutcome === 'DRAW') {
+                updated.isDraw = true;
+                applyXpDelta('draw', updated.id);
+              } else {
+                updated.winnerId = p2.id;
+                updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
+                applyXpDelta('loss', updated.id);
+              }
+            }
+            return updated;
+          });
+        }, 1500);
         return;
       }
 
+      // --- C. ROCK, PAPER, SCISSORS (With Head-Bonk SFX!) ---
       if (gType === 'rps') {
         const myChoice = String(move?.choice || move || 'rock').toLowerCase();
 
@@ -809,7 +911,12 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
                 (c1 === 'scissors' && c2 === 'paper');
               roundWinnerId = p1Beats ? p1.id : p2.id;
             }
-            if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+            if (roundWinnerId) {
+              next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+              soundEngine.playBonk();
+            } else {
+              soundEngine.playClick();
+            }
             next.rpsLastRound = { p1Choice: c1, p2Choice: c2, winnerId: roundWinnerId };
             next.rpsPicks = {};
             next.round = (next.round || 1) + 1;
@@ -835,7 +942,12 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             (myChoice === 'scissors' && bChoice === 'paper');
           roundWinnerId = beats ? p1.id : p2.id;
         }
-        if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+        if (roundWinnerId) {
+          next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
+          soundEngine.playBonk();
+        } else {
+          soundEngine.playClick();
+        }
         next.rpsLastRound = { p1Choice: myChoice, p2Choice: bChoice, winnerId: roundWinnerId };
         next.round = (next.round || 1) + 1;
 
@@ -850,11 +962,15 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
+      // --- D. WISE OWL QUIZ (With Correct Chime & Head-Bonk SFX!) ---
       if (gType === 'sakarhtar') {
         const riddles = next.riddles?.length ? next.riddles : QUIZ_BANK_100;
         const idx = next.riddleIndex || 0;
         const current = riddles[idx] || riddles[0];
         const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
+
+        if (chosen === current.answerIndex) soundEngine.playCorrect();
+        else soundEngine.playBonk();
 
         if (isPvp && me?.id) {
           next.roundAnswers = next.roundAnswers || {};
@@ -905,6 +1021,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const forfeitMatch = useCallback(async () => {
+    cancelBotTimer();
     if (!activeMatch) return;
     const me = resolveCurrentPlayer();
     const other = (activeMatch.players || []).find((p: any) => p.id !== me?.id) || { id: 'aegis_bot' };
@@ -914,7 +1031,15 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
       await setDoc(doc(db, 'matches', activeMatch.id), stripUndefined(finished)).catch(() => {});
     }
-  }, [activeMatch, resolveCurrentPlayer, applyXpDelta]);
+  }, [activeMatch, cancelBotTimer, resolveCurrentPlayer, applyXpDelta]);
+
+  const setActiveMatchSafe = useCallback(
+    (m: any | null) => {
+      cancelBotTimer();
+      setActiveMatch(m);
+    },
+    [cancelBotTimer]
+  );
 
   const sendMatchChat = useCallback(
     async (text: string) => {
@@ -945,10 +1070,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const sendChallenge = useCallback(
     (_targetUserId: string, gameType: GameType) => {
       const player = resolveCurrentPlayer();
-      setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
+      setActiveMatchSafe(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
       setSocialRefreshTick((n) => n + 1);
     },
-    [resolveCurrentPlayer]
+    [resolveCurrentPlayer, setActiveMatchSafe]
   );
 
   const respondChallenge = useCallback((_challengeId: string, accept: boolean) => {
@@ -969,6 +1094,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     notifications,
     unreadNotiCount,
     markAllNotificationsRead,
+    hideAdminFromUsers,
     maintenanceMode,
     maintenanceMessage,
     xpRules,
@@ -980,7 +1106,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     tournaments,
     openRooms,
     activeMatch,
-    setActiveMatch,
+    setActiveMatch: setActiveMatchSafe,
+    botThinking,
     currentRoom,
     setCurrentRoom,
     matchChat,
