@@ -6,10 +6,7 @@ import {
   doc,
   getDoc,
   getDocs,
-  limit,
   onSnapshot,
-  orderBy,
-  query,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
@@ -18,11 +15,13 @@ import {
   buildPlayableMatch,
   DEFAULT_SAKAR_RIDDLES,
   getPatchedLandingContent,
+  normalizeGameId,
   readActiveSessionUser,
   readServerlessStore,
   saveActiveSessionUser,
   writeServerlessStore,
 } from '../lib/serverlessApi.ts';
+import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import type {
   GameType,
   LandingContent,
@@ -37,14 +36,6 @@ interface UseArenaSocketOptions {
   onUserUpdate: (user: UserProfile) => void;
   onKicked: (reason: string) => void;
 }
-
-const DEFAULT_FRAMES = [
-  { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
-  { id: 'silver', name: 'Silver Striker', minXp: 1000 },
-  { id: 'gold', name: 'Gold Champion', minXp: 1300 },
-  { id: 'diamond', name: 'Diamond Sovereign', minXp: 1800 },
-  { id: 'legend', name: 'Legend Mythic', minXp: 2500 },
-];
 
 function checkTTTWinner(board: Array<string | null>): 'X' | 'O' | 'DRAW' | null {
   const lines = [
@@ -77,7 +68,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [pingMs, setPingMs] = useState<number>(20);
   const [landingContent, setLandingContent] = useState<LandingContent>(() => getPatchedLandingContent());
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
-  const [frames] = useState<any[]>(DEFAULT_FRAMES);
+  const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
   const [featureLocks, setFeatureLocks] = useState<Record<string, boolean>>({});
   const [matchmakingSettings, setMatchmakingSettings] = useState<any>({ maxWaitSec: 30, xpRange: 400 });
   const [onlinePlayers, setOnlinePlayers] = useState<UserProfile[]>([]);
@@ -107,7 +98,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setToasts((prev) => [...prev, { id, level, message }]);
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 3200);
+    }, 3500);
   }, []);
 
   const dismissWarningLocal = useCallback((warningId: string) => {
@@ -141,7 +132,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       const nextRank =
         nextXp >= 2500
           ? 'Legend'
-          : nextXp >= 1800
+          : nextXp >= 1900
           ? 'Diamond'
           : nextXp >= 1300
           ? 'Gold'
@@ -177,24 +168,52 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     return () => clearInterval(timer);
   }, [token]);
 
-  // 1. Real-Time Users, Leaderboard, Tournaments & Open Rooms Subscription
+  // 1. Real-Time Users, Admin Announcements & User Warnings Sync
   useEffect(() => {
-    if (!token || !isFirebaseConfigured || !db) return;
+    if (!token) return;
 
-    const qUsers = query(collection(db, 'users'), orderBy('xp', 'desc'), limit(100));
-    const unsubUsers = onSnapshot(qUsers, (snap) => {
+    // Immediate Local Storage Sync (for same-browser multi-tab testing)
+    const syncFromLocal = () => {
+      const store = readServerlessStore();
+      const usersList = Object.values(store.users).sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0));
+      setLeaderboard(usersList as UserProfile[]);
+      setOnlinePlayers(usersList as UserProfile[]);
+      if (store.activeBroadcast?.message) {
+        setAnnouncement({
+          title: store.activeBroadcast.title || 'Announcement',
+          message: store.activeBroadcast.message,
+        });
+      }
+      if (token !== 'admin-token') {
+        const uid = token.replace(/^token_/, '');
+        const myWarns = (store.warnings || []).filter((w: any) => w.userId === uid && !w.acknowledged);
+        if (myWarns.length > 0) setPendingWarnings(myWarns);
+      }
+    };
+
+    syncFromLocal();
+    window.addEventListener('storage', syncFromLocal);
+
+    if (!isFirebaseConfigured || !db) {
+      return () => window.removeEventListener('storage', syncFromLocal);
+    }
+
+    // Firestore Live Users Collection (No orderBy filter so zero accounts are ever skipped)
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       const list: UserProfile[] = [];
       const store = readServerlessStore();
       snap.forEach((d) => {
         const u = d.data() as any;
-        list.push(u as UserProfile);
-        if (u?.id) store.users[u.id] = u;
+        if (u?.id) {
+          list.push(u as UserProfile);
+          store.users[u.id] = u;
+        }
       });
+      list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
       writeServerlessStore(store);
 
-      // Notify Admin in real-time when a new player registers
       if (token === 'admin-token' && knownUserCountRef.current > 0 && list.length > knownUserCountRef.current) {
-        pushToast('success', `New Player Registered! (Total: ${list.length})`);
+        pushToast('success', `New Player Joined! (Total: ${list.length})`);
       }
       knownUserCountRef.current = list.length;
 
@@ -214,6 +233,31 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       }
     });
 
+    // Live Admin Broadcast Announcement Listener
+    const unsubAnn = onSnapshot(doc(db, 'system', 'announcement'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as any;
+        if (data?.message) {
+          setAnnouncement({ title: data.title || 'Announcement', message: data.message });
+          pushToast('info', `${data.title || 'Notice'}: ${data.message}`);
+        }
+      }
+    });
+
+    // Live Admin Warnings Listener for Current Player
+    const unsubWarns = onSnapshot(collection(db, 'warnings'), (snap) => {
+      if (token === 'admin-token') return;
+      const uid = token.replace(/^token_/, '');
+      const myWarns: { id: string; reason: string }[] = [];
+      snap.forEach((d) => {
+        const w = d.data() as any;
+        if (w.userId === uid && !w.acknowledged) {
+          myWarns.push({ id: w.id || d.id, reason: w.reason });
+        }
+      });
+      setPendingWarnings(myWarns);
+    });
+
     const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
       const list: any[] = [];
       snap.forEach((d) => list.push(d.data()));
@@ -230,13 +274,16 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     });
 
     return () => {
+      window.removeEventListener('storage', syncFromLocal);
       unsubUsers();
+      unsubAnn();
+      unsubWarns();
       unsubTourneys();
       unsubRooms();
     };
   }, [token, onUserUpdate, onKicked, pushToast]);
 
-  // 2. Real-Time Room Sync (Players Joining, Chat, & Host Starting Match)
+  // 2. Real-Time Room Sync
   useEffect(() => {
     if (!currentRoom?.id || !isFirebaseConfigured || !db) return;
     const roomId = currentRoom.id;
@@ -248,11 +295,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       }
       const latestRoom = snap.data() as any;
       setCurrentRoom(latestRoom);
-      if (Array.isArray(latestRoom.chat)) {
-        setRoomChat(latestRoom.chat);
-      }
+      if (Array.isArray(latestRoom.chat)) setRoomChat(latestRoom.chat);
 
-      // If Host started the match (or matchmaking paired), transition all players into activeMatch!
       if (latestRoom.status === 'playing' && latestRoom.activeMatchId) {
         const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
         if (matchSnap && matchSnap.exists()) {
@@ -268,7 +312,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     return () => unsubRoom();
   }, [currentRoom?.id]);
 
-  // 3. Real-Time Active Match Sync (Live PvP Moves & Match Chat)
+  // 3. Real-Time Active Match Sync
   useEffect(() => {
     if (!activeMatch?.id || !activeMatch?.isRealtimePvp || !isFirebaseConfigured || !db) return;
     const matchId = activeMatch.id;
@@ -278,28 +322,24 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       if (!snap.exists()) return;
       const latest = snap.data() as any;
       setActiveMatch(latest);
-      if (Array.isArray(latest.chat)) {
-        setMatchChat(latest.chat);
-      }
+      if (Array.isArray(latest.chat)) setMatchChat(latest.chat);
 
       if (latest.status === 'finished' && me?.id) {
-        if (latest.isDraw) {
-          applyXpDelta('draw', matchId);
-        } else if (latest.winnerId) {
-          applyXpDelta(latest.winnerId === me.id ? 'win' : 'loss', matchId);
-        }
+        if (latest.isDraw) applyXpDelta('draw', matchId);
+        else if (latest.winnerId) applyXpDelta(latest.winnerId === me.id ? 'win' : 'loss', matchId);
       }
     });
 
     return () => unsubMatch();
   }, [activeMatch?.id, activeMatch?.isRealtimePvp, resolveCurrentPlayer, applyXpDelta]);
 
-  // 4. Real-Time Matchmaking Queue (Pairs 2 Human Players via Firestore, falls back to Bot after 8s)
+  // 4. Matchmaking Queue
   const joinQueue = useCallback(
-    async (gameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
+    async (rawGameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
+      const gameType = normalizeGameId(rawGameType);
       const player = resolveCurrentPlayer();
-      setQueuedGame(gameType);
-      setQueueStatus({ gameType, startedAt: Date.now() });
+      setQueuedGame(rawGameType);
+      setQueueStatus({ gameType: rawGameType, startedAt: Date.now() });
 
       if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
 
@@ -312,7 +352,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             if (
               r.status === 'waiting' &&
               r.isMatchmaking === true &&
-              r.gameType === gameType &&
+              normalizeGameId(r.gameType) === gameType &&
               Array.isArray(r.players) &&
               r.players.length === 1 &&
               r.players[0].id !== player.id
@@ -344,7 +384,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             return;
           }
 
-          // Otherwise create a waiting matchmaking ticket in Firestore
           const ticketId = `mm_${Date.now()}_${player.id}`;
           queueRoomIdRef.current = ticketId;
           const ticketRoom = {
@@ -363,7 +402,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         } catch {}
       }
 
-      // Fallback to Aegis Bot after 8 seconds if no human joins
       queueTimerRef.current = window.setTimeout(async () => {
         if (queueRoomIdRef.current && isFirebaseConfigured && db) {
           await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
@@ -383,7 +421,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             isRealtimePvp: false,
           })
         );
-      }, 8000);
+      }, 6000);
     },
     [resolveCurrentPlayer, pushToast]
   );
@@ -417,30 +455,29 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setActiveMatch(buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' }));
   }, [resolveCurrentPlayer]);
 
-  // 5. Unified Move Handler (Supports BOTH Real-Time PvP via Firestore & Bot AI)
+  // 5. Move Handler for All 4 Games (Normalized GameType)
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
+      const gType = normalizeGameId(activeMatch.gameType);
       const me = resolveCurrentPlayer();
       const players = activeMatch.players || [me];
       const p1 = players[0];
       const p2 = players[1] || { id: 'aegis_bot' };
       const isPvp = Boolean(activeMatch.isRealtimePvp && players.length >= 2);
       const next = JSON.parse(JSON.stringify(activeMatch));
+      next.gameType = gType;
 
-      // --- A. TIC-TAC-TOE ---
-      if (next.gameType === 'tictactoe') {
+      if (gType === 'tictactoe') {
         const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
         const idx = typeof move === 'number' ? move : move?.index ?? -1;
         if (idx < 0 || idx > 8 || board[idx] !== null) return;
 
         if (isPvp) {
           if (next.turnUserId !== me.id) return;
-          const myMark = me.id === p1.id ? 'X' : 'O';
-          board[idx] = myMark;
+          board[idx] = me.id === p1.id ? 'X' : 'O';
           next.tttBoard = board;
           next.turnUserId = me.id === p1.id ? p2.id : p1.id;
-
           const outcome = checkTTTWinner(board);
           if (outcome) {
             next.status = 'finished';
@@ -455,7 +492,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Bot Match
         board[idx] = 'X';
         let outcome = checkTTTWinner(board);
         if (!outcome) {
@@ -482,8 +518,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
-      // --- B. CONNECT 4 ---
-      if (next.gameType === 'connect4') {
+      if (gType === 'connect4') {
         const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
         const col = typeof move === 'number' ? move : move?.col ?? -1;
         if (col < 0 || col > 6) return;
@@ -518,7 +553,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Bot Match
         let outcome = checkConnect4Winner(grid);
         if (!outcome) {
           const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
@@ -550,15 +584,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
-      // --- C. ROCK, PAPER, SCISSORS (Simultaneous PvP or Bot) ---
-      if (next.gameType === 'rps') {
+      if (gType === 'rps') {
         const myChoice = String(move?.choice || move || 'rock').toLowerCase();
 
         if (isPvp) {
           next.rpsPicks = { ...(next.rpsPicks || {}), [me.id]: myChoice };
           const c1 = next.rpsPicks[p1.id];
           const c2 = next.rpsPicks[p2.id];
-
           if (c1 && c2) {
             let roundWinnerId: string | null = null;
             if (c1 !== c2) {
@@ -584,7 +616,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Bot Match
         const opts = ['rock', 'paper', 'scissors'];
         const bChoice = opts[Math.floor(Math.random() * 3)];
         let roundWinnerId: string | null = null;
@@ -610,8 +641,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
-      // --- D. SAKAR-HTAR (1 to 8 Players Real-Time or Solo) ---
-      if (next.gameType === 'sakarhtar') {
+      if (gType === 'sakarhtar') {
         const riddles = next.riddles || DEFAULT_SAKAR_RIDDLES;
         const idx = next.riddleIndex || 0;
         const current = riddles[idx] || riddles[0];
@@ -619,14 +649,11 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
         if (isPvp) {
           next.roundAnswers = next.roundAnswers || {};
-          if (typeof next.roundAnswers[me.id] === 'number') return; // Already answered this riddle
-
+          if (typeof next.roundAnswers[me.id] === 'number') return;
           next.roundAnswers[me.id] = chosen;
           if (chosen === current.answerIndex) {
             next.scores[me.id] = (next.scores[me.id] || 0) + 100;
           }
-
-          // Advance to next riddle once all room players have answered
           const allAnswered = players.every((p: any) => typeof next.roundAnswers[p.id] === 'number');
           if (allAnswered) {
             next.roundAnswers = {};
@@ -634,11 +661,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             if (next.riddleIndex >= riddles.length) {
               next.status = 'finished';
               const sorted = [...players].sort((a, b) => (next.scores[b.id] || 0) - (next.scores[a.id] || 0));
-              if ((next.scores[sorted[0].id] || 0) === (next.scores[sorted[1]?.id] || 0)) {
-                next.isDraw = true;
-              } else {
-                next.winnerId = sorted[0].id;
-              }
+              if ((next.scores[sorted[0].id] || 0) === (next.scores[sorted[1]?.id] || 0)) next.isDraw = true;
+              else next.winnerId = sorted[0].id;
             }
           }
           setActiveMatch(next);
@@ -646,7 +670,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Solo / Bot Match
         if (chosen === current.answerIndex) {
           next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
         }
