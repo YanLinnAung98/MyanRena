@@ -21,11 +21,11 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { arrayRemove, arrayUnion, doc, updateDoc } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
-import { db, isFirebaseConfigured } from './lib/firebase.ts';
+import { db, isFirebaseConfigured, stripUndefined } from './lib/firebase.ts';
 import {
   ACTIVE_USER_KEY,
   getPatchedLandingContent,
@@ -71,7 +71,7 @@ class GlobalErrorBoundary extends React.Component<
           <div className="max-w-sm w-full cyber-panel rounded-2xl border border-amber-500/40 p-6 text-center space-y-4">
             <ShieldAlert className="w-10 h-10 text-amber-400 mx-auto" />
             <h2 className="text-base font-bold">Vanguard Auto-Recovery</h2>
-            <p className="text-xs font-mono text-rose-300 break-words bg-[#070b14] p-2.5 rounded-xl">
+            <p className="text-xs font-mono text-rose-300 break-words bg-[#070b13] p-2.5 rounded-xl">
               {this.state.message}
             </p>
             <button
@@ -136,6 +136,7 @@ function VanguardAppCore() {
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [kickBanner, setKickBanner] = React.useState<string | null>(null);
   const [notiDrawerOpen, setNotiDrawerOpen] = React.useState(false);
+  const [pendingFriendReqCount, setPendingFriendReqCount] = React.useState(0);
   const [nowTs, setNowTs] = React.useState(() => Date.now());
   const [acknowledgingWarning, setAcknowledgingWarning] = React.useState(false);
 
@@ -219,6 +220,23 @@ function VanguardAppCore() {
     };
   }, []);
 
+  // Live Incoming Friend Request Counter for Social Tab Badge
+  React.useEffect(() => {
+    if (!user?.id || !isFirebaseConfigured || !db) {
+      setPendingFriendReqCount(0);
+      return;
+    }
+    const unsub = onSnapshot(collection(db, 'friendRequests'), (snap) => {
+      let count = 0;
+      snap.forEach((d) => {
+        const r = d.data();
+        if (r.toUserId === user.id && r.status === 'pending') count += 1;
+      });
+      setPendingFriendReqCount(count);
+    });
+    return () => unsub();
+  }, [user?.id]);
+
   const socket = useArenaSocket({
     token: user ? token : null,
     lang,
@@ -256,7 +274,7 @@ function VanguardAppCore() {
     [socket]
   );
 
-  // Declare all Hooks before any early return
+  // All Hooks declared before conditional returns
   const mergedLeaderboard = React.useMemo(() => {
     if (!user) return socket.leaderboard;
     const exists = socket.leaderboard.some((u) => u.id === user.id);
@@ -321,16 +339,29 @@ function VanguardAppCore() {
     socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
   };
 
-  const handleAddFriend = async (targetUserId: string) => {
-    if (!user) return;
-    const nextFriends = Array.from(new Set([...(user.friends || []), targetUserId]));
-    const updated = { ...user, friends: nextFriends };
-    saveActiveSessionUser(updated);
-    setUser(updated);
+  // Strictly sends a Pending Mutual Friend Request (never auto-adds without recipient acceptance)
+  const handleSendFriendRequest = async (targetUserId: string) => {
+    if (!user || targetUserId === user.id) return;
+    const target = mergedLeaderboard.find((u) => u.id === targetUserId);
+    const reqId = `${user.id}__${targetUserId}`;
+    const payload = stripUndefined({
+      id: reqId,
+      fromUserId: user.id,
+      fromName: user.displayName,
+      fromGameId: user.gameId,
+      fromAvatarUrl: user.avatarUrl || '',
+      fromFrameId: user.frameId || 'bronze',
+      toUserId: targetUserId,
+      toName: target?.displayName || 'Player',
+      toGameId: target?.gameId || '',
+      status: 'pending',
+      createdAtMs: Date.now(),
+    });
+
     if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'users', user.id), { friends: arrayUnion(targetUserId) }).catch(() => {});
+      await setDoc(doc(db, 'friendRequests', reqId), payload).catch(() => {});
     }
-    socket.pushToast('success', 'မိတ်ဆွေ ထည့်သွင်းပြီးပါပြီ!');
+    socket.pushToast('success', 'Friend Request ပေးပို့ပြီးပါပြီ (တစ်ဖက်က လက်ခံမှ မိတ်ဆွေဖြစ်ပါမည်)');
   };
 
   const handleStartSakarSolo = async () => {
@@ -497,11 +528,11 @@ function VanguardAppCore() {
     );
   }
 
-  const navItems: { id: LobbyTab; label: string; icon: React.ReactNode }[] = [
+  const navItems: { id: LobbyTab; label: string; icon: React.ReactNode; badge?: number }[] = [
     { id: 'lobby', label: t.nav.lobby, icon: <Gamepad2 className="w-5 h-5" /> },
     { id: 'tournaments', label: t.nav.tournaments, icon: <Swords className="w-5 h-5" /> },
     { id: 'leaderboard', label: t.nav.leaderboard, icon: <Trophy className="w-5 h-5" /> },
-    { id: 'social', label: t.nav.social, icon: <Users className="w-5 h-5" /> },
+    { id: 'social', label: t.nav.social, icon: <Users className="w-5 h-5" />, badge: pendingFriendReqCount },
     { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
   ];
 
@@ -536,7 +567,7 @@ function VanguardAppCore() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveTab(item.id)}
-                    className={`px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`relative px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
                       active
                         ? 'text-amber-300 bg-amber-500/10 border-b-2 border-amber-400'
                         : 'text-slate-400 hover:text-white'
@@ -544,13 +575,17 @@ function VanguardAppCore() {
                   >
                     {item.icon}
                     <span>{item.label}</span>
+                    {item.badge ? (
+                      <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-extrabold">
+                        {item.badge}
+                      </span>
+                    ) : null}
                   </button>
                 );
               })}
             </nav>
           </div>
 
-          {/* Right Controls: Admin, Bell Noti, Language, Ping, Profile Avatar, Dedicated Settings Gear */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {isActualAdmin && (
               <button
@@ -599,7 +634,6 @@ function VanguardAppCore() {
               />
             </button>
 
-            {/* Dedicated Settings Trigger (Music, Sound FX, Graphics, Logout) */}
             <button
               type="button"
               onClick={() => {
@@ -703,7 +737,7 @@ function VanguardAppCore() {
             onJoinSakarRoom={handleJoinSakarRoom}
             onSendChallenge={socket.sendChallenge}
             onInspectPlayer={(id) => setInspectUserId(id)}
-            onAddFriend={handleAddFriend}
+            onAddFriend={handleSendFriendRequest}
           />
         ) : activeTab === 'tournaments' ? (
           <TournamentView
@@ -752,7 +786,6 @@ function VanguardAppCore() {
         )}
       </main>
 
-      {/* Dedicated Settings Modal */}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -818,6 +851,7 @@ function VanguardAppCore() {
         )}
       </AnimatePresence>
 
+      {/* Mobile Bottom Navigation with Incoming Friend Request Badge */}
       {!socket.activeMatch && (
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
           <div className="grid grid-cols-5 h-16 items-center">
@@ -828,12 +862,17 @@ function VanguardAppCore() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
-                  className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                  className={`relative min-h-[48px] flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
                     active ? 'text-amber-400' : 'text-slate-400'
                   }`}
                 >
                   {item.icon}
                   <span className="text-[10px] font-semibold truncate max-w-full px-1">{item.label}</span>
+                  {item.badge ? (
+                    <span className="absolute top-1.5 right-3 min-w-[16px] h-[16px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
+                      {item.badge}
+                    </span>
+                  ) : null}
                 </button>
               );
             })}
@@ -922,10 +961,10 @@ function VanguardAppCore() {
                 <h3 className="text-base font-bold text-white">
                   {socket.pendingWarnings[0].title || 'Admin မှ အသိပေးစာ'}
                 </h3>
-                <p className="text-xs text-slate-400 mt-0.5">Real-Time Notification from Vanguard Admin</p>
+                <p className="text-xs text-slate-400 mt-0.5">Real-Time Notification from Vanguard Arena</p>
               </div>
             </div>
-            <div className="rounded-xl bg-[#070b14] border border-white/10 p-3.5 text-sm text-amber-100 leading-relaxed">
+            <div className="rounded-xl bg-[#070b13] border border-white/10 p-3.5 text-sm text-amber-100 leading-relaxed">
               {socket.pendingWarnings[0].reason}
             </div>
             <button
