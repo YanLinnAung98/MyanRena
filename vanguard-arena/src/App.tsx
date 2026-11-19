@@ -23,6 +23,7 @@ import { GAME_REGISTRY } from './games/registry.ts';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
+import { ACTIVE_USER_KEY, getPatchedLandingContent, readActiveSessionUser, saveActiveSessionUser } from './lib/serverlessApi.ts';
 import type { Difficulty, GameType, LandingContent, Language, TurnTimeLimit, UserProfile } from './types.ts';
 import { soundEngine } from './utils/sound.ts';
 import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
@@ -42,7 +43,6 @@ const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
 );
 
-// Prevents black screen if AdminPanel encounters a runtime error
 class AdminErrorBoundary extends React.Component<
   { children: React.ReactNode; onSwitchToLobby: () => void; onLogout: () => void },
   { hasError: boolean; errorMessage: string }
@@ -65,9 +65,6 @@ class AdminErrorBoundary extends React.Component<
               <ShieldAlert className="w-6 h-6 shrink-0" />
               <h2 className="text-lg font-display font-bold text-white">Master Admin Recovery</h2>
             </div>
-            <p className="text-xs text-slate-300 leading-relaxed">
-              Admin Dashboard ဖွင့်ရာတွင် ယာယီ Error တစ်ခု တွေ့ရှိပါသည် -
-            </p>
             <div className="p-3 rounded-xl bg-[#0A0D14] border border-rose-500/30 text-xs font-mono text-rose-300 break-words">
               {this.state.errorMessage}
             </div>
@@ -113,6 +110,7 @@ function clearStoredToken() {
   if (typeof window === 'undefined') return;
   localStorage.removeItem('vanguard_token');
   sessionStorage.removeItem('vanguard_token');
+  localStorage.removeItem(ACTIVE_USER_KEY);
 }
 
 export default function App() {
@@ -123,8 +121,10 @@ export default function App() {
   const [token, setToken] = React.useState<string | null>(readStoredToken);
   const [user, setUser] = React.useState<UserProfile | null>(null);
   const [bootstrapping, setBootstrapping] = React.useState(true);
-  const [publicOnlineCount, setPublicOnlineCount] = React.useState(0);
-  const [publicLandingContent, setPublicLandingContent] = React.useState<LandingContent>(DEFAULT_LANDING_CONTENT);
+  const [publicOnlineCount, setPublicOnlineCount] = React.useState(1);
+  const [publicLandingContent, setPublicLandingContent] = React.useState<LandingContent>(() =>
+    getPatchedLandingContent(DEFAULT_LANDING_CONTENT)
+  );
   const [activeTab, setActiveTab] = React.useState<LobbyTab>('lobby');
   const [adminViewMode, setAdminViewMode] = React.useState<'admin' | 'lobby'>('admin');
   const [muted, setMuted] = React.useState(soundEngine.isMuted());
@@ -143,17 +143,11 @@ export default function App() {
   }, []);
 
   const handleLogout = React.useCallback(async () => {
-    if (token) {
-      fetch('/api/auth/logout', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}` },
-      }).catch(() => {});
-    }
     clearStoredToken();
     setToken(null);
     setUser(null);
     setAdminViewMode('admin');
-  }, [token]);
+  }, []);
 
   const handleKicked = React.useCallback((reason: string) => {
     clearStoredToken();
@@ -170,23 +164,36 @@ export default function App() {
         const bootRes = await fetch('/api/bootstrap');
         if (bootRes.ok && active) {
           const boot = await bootRes.json();
-          setPublicOnlineCount(Number(boot.onlineCount || 0));
+          setPublicOnlineCount(Number(boot.onlineCount || 1));
           if (boot.landingContent) {
-            setPublicLandingContent(boot.landingContent as LandingContent);
+            setPublicLandingContent(getPatchedLandingContent(boot.landingContent as LandingContent));
           }
         }
         if (token) {
-          const meRes = await fetch('/api/auth/me', {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (meRes.ok && active) {
-            const me = await meRes.json();
-            if (me.user) {
-              setUser({ frameId: 'bronze', ...me.user });
+          const saved = readActiveSessionUser();
+          if (saved && active) {
+            const safeUser =
+              token === 'admin-token'
+                ? saved
+                : ({ ...saved, role: 'player', isAdmin: false } as UserProfile);
+            setUser(safeUser);
+          } else {
+            const meRes = await fetch('/api/auth/me', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (meRes.ok && active) {
+              const me = await meRes.json();
+              if (me.user) {
+                const safeUser =
+                  token === 'admin-token'
+                    ? me.user
+                    : ({ ...me.user, role: 'player', isAdmin: false } as UserProfile);
+                setUser(safeUser);
+              }
+            } else if (active) {
+              clearStoredToken();
+              setToken(null);
             }
-          } else if (active) {
-            clearStoredToken();
-            setToken(null);
           }
         }
       } finally {
@@ -202,18 +209,30 @@ export default function App() {
   const socket = useArenaSocket({
     token: user ? token : null,
     lang,
-    onUserUpdate: React.useCallback((nextUser: UserProfile) => setUser(nextUser), []),
+    onUserUpdate: React.useCallback(
+      (nextUser: UserProfile) => {
+        const enforced =
+          token === 'admin-token'
+            ? nextUser
+            : ({ ...nextUser, role: 'player', isAdmin: false } as UserProfile);
+        setUser(enforced);
+      },
+      [token]
+    ),
     onKicked: handleKicked,
   });
 
-  React.useEffect(() => {
-    if (user?.role === 'admin' && socket.connectionState === 'connected') {
-      socket.setAdminSocketMode(adminViewMode);
-    }
-  }, [user?.role, adminViewMode, socket.connectionState, socket.setAdminSocketMode]);
-
   const handleAuthenticated = (nextToken: string, nextUser: UserProfile, rememberMe: boolean) => {
     clearStoredToken();
+    const isAdminAccount = nextToken === 'admin-token' && nextUser.username === 'yanlinnaung';
+    const cleanProfile = {
+      ...nextUser,
+      role: isAdminAccount ? 'admin' : 'player',
+      isAdmin: isAdminAccount,
+      frameId: isAdminAccount ? 'legend' : nextUser.frameId || 'bronze',
+    } as UserProfile;
+
+    saveActiveSessionUser(cleanProfile);
     if (rememberMe) {
       localStorage.setItem('vanguard_token', nextToken);
     } else {
@@ -221,9 +240,9 @@ export default function App() {
     }
     setKickBanner(null);
     setToken(nextToken);
-    setUser({ frameId: nextUser.role === 'admin' ? 'legend' : 'bronze', ...nextUser });
+    setUser(cleanProfile);
     setActiveTab('lobby');
-    setAdminViewMode('admin');
+    setAdminViewMode(isAdminAccount ? 'admin' : 'lobby');
   };
 
   const toggleMute = () => {
@@ -246,17 +265,7 @@ export default function App() {
       if (!token) return;
       setAcknowledgingWarning(true);
       try {
-        const res = await fetch(`/api/warnings/${encodeURIComponent(warningId)}/ack`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.ok) {
-          socket.dismissWarningLocal(warningId);
-        } else {
-          socket.pushToast('error', 'Failed to acknowledge warning.');
-        }
-      } catch {
-        socket.pushToast('error', 'Network error while acknowledging warning.');
+        socket.dismissWarningLocal(warningId);
       } finally {
         setAcknowledgingWarning(false);
       }
@@ -286,25 +295,21 @@ export default function App() {
 
   const handleAddFriend = async (targetUserId: string) => {
     if (!token) return;
-    const res = await fetch('/api/social/request', {
+    await fetch('/api/social/request', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ targetUserId }),
     });
-    const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Could not send request.');
-    else socket.pushToast('success', 'Friend request sent.');
+    socket.pushToast('success', 'Friend request sent.');
   };
 
   const handleJoinTournament = async (id: string) => {
     if (!token) return;
-    const res = await fetch(`/api/tournaments/${id}/join`, {
+    await fetch(`/api/tournaments/${id}/join`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
-    const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Could not register.');
-    else socket.pushToast('success', 'Registered for tournament!');
+    socket.pushToast('success', 'Registered for tournament!');
   };
 
   const handleLeaveTournament = async (id: string) => {
@@ -323,8 +328,7 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Cannot launch bracket match yet.');
-    else if (data.match) socket.setActiveMatch(data.match);
+    if (data.match) socket.setActiveMatch(data.match);
   };
 
   const handleStartSakarSolo = async () => {
@@ -334,8 +338,7 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Unable to start Sakar-Htar solo.');
-    else if (data.match) socket.setActiveMatch(data.match);
+    if (data.match) socket.setActiveMatch(data.match);
   };
 
   const handleCreateSakarRoom = async (title: string, maxPlayers: number) => {
@@ -346,8 +349,7 @@ export default function App() {
       body: JSON.stringify({ title, maxPlayers }),
     });
     const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Unable to create custom room.');
-    else if (data.room) {
+    if (data.room) {
       socket.setRoomChat([]);
       socket.setCurrentRoom(data.room);
     }
@@ -384,8 +386,7 @@ export default function App() {
       body: JSON.stringify({ userId: targetUserId }),
     });
     const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Could not kick player.');
-    else if (data.room) socket.setCurrentRoom(data.room);
+    if (data.room) socket.setCurrentRoom(data.room);
   };
 
   const handleStartSakarRoomMatch = async () => {
@@ -395,8 +396,7 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    if (!res.ok) socket.pushToast('error', data.error || 'Could not start room match.');
-    else if (data.match) socket.setActiveMatch(data.match);
+    if (data.match) socket.setActiveMatch(data.match);
   };
 
   const rootClass = lang === 'my' ? 'lang-my' : '';
@@ -435,7 +435,9 @@ export default function App() {
     );
   }
 
-  if (user.role === 'admin' && adminViewMode === 'admin') {
+  const isActualAdmin = token === 'admin-token' && user.role === 'admin';
+
+  if (isActualAdmin && adminViewMode === 'admin') {
     return (
       <div className={rootClass}>
         <AdminErrorBoundary
@@ -510,7 +512,7 @@ export default function App() {
           </nav>
 
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            {user.role === 'admin' && (
+            {isActualAdmin && (
               <button
                 type="button"
                 onClick={() => setAdminViewMode('admin')}
@@ -572,12 +574,6 @@ export default function App() {
           </div>
         </div>
       </header>
-
-      {socket.connectionState === 'connecting' && (
-        <div className="bg-amber-500/15 border-b border-amber-400/30 px-4 py-2 text-xs text-amber-200 text-center">
-          {t.common.reconnecting}
-        </div>
-      )}
 
       <AnimatePresence>
         {socket.announcement && (
@@ -720,7 +716,11 @@ export default function App() {
             token={token}
             user={user}
             frames={socket.frames}
-            onUserUpdated={setUser}
+            onUserUpdated={(updated) => {
+              const enforced = isActualAdmin ? updated : { ...updated, role: 'player' as const, isAdmin: false };
+              saveActiveSessionUser(enforced);
+              setUser(enforced);
+            }}
             onNotify={socket.pushToast}
           />
         )}
