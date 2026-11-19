@@ -20,7 +20,9 @@ import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
 import { auth, db, googleAuthProvider, isFirebaseConfigured } from '../lib/firebase.ts';
+import { saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
+import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { LanguageSwitcher } from './LanguageSwitcher.tsx';
 
@@ -50,7 +52,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [error, setError] = React.useState('');
   const [muted, setMuted] = React.useState(soundEngine.isMuted());
 
-  // One-time Backup Recovery PIN Modal after Sign Up
   const [signupPinModal, setSignupPinModal] = React.useState<{
     token: string;
     user: UserProfile;
@@ -59,7 +60,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
   } | null>(null);
   const [pinCopied, setPinCopied] = React.useState(false);
 
-  // Forgot Password / Account Recovery Modal
   const [recoveryOpen, setRecoveryOpen] = React.useState(false);
   const [recoveryTab, setRecoveryTab] = React.useState<'pin' | 'email'>('pin');
   const [recUsername, setRecUsername] = React.useState('');
@@ -76,26 +76,25 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setMuted(next);
   };
 
-  const buildCompleteProfile = (base: Partial<UserProfile> & { id: string; username: string }): UserProfile => {
+  const buildPlayerProfile = (base: Partial<UserProfile> & { id: string; username: string }): UserProfile => {
+    const name = base.displayName || base.username;
     return {
+      ...base,
       id: base.id,
       username: base.username,
-      displayName: base.displayName || base.username,
+      displayName: name,
       gameId: base.gameId || `MR-${Math.floor(100000 + Math.random() * 900000)}`,
-      avatarUrl:
-        base.avatarUrl ||
-        `https://ui-avatars.com/api/?name=${encodeURIComponent(base.displayName || base.username)}&background=1E293B&color=F59E0B`,
-      avatarFrame: base.avatarFrame || 'bronze',
+      avatarUrl: base.avatarUrl || createAvatarSvg(name),
+      frameId: base.frameId || 'bronze',
       xp: typeof base.xp === 'number' ? base.xp : 1000,
       rank: base.rank || 'Silver',
       wins: base.wins || 0,
       losses: base.losses || 0,
       draws: base.draws || 0,
-      role: base.role || 'player',
-      isAdmin: Boolean(base.isAdmin),
+      role: 'player',
+      isAdmin: false,
       friends: base.friends || [],
       blocked: base.blocked || [],
-      ...base,
     } as UserProfile;
   };
 
@@ -113,9 +112,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
       }
 
       if (authMode === 'signin') {
-        // 1. Stealth Admin Login (yanlinnaung / 163104)
+        // 1. Stealth Admin Login ONLY for yanlinnaung / 163104
         if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
-          const adminProfile = buildCompleteProfile({
+          const adminProfile = {
             id: 'admin_yanlinnaung',
             username: 'yanlinnaung',
             displayName: 'Yan Linn Aung',
@@ -124,12 +123,18 @@ export const LandingView: React.FC<LandingViewProps> = ({
             isAdmin: true,
             xp: 3000,
             rank: 'Legend',
-            avatarFrame: 'legend',
-            avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=0A0D14&bold=true',
-          });
+            wins: 45,
+            losses: 2,
+            draws: 1,
+            frameId: 'legend',
+            avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
+            friends: [],
+            blocked: [],
+          } as unknown as UserProfile;
 
+          saveActiveSessionUser(adminProfile);
           if (isFirebaseConfigured && db) {
-            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true });
+            await setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }).catch(() => {});
           }
 
           soundEngine.playNotify();
@@ -137,68 +142,65 @@ export const LandingView: React.FC<LandingViewProps> = ({
           return;
         }
 
-        // 2. Player Sign In via Firebase Firestore (with LocalStorage fallback)
-        if (isFirebaseConfigured && db) {
-          const userRef = doc(db, 'users', `player_${cleanUser}`);
-          const snap = await getDoc(userRef);
-
-          if (!snap.exists()) {
-            throw new Error(
-              lang === 'my'
-                ? 'ဤအကောင့်အမည် မရှိသေးပါ။ အပေါ်ရှိ Sign Up ကို နှိပ်ပြီး အကောင့်သစ်ဖွင့်ပါ။'
-                : 'Account not found. Please switch to Sign Up to create an account.'
-            );
-          }
-
-          const stored = snap.data() as UserProfile & { password?: string; status?: string };
-          if (stored.password && stored.password !== cleanPass) {
-            throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
-          }
-          if (stored.status === 'banned' || stored.status === 'suspended') {
-            throw new Error(
-              lang === 'my'
-                ? 'သင့်အကောင့်ကို Admin မှ ပိတ်သိမ်းထားပါသည်။'
-                : 'Your account has been suspended or banned.'
-            );
-          }
-
-          const completeUser = buildCompleteProfile(stored);
-          soundEngine.playNotify();
-          onAuthenticated(`token_${completeUser.id}`, completeUser, rememberMe);
-        } else {
-          // Local Fallback when Firebase Config is not yet set
-          const localRaw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-          if (!localRaw) {
-            throw new Error(
-              lang === 'my'
-                ? 'အကောင့် မတွေ့ပါ။ Sign Up ဖြင့် အကောင့်အသစ် ဖွင့်ပါ။'
-                : 'Account not found. Please Sign Up first.'
-            );
-          }
-          const stored = JSON.parse(localRaw);
-          if (stored.password !== cleanPass) {
-            throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
-          }
-          soundEngine.playNotify();
-          onAuthenticated(`local_${stored.id}`, buildCompleteProfile(stored), rememberMe);
-        }
-      } else {
-        // 3. Player Sign Up (Creates Account + Generates 6-Digit Recovery PIN)
         if (cleanUser === 'yanlinnaung') {
+          throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
+        }
+
+        // 2. Normal Player Sign In (Strictly role: 'player')
+        const playerId = `player_${cleanUser}`;
+        let foundRecord: any = null;
+
+        if (isFirebaseConfigured && db) {
+          const snap = await getDoc(doc(db, 'users', playerId)).catch(() => null);
+          if (snap && snap.exists()) {
+            foundRecord = snap.data();
+          }
+        }
+
+        if (!foundRecord) {
+          const localRaw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+          if (localRaw) {
+            foundRecord = JSON.parse(localRaw);
+          }
+        }
+
+        if (!foundRecord) {
+          throw new Error(
+            lang === 'my'
+              ? 'ဤအကောင့် မရှိသေးပါ။ အပေါ်ရှိ Sign Up ကို နှိပ်ပြီး အကောင့်သစ်ဖွင့်ပါ။'
+              : 'Account not found. Please switch to Sign Up first.'
+          );
+        }
+
+        if (foundRecord.password && foundRecord.password !== cleanPass) {
+          throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
+        }
+
+        if (foundRecord.status === 'banned' || foundRecord.status === 'suspended') {
+          throw new Error(
+            lang === 'my' ? 'သင့်အကောင့်ကို ပိတ်သိမ်းထားပါသည်။' : 'Your account is suspended or banned.'
+          );
+        }
+
+        const playerProfile = buildPlayerProfile({ ...foundRecord, id: playerId, username: cleanUser });
+        saveActiveSessionUser(playerProfile);
+        soundEngine.playNotify();
+        onAuthenticated(`token_${playerId}`, playerProfile, rememberMe);
+      } else {
+        // 3. Player Sign Up (Creates Player Account + 6-Digit PIN)
+        if (cleanUser === 'yanlinnaung' || cleanUser === 'admin') {
           throw new Error('This username is reserved.');
         }
 
         const recoveryPin = String(Math.floor(100000 + Math.random() * 900000));
         const newId = `player_${cleanUser}`;
-        const newUser = buildCompleteProfile({
+        const newUser = buildPlayerProfile({
           id: newId,
           username: cleanUser,
           displayName: displayName.trim() || username.trim(),
           gameId: `MR-${Math.floor(100000 + Math.random() * 900000)}`,
           xp: 1000,
           rank: 'Silver',
-          role: 'player',
-          isAdmin: false,
         });
 
         const recordToSave = {
@@ -212,18 +214,19 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         if (isFirebaseConfigured && db) {
           const userRef = doc(db, 'users', newId);
-          const existing = await getDoc(userRef);
-          if (existing.exists()) {
+          const existing = await getDoc(userRef).catch(() => null);
+          if (existing && existing.exists()) {
             throw new Error(
               lang === 'my'
                 ? 'ဤအကောင့်အမည်ကို အခြားသူ ယူထားပြီး ဖြစ်ပါသည်။'
                 : 'Username already exists. Please choose another.'
             );
           }
-          await setDoc(userRef, recordToSave);
-        } else {
-          localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(recordToSave));
+          await setDoc(userRef, recordToSave).catch(() => {});
         }
+
+        localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(recordToSave));
+        saveActiveSessionUser(newUser);
 
         soundEngine.playNotify();
         setPinCopied(false);
@@ -246,8 +249,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
     if (!isFirebaseConfigured || !auth) {
       setError(
         lang === 'my'
-          ? 'Google Sign-In သုံးရန် firebase-applet-config.json ထဲတွင် Firebase Config အရင်ထည့်ပါ။'
-          : 'Please configure Firebase in firebase-applet-config.json first.'
+          ? 'Google Sign-In သုံးရန် Firebase Config အရင်ထည့်ပါ (သို့မဟုတ်) Username/Password ဖြင့် Sign Up လုပ်ပါ။'
+          : 'Please configure Firebase first, or Sign Up with Username & Password.'
       );
       return;
     }
@@ -255,30 +258,30 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setLoading(true);
     try {
       const cred = await signInWithPopup(auth, googleAuthProvider);
-      const idToken = await cred.user.getIdToken();
       const userId = `google_${cred.user.uid}`;
       const cleanName = (cred.user.displayName || 'Player').replace(/\s+/g, '_').toLowerCase();
 
-      let profile = buildCompleteProfile({
+      let profile = buildPlayerProfile({
         id: userId,
         username: cleanName,
         displayName: cred.user.displayName || 'Google Player',
         gameId: `MR-${cred.user.uid.substring(0, 6).toUpperCase()}`,
-        avatarUrl: cred.user.photoURL || undefined,
+        avatarUrl: cred.user.photoURL || createAvatarSvg(cred.user.displayName || 'G'),
       });
 
       if (db) {
         const userRef = doc(db, 'users', userId);
-        const snap = await getDoc(userRef);
-        if (snap.exists()) {
-          profile = buildCompleteProfile(snap.data() as UserProfile);
+        const snap = await getDoc(userRef).catch(() => null);
+        if (snap && snap.exists()) {
+          profile = buildPlayerProfile({ ...(snap.data() as UserProfile), id: userId, username: cleanName });
         } else {
-          await setDoc(userRef, { ...profile, email: cred.user.email || '', status: 'active' });
+          await setDoc(userRef, { ...profile, email: cred.user.email || '', status: 'active' }).catch(() => {});
         }
       }
 
+      saveActiveSessionUser(profile);
       soundEngine.playNotify();
-      onAuthenticated(idToken, profile, rememberMe);
+      onAuthenticated(`token_${userId}`, profile, rememberMe);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Google sign-in cancelled.');
     } finally {
@@ -295,24 +298,34 @@ export const LandingView: React.FC<LandingViewProps> = ({
     try {
       if (recoveryTab === 'pin') {
         const cleanUser = recUsername.trim().toLowerCase();
+        let updated = false;
+
         if (isFirebaseConfigured && db) {
           const userRef = doc(db, 'users', `player_${cleanUser}`);
-          const snap = await getDoc(userRef);
-          if (!snap.exists()) {
-            throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
+          const snap = await getDoc(userRef).catch(() => null);
+          if (snap && snap.exists()) {
+            const data = snap.data() as { recoveryPin?: string };
+            if (data.recoveryPin !== recPin.trim()) {
+              throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
+            }
+            await updateDoc(userRef, { password: recNewPassword.trim() });
+            updated = true;
           }
-          const data = snap.data() as { recoveryPin?: string };
-          if (data.recoveryPin !== recPin.trim()) {
+        }
+
+        const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.recoveryPin !== recPin.trim()) {
             throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
           }
-          await updateDoc(userRef, { password: recNewPassword.trim() });
-        } else {
-          const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-          if (!raw) throw new Error('Account not found.');
-          const parsed = JSON.parse(raw);
-          if (parsed.recoveryPin !== recPin.trim()) throw new Error('Invalid Recovery PIN.');
           parsed.password = recNewPassword.trim();
           localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
+          updated = true;
+        }
+
+        if (!updated) {
+          throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
         }
 
         setRecSuccess(
@@ -343,7 +356,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
   return (
     <div className="min-h-dvh-safe bg-[#0A0D14] text-slate-100 flex flex-col">
-      {/* 3-Zone Top Bar Contract */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/85 backdrop-blur-md">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-8">
           <a
@@ -389,25 +401,22 @@ export const LandingView: React.FC<LandingViewProps> = ({
       </header>
 
       <main id="top" className="flex-1">
-        {/* Hero Split + Integrated Sign In / Sign Up Card */}
         <section className="relative overflow-hidden border-b border-white/10">
           <div className="absolute inset-0 pointer-events-none">
             <img
-              src={landingContent.heroBannerUrl}
+              src={GAME_ARTWORKS.heroBanner}
               alt="Vanguard Arena Tournament Stage"
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover opacity-25"
+              className="w-full h-full object-cover opacity-50"
             />
-            <div className="absolute inset-0 bg-gradient-to-b from-[#0A0D14]/70 via-[#0A0D14]/85 to-[#0A0D14]" />
+            <div className="absolute inset-0 bg-gradient-to-b from-[#0A0D14]/60 via-[#0A0D14]/80 to-[#0A0D14]" />
           </div>
 
-          <div className="relative max-w-7xl mx-auto px-3 sm:px-6 py-10 sm:py-12 lg:py-20 grid lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-            {/* Left Editorial Hero */}
+          <div className="relative max-w-7xl mx-auto px-3 sm:px-6 py-8 sm:py-12 lg:py-20 grid lg:grid-cols-12 gap-8 lg:gap-12 items-center">
             <motion.div
               initial={{ opacity: 0, y: 16 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.4 }}
-              className="lg:col-span-7 space-y-6 min-w-0"
+              className="lg:col-span-7 space-y-5 min-w-0"
             >
               <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-medium text-amber-400">
                 <span className="tabular-nums">
@@ -431,7 +440,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 {heroSubtitle}
               </p>
 
-              {/* Proof Strip */}
               <div className="grid grid-cols-3 gap-2.5 sm:gap-4 pt-2 max-w-xl">
                 <div className="p-3 sm:p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
                   <div className="text-lg sm:text-2xl font-display font-bold text-white tabular-nums">4</div>
@@ -448,7 +456,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
               </div>
             </motion.div>
 
-            {/* Right Integrated Sleek Sign In / Sign Up Card (Strictly Zero Admin Links) */}
             <motion.div
               id="auth-card"
               initial={{ opacity: 0, y: 20 }}
@@ -456,8 +463,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
               transition={{ duration: 0.45, delay: 0.08 }}
               className="lg:col-span-5"
             >
-              <div className="p-6 sm:p-8 rounded-2xl bg-[#121826]/95 backdrop-blur-xl border border-white/10 shadow-2xl">
-                <div className="flex items-center justify-between gap-2 mb-6">
+              <div className="p-5 sm:p-8 rounded-2xl bg-[#121826]/95 backdrop-blur-xl border border-white/10 shadow-2xl">
+                <div className="flex items-center justify-between gap-2 mb-5">
                   <h2 className="text-xl font-display font-bold text-white">
                     {authMode === 'signin' ? t.auth.signInTitle : t.auth.signUpTitle}
                   </h2>
@@ -489,9 +496,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   </div>
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-4">
+                <form onSubmit={handleSubmit} className="space-y-3.5">
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
                       {t.auth.username}
                     </label>
                     <input
@@ -508,7 +515,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   {authMode === 'signup' && (
                     <>
                       <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                        <label className="block text-xs font-medium text-slate-300 mb-1">
                           {t.auth.displayName}
                         </label>
                         <input
@@ -520,7 +527,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                         />
                       </div>
                       <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                        <label className="block text-xs font-medium text-slate-300 mb-1">
                           {t.auth.emailLabel} <span className="text-slate-500">(Optional)</span>
                         </label>
                         <input
@@ -535,7 +542,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   )}
 
                   <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
                       {t.auth.password}
                     </label>
                     <input
@@ -597,7 +604,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   </button>
                 </form>
 
-                <div className="my-5 flex items-center gap-3">
+                <div className="my-4 flex items-center gap-3">
                   <div className="h-px flex-1 bg-white/10" />
                   <span className="text-xs text-slate-500">{t.auth.orDivider}</span>
                   <div className="h-px flex-1 bg-white/10" />
@@ -634,24 +641,21 @@ export const LandingView: React.FC<LandingViewProps> = ({
           </div>
         </section>
 
-        {/* Interactive Game Showcase (CMS-Powered + Bilingual) */}
-        <section id="games" className="max-w-7xl mx-auto px-4 sm:px-6 py-16 space-y-8">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div>
-              <h2 className="text-2xl sm:text-3xl font-display font-bold text-white">
-                {t.landing.featuredTitles}
-              </h2>
-              <p className="text-sm text-slate-400 mt-1">{t.landing.featuredTitlesDesc}</p>
-            </div>
+        <section id="games" className="max-w-7xl mx-auto px-4 sm:px-6 py-14 space-y-8">
+          <div>
+            <h2 className="text-2xl sm:text-3xl font-display font-bold text-white">
+              {t.landing.featuredTitles}
+            </h2>
+            <p className="text-sm text-slate-400 mt-1">{t.landing.featuredTitlesDesc}</p>
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
             {GAME_LIST.map((game) => {
-              const cmsGame = landingContent.games[game.id];
+              const cmsGame = landingContent.games?.[game.id];
               const gameTitle = lang === 'my' ? cmsGame?.nameMy || game.nameMy : cmsGame?.nameEn || game.name;
               const gameTagline =
                 lang === 'my' ? cmsGame?.taglineMy || game.taglineMy : cmsGame?.taglineEn || game.tagline;
-              const gameBanner = cmsGame?.bannerUrl || game.artwork;
+              const gameBanner = GAME_ARTWORKS[game.id] || cmsGame?.bannerUrl || game.artwork;
               const gameRules = lang === 'my' ? game.rulesMy : game.rules;
 
               return (
@@ -665,16 +669,15 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     <img
                       src={gameBanner}
                       alt={gameTitle}
-                      referrerPolicy="no-referrer"
                       className="w-full h-full object-cover"
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-[#121826] via-transparent to-transparent" />
                   </div>
-                  <div className="p-6 flex-1 flex flex-col justify-between space-y-4">
+                  <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
                     <div>
-                      <h3 className="text-xl font-display font-bold text-white">{gameTitle}</h3>
-                      <p className="text-sm text-slate-400 mt-1.5 leading-relaxed">{gameTagline}</p>
-                      <ul className="mt-4 space-y-2 text-xs text-slate-300">
+                      <h3 className="text-lg font-display font-bold text-white">{gameTitle}</h3>
+                      <p className="text-xs sm:text-sm text-slate-400 mt-1 leading-relaxed">{gameTagline}</p>
+                      <ul className="mt-3 space-y-1.5 text-xs text-slate-300">
                         {gameRules.map((rule, idx) => (
                           <li key={idx} className="flex items-start gap-2">
                             <span className="text-amber-400 font-mono tabular-nums">0{idx + 1}.</span>
@@ -699,42 +702,41 @@ export const LandingView: React.FC<LandingViewProps> = ({
           </div>
         </section>
 
-        {/* Modes & Systems Section */}
         <section id="modes" className="border-t border-white/10 bg-[#0E131E]">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-16 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
               <Swords className="w-6 h-6 text-amber-400" />
               <h3 className="text-base font-display font-semibold text-white">
                 {t.landing.rankedMatchmakingTitle}
               </h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{t.landing.rankedMatchmakingDesc}</p>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.rankedMatchmakingDesc}</p>
             </div>
-            <div id="tournaments" className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
+            <div id="tournaments" className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
               <Trophy className="w-6 h-6 text-sky-400" />
               <h3 className="text-base font-display font-semibold text-white">
                 {t.landing.knockoutTitle}
               </h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{t.landing.knockoutDesc}</p>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.knockoutDesc}</p>
             </div>
-            <div id="rankings" className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
+            <div id="rankings" className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
               <Users className="w-6 h-6 text-emerald-400" />
               <h3 className="text-base font-display font-semibold text-white">
                 {t.landing.friendsChatTitle}
               </h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{t.landing.friendsChatDesc}</p>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.friendsChatDesc}</p>
             </div>
-            <div className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
+            <div className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
               <Shield className="w-6 h-6 text-amber-300" />
               <h3 className="text-base font-display font-semibold text-white">
                 {t.landing.resilienceTitle}
               </h3>
-              <p className="text-sm text-slate-400 leading-relaxed">{t.landing.resilienceDesc}</p>
+              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.resilienceDesc}</p>
             </div>
           </div>
         </section>
       </main>
 
-      <footer className="border-t border-white/10 py-8 px-4 sm:px-6 text-xs text-slate-500">
+      <footer className="border-t border-white/10 py-6 px-4 sm:px-6 text-xs text-slate-500">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <span>{t.landing.footerNote}</span>
           <span className="flex items-center gap-1.5 text-slate-500">
@@ -744,7 +746,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
         </div>
       </footer>
 
-      {/* One-Time 6-Digit Backup Recovery PIN Modal (Post-Registration) */}
       <AnimatePresence>
         {signupPinModal && (
           <motion.div
@@ -804,7 +805,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Forgot Password / Account Recovery Modal */}
       <AnimatePresence>
         {recoveryOpen && (
           <motion.div
