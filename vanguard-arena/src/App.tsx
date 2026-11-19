@@ -11,6 +11,7 @@ import {
   Gamepad2,
   LogOut,
   Megaphone,
+  RotateCcw,
   ShieldAlert,
   Swords,
   Trophy,
@@ -50,6 +51,48 @@ const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
 );
 
+class GlobalErrorBoundary extends React.Component<
+  { children: React.ReactNode },
+  { hasError: boolean; message: string }
+> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error?.message || 'Unexpected application error' };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="min-h-dvh-safe cyber-bg text-white flex items-center justify-center p-4">
+          <div className="max-w-sm w-full cyber-panel rounded-2xl border border-amber-500/40 p-6 text-center space-y-4">
+            <ShieldAlert className="w-10 h-10 text-amber-400 mx-auto" />
+            <h2 className="text-base font-bold">Vanguard Auto-Recovery</h2>
+            <p className="text-xs font-mono text-rose-300 break-words bg-[#070b14] p-2.5 rounded-xl">
+              {this.state.message}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('vanguard_token');
+                sessionStorage.removeItem('vanguard_token');
+                localStorage.removeItem(ACTIVE_USER_KEY);
+                window.location.reload();
+              }}
+              className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>ပြန်လည်စတင်မည် (Reset Session)</span>
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
 
 function readStoredToken(): string | null {
@@ -64,7 +107,7 @@ function clearStoredToken() {
   localStorage.removeItem(ACTIVE_USER_KEY);
 }
 
-export default function App() {
+function VanguardAppCore() {
   const [lang, setLang] = React.useState<Language>(() => {
     if (typeof window === 'undefined') return 'my';
     return localStorage.getItem('vanguard_lang') === 'en' ? 'en' : 'my';
@@ -113,35 +156,37 @@ export default function App() {
     setKickBanner(reason);
   }, []);
 
+  // Run initial bootstrap & session restore ONCE on mount (prevents overwriting fresh login state)
   React.useEffect(() => {
     let active = true;
     const init = async () => {
       try {
-        const bootRes = await fetch('/api/bootstrap');
-        if (bootRes.ok && active) {
+        const bootRes = await fetch('/api/bootstrap').catch(() => null);
+        if (bootRes?.ok && active) {
           const boot = await bootRes.json();
           setPublicOnlineCount(Number(boot.onlineCount || 1));
           if (boot.landingContent) {
             setPublicLandingContent(getPatchedLandingContent(boot.landingContent as LandingContent));
           }
         }
-        if (token) {
+        const initialToken = readStoredToken();
+        if (initialToken && active) {
           const saved = readActiveSessionUser();
-          if (saved && active) {
+          if (saved) {
             setUser(
-              token === 'admin-token'
+              initialToken === 'admin-token'
                 ? saved
                 : ({ ...saved, role: 'player', isAdmin: false } as UserProfile)
             );
           } else {
             const meRes = await fetch('/api/auth/me', {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (meRes.ok && active) {
+              headers: { Authorization: `Bearer ${initialToken}` },
+            }).catch(() => null);
+            if (meRes?.ok && active) {
               const me = await meRes.json();
               if (me.user) {
                 setUser(
-                  token === 'admin-token'
+                  initialToken === 'admin-token'
                     ? me.user
                     : ({ ...me.user, role: 'player', isAdmin: false } as UserProfile)
                 );
@@ -160,7 +205,7 @@ export default function App() {
     return () => {
       active = false;
     };
-  }, [token]);
+  }, []);
 
   const socket = useArenaSocket({
     token: user ? token : null,
@@ -177,6 +222,34 @@ export default function App() {
     ),
     onKicked: handleKicked,
   });
+
+  const suspendedUntilMs = user?.suspendedUntil ? Date.parse(user.suspendedUntil) : 0;
+
+  React.useEffect(() => {
+    if (!suspendedUntilMs || suspendedUntilMs <= Date.now()) return;
+    setNowTs(Date.now());
+    const id = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [suspendedUntilMs]);
+
+  const handleAcknowledgeWarning = React.useCallback(
+    async (warningId: string) => {
+      setAcknowledgingWarning(true);
+      try {
+        await socket.dismissWarningLocal(warningId);
+      } finally {
+        setAcknowledgingWarning(false);
+      }
+    },
+    [socket]
+  );
+
+  // ALWAYS declare all hooks (useMemo) BEFORE any conditional early return!
+  const mergedLeaderboard = React.useMemo(() => {
+    if (!user) return socket.leaderboard;
+    const exists = socket.leaderboard.some((u) => u.id === user.id);
+    return exists ? socket.leaderboard : [...socket.leaderboard, user];
+  }, [socket.leaderboard, user]);
 
   const handleAuthenticated = (nextToken: string, nextUser: UserProfile, rememberMe: boolean) => {
     clearStoredToken();
@@ -204,27 +277,6 @@ export default function App() {
     soundEngine.setMuted(next);
     setMuted(next);
   };
-
-  const suspendedUntilMs = user?.suspendedUntil ? Date.parse(user.suspendedUntil) : 0;
-
-  React.useEffect(() => {
-    if (!suspendedUntilMs || suspendedUntilMs <= Date.now()) return;
-    setNowTs(Date.now());
-    const id = setInterval(() => setNowTs(Date.now()), 1000);
-    return () => clearInterval(id);
-  }, [suspendedUntilMs]);
-
-  const handleAcknowledgeWarning = React.useCallback(
-    async (warningId: string) => {
-      setAcknowledgingWarning(true);
-      try {
-        await socket.dismissWarningLocal(warningId);
-      } finally {
-        setAcknowledgingWarning(false);
-      }
-    },
-    [socket]
-  );
 
   const handleStartBot = async (
     gameType: GameType,
@@ -396,12 +448,6 @@ export default function App() {
     { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
   ];
 
-  // Ensure current user is ALWAYS included in the leaderboard list
-  const mergedLeaderboard = React.useMemo(() => {
-    const exists = socket.leaderboard.some((u) => u.id === user.id);
-    return exists ? socket.leaderboard : [...socket.leaderboard, user];
-  }, [socket.leaderboard, user]);
-
   return (
     <div
       className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
@@ -453,7 +499,6 @@ export default function App() {
               </button>
             )}
 
-            {/* Real-Time Notification Bell (🔔) for Admin Broadcasts & Messages */}
             <button
               type="button"
               onClick={() => setNotiDrawerOpen((v) => !v)}
@@ -509,7 +554,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Live Admin Announcement Banner */}
       <AnimatePresence>
         {socket.announcement && (
           <motion.div
@@ -547,7 +591,6 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Content */}
       <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-visible">
         {socket.activeMatch ? (
           <MatchArena
@@ -650,7 +693,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Notification Inbox Drawer */}
       <AnimatePresence>
         {notiDrawerOpen && (
           <motion.div
@@ -704,7 +746,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* Mobile Bottom Nav */}
       {!socket.activeMatch && (
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
           <div className="grid grid-cols-5 h-16 items-center">
@@ -792,7 +833,6 @@ export default function App() {
         />
       )}
 
-      {/* Instant Real-Time Popup Modal when Admin Sends a Notification or Warning */}
       {socket.pendingWarnings.length > 0 && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/60 p-6 space-y-4 shadow-2xl">
@@ -824,6 +864,14 @@ export default function App() {
 
       <ToastStack toasts={socket.toasts} />
     </div>
+  );
+}
+
+export default function App() {
+  return (
+    <GlobalErrorBoundary>
+      <VanguardAppCore />
+    </GlobalErrorBoundary>
   );
 }
 
