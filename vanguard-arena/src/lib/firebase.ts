@@ -1,6 +1,6 @@
 import { initializeApp, getApps, type FirebaseApp } from 'firebase/app';
 import { getAuth, GoogleAuthProvider, type Auth } from 'firebase/auth';
-import { getFirestore, type Firestore } from 'firebase/firestore';
+import { getFirestore, initializeFirestore, type Firestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 let app: FirebaseApp | null = null;
@@ -11,22 +11,37 @@ const googleAuthProvider = new GoogleAuthProvider();
 
 const cfg = (firebaseConfig || {}) as Record<string, any>;
 
-export const firebaseProjectId: string = String(cfg.projectId || 'arena-25951');
+export const firebaseProjectId: string = String(cfg.projectId || '');
 
 export const isFirebaseConfigured = Boolean(
   cfg &&
     cfg.apiKey &&
     typeof cfg.apiKey === 'string' &&
     cfg.apiKey.length > 10 &&
-    !cfg.apiKey.includes('AIzaSyDVpL90m8SwxNbzg2OWwx2t-Mc4HkWNd3M') &&
-    !cfg.apiKey.includes('AIzaSyDVpL90m8SwxNbzg2OWwx2t-Mc4HkWNd3M') &&
+    !cfg.apiKey.includes('သင့်_') &&
+    !cfg.apiKey.includes('YOUR_') &&
     cfg.projectId
 );
 
 if (isFirebaseConfigured) {
   try {
     app = getApps().length === 0 ? initializeApp(cfg) : getApps()[0];
-    db = getFirestore(app);
+    const customDbId =
+      typeof cfg.firestoreDatabaseId === 'string' &&
+      cfg.firestoreDatabaseId.trim() !== '' &&
+      cfg.firestoreDatabaseId !== '(default)'
+        ? cfg.firestoreDatabaseId.trim()
+        : undefined;
+
+    // Force Long Polling so Firestore never hangs on restricted ISPs, mobile networks, or VPNs
+    try {
+      db = customDbId
+        ? initializeFirestore(app, { experimentalForceLongPolling: true }, customDbId)
+        : initializeFirestore(app, { experimentalForceLongPolling: true });
+    } catch {
+      db = customDbId ? getFirestore(app, customDbId) : getFirestore(app);
+    }
+
     auth = getAuth(app);
   } catch (error: any) {
     firebaseInitError = error?.message || 'Firebase initialization failed';
@@ -37,7 +52,7 @@ if (isFirebaseConfigured) {
 }
 
 /**
- * Recursively removes undefined values because Firestore rejects any document containing undefined.
+ * Recursively strips undefined values because Firestore rejects documents with undefined fields.
  */
 export function stripUndefined<T>(input: T): T {
   if (input === null || input === undefined) return input;
@@ -54,6 +69,26 @@ export function stripUndefined<T>(input: T): T {
     return cleaned as T;
   }
   return input;
+}
+
+/**
+ * Prevents Firestore requests from hanging indefinitely on slow or blocked connections.
+ */
+export function withTimeout<T>(promise: Promise<T>, ms = 5000): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error('CLOUD_TIMEOUT'));
+    }, ms);
+    promise
+      .then((val) => {
+        window.clearTimeout(timer);
+        resolve(val);
+      })
+      .catch((err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      });
+  });
 }
 
 export { app, db, auth, googleAuthProvider, firebaseInitError };
