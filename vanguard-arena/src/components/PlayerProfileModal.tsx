@@ -1,53 +1,27 @@
 import React from 'react';
 import { motion } from 'motion/react';
 import {
-  AlertTriangle,
+  Award,
   Ban,
   Check,
-  Clock,
   Copy,
-  Crown,
   Flag,
-  Gift,
   MessageSquare,
   Send,
   ShieldCheck,
-  Sparkles,
   Swords,
-  UserCheck,
   UserMinus,
   UserPlus,
   X,
 } from 'lucide-react';
-import {
-  arrayRemove,
-  arrayUnion,
-  collection,
-  deleteDoc,
-  doc,
-  getDocs,
-  onSnapshot,
-  setDoc,
-} from 'firebase/firestore';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import { readServerlessStore, saveActiveSessionUser } from '../lib/serverlessApi.ts';
-import type { GameType, Language, UserProfile } from '../types.ts';
+import type { GameType, Language, PlayerGift, UserProfile } from '../types.ts';
+import { resolveBannerImage } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import {
-  getBannerTheme,
-  getGiftMeta,
-  getPlayerTitle,
-  PremiumGiftSvg,
-} from './PremiumIcons.tsx';
-
-export const REPORT_CATEGORIES = [
-  { id: 'cheating', labelMy: 'ခိုးကစားခြင်း / Cheat & Hack', labelEn: 'Cheating / Hacking' },
-  { id: 'harassment', labelMy: 'ဆဲဆိုရိုင်းစိုင်းခြင်း / Harassment', labelEn: 'Abusive Language / Harassment' },
-  { id: 'spam', labelMy: 'Spam သို့မဟုတ် လိမ်လည်မှု (Scam)', labelEn: 'Spam or Scam' },
-  { id: 'griefing', labelMy: 'ပွဲဖျက်ခြင်း / AFK & Throwing', labelEn: 'AFK / Match Throwing' },
-  { id: 'inappropriate', labelMy: 'မသင့်လျော်သော Profile / အမည်', labelEn: 'Inappropriate Profile / Name' },
-] as const;
+import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 
 interface PlayerProfileModalProps {
   lang: Language;
@@ -81,57 +55,39 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     const store = readServerlessStore();
     return store.users[userId] || null;
   });
-
-  const [requestStatus, setRequestStatus] = React.useState<'none' | 'outgoing' | 'incoming'>('none');
-  const [busyAction, setBusyAction] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState(false);
   const [dmText, setDmText] = React.useState('');
   const [sendingDm, setSendingDm] = React.useState(false);
-
+  const [duelPickerOpen, setDuelPickerOpen] = React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
-  const [reportCategory, setReportCategory] = React.useState<string>('harassment');
-  const [reportDetail, setReportDetail] = React.useState('');
-  const [submittingReport, setSubmittingReport] = React.useState(false);
+  const [reportReason, setReportReason] = React.useState('');
 
   React.useEffect(() => {
-    if (!isFirebaseConfigured || !db) return;
-
-    const unsubUser = onSnapshot(doc(db, 'users', userId), (snap) => {
-      if (snap.exists()) setTargetUser(snap.data());
-    });
-
-    const outId = `${currentUser.id}__${userId}`;
-    const inId = `${userId}__${currentUser.id}`;
-
-    const unsubOut = onSnapshot(doc(db, 'friendRequests', outId), (snap) => {
-      if (snap.exists() && snap.data()?.status === 'pending') {
-        setRequestStatus('outgoing');
-      } else {
-        setRequestStatus((prev) => (prev === 'outgoing' ? 'none' : prev));
+    let active = true;
+    const loadLatest = async () => {
+      if (isFirebaseConfigured && db) {
+        const snap = await getDoc(doc(db, 'users', userId)).catch(() => null);
+        if (snap && snap.exists() && active) {
+          setTargetUser(snap.data());
+        }
       }
-    });
-
-    const unsubIn = onSnapshot(doc(db, 'friendRequests', inId), (snap) => {
-      if (snap.exists() && snap.data()?.status === 'pending') {
-        setRequestStatus('incoming');
-      } else {
-        setRequestStatus((prev) => (prev === 'incoming' ? 'none' : prev));
-      }
-    });
-
-    return () => {
-      unsubUser();
-      unsubOut();
-      unsubIn();
     };
-  }, [userId, currentUser.id]);
+    loadLatest();
+    return () => {
+      active = false;
+    };
+  }, [userId]);
 
   if (!targetUser) {
     return (
       <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
         <div className="cyber-panel rounded-2xl p-6 text-center space-y-3 max-w-xs w-full">
           <div className="text-xs text-slate-300">Loading player profile...</div>
-          <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl bg-white/10 text-xs text-white cursor-pointer">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-4 py-2 rounded-xl bg-white/10 text-xs text-white cursor-pointer"
+          >
             Close
           </button>
         </div>
@@ -145,152 +101,58 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const isFriend = friends.includes(targetUser.id);
   const isBlocked = blocked.includes(targetUser.id);
   const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 60000);
+  const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
+  const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts : [];
 
-  const bannerObj = getBannerTheme(targetUser.bannerTheme);
-  const titleObj = getPlayerTitle(targetUser.titleId);
-  const xp = Number(targetUser.xp || 1000);
-  const level = Math.max(1, Math.floor(xp / 150) + 1);
-  const winCount = Number(targetUser.wins || 0);
-  const lossCount = Number(targetUser.losses || 0);
-  const drawCount = Number(targetUser.draws || 0);
-  const totalGames = winCount + lossCount + drawCount;
-  const winRate = totalGames > 0 ? Math.round((winCount / totalGames) * 100) : 0;
-  const userGifts: any[] = Array.isArray(targetUser.gifts) ? targetUser.gifts : [];
+  const totalMatches = (targetUser.wins || 0) + (targetUser.losses || 0) + (targetUser.draws || 0);
+  const winRate = totalMatches > 0 ? Math.round(((targetUser.wins || 0) / totalMatches) * 100) : 0;
 
-  const handleSendFriendRequest = async () => {
-    if (busyAction || isBlocked) return;
-    setBusyAction(true);
-    try {
-      const reqId = `${currentUser.id}__${targetUser.id}`;
-      const payload = stripUndefined({
-        id: reqId,
-        fromUserId: currentUser.id,
-        fromName: currentUser.displayName,
-        fromGameId: currentUser.gameId,
-        fromAvatarUrl: currentUser.avatarUrl || '',
-        fromFrameId: currentUser.frameId || 'bronze',
-        toUserId: targetUser.id,
-        toName: targetUser.displayName,
-        toGameId: targetUser.gameId,
-        status: 'pending',
-        createdAtMs: Date.now(),
-      });
+  const persistMyRelations = async (nextFriends: string[], nextBlocked: string[], toastMsg: string) => {
+    const updated = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
+    saveActiveSessionUser(updated);
+    onUserUpdated?.(updated);
+    if (isFirebaseConfigured && db) {
+      await setDoc(
+        doc(db, 'users', currentUser.id),
+        stripUndefined({ friends: nextFriends, blocked: nextBlocked }),
+        { merge: true }
+      ).catch(() => {});
+    }
+    soundEngine.playClick();
+    onNotify?.('success', toastMsg);
+  };
 
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'friendRequests', reqId), payload);
-        const notiId = `freq_${Date.now()}_${Math.floor(Math.random() * 999)}`;
-        await setDoc(
-          doc(db, 'notifications', notiId),
-          stripUndefined({
-            id: notiId,
-            targetUserId: targetUser.id,
-            title: 'မိတ်ဆွေတောင်းဆိုမှု အသစ် (Friend Request)',
-            message: `${currentUser.displayName} (${currentUser.gameId}) မှ သင့်အား မိတ်ဆွေအဖြစ် တောင်းဆိုထားပါသည်။`,
-            type: 'message',
-            senderName: currentUser.displayName,
-            createdAtMs: Date.now(),
-            read: false,
-          })
-        ).catch(() => {});
-      }
-
-      setRequestStatus('outgoing');
-      soundEngine.playClick();
-      onNotify?.(
-        'success',
-        lang === 'my'
-          ? `${targetUser.displayName} ထံ Friend Request ပေးပို့ပြီးပါပြီ`
-          : `Friend request sent to ${targetUser.displayName}.`
+  const handleToggleFriend = () => {
+    if (isFriend) {
+      persistMyRelations(
+        friends.filter((id) => id !== targetUser.id),
+        blocked,
+        lang === 'my' ? 'မိတ်ဆွေစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။' : 'Removed from friends.'
       );
-    } finally {
-      setBusyAction(false);
+    } else {
+      persistMyRelations(
+        Array.from(new Set([...friends, targetUser.id])),
+        blocked.filter((id) => id !== targetUser.id),
+        lang === 'my'
+          ? `${targetUser.displayName} ကို မိတ်ဆွေအဖြစ် ထည့်သွင်းပြီးပါပြီ!`
+          : `Added ${targetUser.displayName} as friend!`
+      );
     }
   };
 
-  const handleCancelRequest = async () => {
-    if (busyAction) return;
-    setBusyAction(true);
-    try {
-      if (isFirebaseConfigured && db) {
-        await deleteDoc(doc(db, 'friendRequests', `${currentUser.id}__${targetUser.id}`)).catch(() => {});
-      }
-      setRequestStatus('none');
-      onNotify?.('info', lang === 'my' ? 'Friend Request ပြန်ရုပ်သိမ်းပြီးပါပြီ။' : 'Request cancelled.');
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
-  const handleAcceptRequest = async () => {
-    if (busyAction) return;
-    setBusyAction(true);
-    try {
-      const nextFriends = Array.from(new Set([...friends, targetUser.id]));
-      const updatedMe = { ...currentUser, friends: nextFriends };
-      saveActiveSessionUser(updatedMe);
-      onUserUpdated?.(updatedMe);
-
-      if (isFirebaseConfigured && db) {
-        await deleteDoc(doc(db, 'friendRequests', `${targetUser.id}__${currentUser.id}`)).catch(() => {});
-        await setDoc(doc(db, 'users', currentUser.id), { friends: arrayUnion(targetUser.id) }, { merge: true });
-        await setDoc(doc(db, 'users', targetUser.id), { friends: arrayUnion(currentUser.id) }, { merge: true });
-      }
-      setRequestStatus('none');
-      soundEngine.playNotify();
-      onNotify?.('success', lang === 'my' ? `${targetUser.displayName} နှင့် မိတ်ဆွေဖြစ်သွားပါပြီ!` : `Now friends!`);
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
-  const handleUnfriend = async () => {
-    if (busyAction) return;
-    setBusyAction(true);
-    try {
-      const nextFriends = friends.filter((id) => id !== targetUser.id);
-      const updatedMe = { ...currentUser, friends: nextFriends };
-      saveActiveSessionUser(updatedMe);
-      onUserUpdated?.(updatedMe);
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'users', currentUser.id), { friends: arrayRemove(targetUser.id) }, { merge: true });
-        await setDoc(doc(db, 'users', targetUser.id), { friends: arrayRemove(currentUser.id) }, { merge: true });
-      }
-      onNotify?.('info', lang === 'my' ? 'မိတ်ဆွေစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။' : 'Removed from friends.');
-    } finally {
-      setBusyAction(false);
-    }
-  };
-
-  const handleToggleBlock = async () => {
-    if (busyAction) return;
-    setBusyAction(true);
-    try {
-      if (isBlocked) {
-        const nextBlocked = blocked.filter((id) => id !== targetUser.id);
-        const updatedMe = { ...currentUser, blocked: nextBlocked };
-        saveActiveSessionUser(updatedMe);
-        onUserUpdated?.(updatedMe);
-        if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'users', currentUser.id), { blocked: nextBlocked }, { merge: true });
-        }
-        onNotify?.('success', lang === 'my' ? 'Block ဖြုတ်ပြီးပါပြီ။' : 'User unblocked.');
-      } else {
-        const nextFriends = friends.filter((id) => id !== targetUser.id);
-        const nextBlocked = Array.from(new Set([...blocked, targetUser.id]));
-        const updatedMe = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
-        saveActiveSessionUser(updatedMe);
-        onUserUpdated?.(updatedMe);
-        if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'users', currentUser.id), { friends: nextFriends, blocked: nextBlocked }, { merge: true });
-          await setDoc(doc(db, 'users', targetUser.id), { friends: arrayRemove(currentUser.id) }, { merge: true }).catch(() => {});
-          await deleteDoc(doc(db, 'friendRequests', `${currentUser.id}__${targetUser.id}`)).catch(() => {});
-          await deleteDoc(doc(db, 'friendRequests', `${targetUser.id}__${currentUser.id}`)).catch(() => {});
-        }
-        setRequestStatus('none');
-        onNotify?.('info', lang === 'my' ? `${targetUser.displayName} ကို Block လုပ်ပြီးပါပြီ။` : `Blocked ${targetUser.displayName}.`);
-      }
-    } finally {
-      setBusyAction(false);
+  const handleToggleBlock = () => {
+    if (isBlocked) {
+      persistMyRelations(
+        friends,
+        blocked.filter((id) => id !== targetUser.id),
+        lang === 'my' ? 'Block ဖြုတ်ပြီးပါပြီ။' : 'User unblocked.'
+      );
+    } else {
+      persistMyRelations(
+        friends.filter((id) => id !== targetUser.id),
+        Array.from(new Set([...blocked, targetUser.id])),
+        lang === 'my' ? `${targetUser.displayName} ကို Block လုပ်ပြီးပါပြီ။` : `Blocked ${targetUser.displayName}.`
+      );
     }
   };
 
@@ -330,87 +192,67 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
 
   const handleSubmitReport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reportDetail.trim()) return;
-    setSubmittingReport(true);
-    try {
-      if (isFirebaseConfigured && db) {
-        const existingSnap = await getDocs(collection(db, 'reports')).catch(() => null);
-        let hasPendingDuplicate = false;
-        existingSnap?.forEach((d) => {
-          const r = d.data();
-          if (r.reporterId === currentUser.id && r.targetUserId === targetUser.id && r.status === 'pending') {
-            hasPendingDuplicate = true;
-          }
-        });
-        if (hasPendingDuplicate) {
-          onNotify?.('error', lang === 'my' ? 'ဤကစားသမားအား တိုင်ကြားထားသော Report ကို Admin စစ်ဆေးနေဆဲဖြစ်ပါသည်။' : 'Pending report already exists.');
-          setReportOpen(false);
-          return;
-        }
-      }
-
-      const catObj = REPORT_CATEGORIES.find((c) => c.id === reportCategory) || REPORT_CATEGORIES[0];
-      const rid = `rep_${Date.now()}_${Math.floor(Math.random() * 999)}`;
-      const payload = stripUndefined({
-        id: rid,
-        reporterId: currentUser.id,
-        reporterName: currentUser.displayName,
-        reporterGameId: currentUser.gameId,
-        targetUserId: targetUser.id,
-        targetName: targetUser.displayName,
-        targetGameId: targetUser.gameId,
-        category: catObj.id,
-        categoryLabel: catObj.labelMy,
-        detail: reportDetail.trim(),
-        reason: `[${catObj.labelMy}] ${reportDetail.trim()}`,
-        status: 'pending',
-        createdAtMs: Date.now(),
-      });
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'reports', rid), payload);
-      }
-      setReportDetail('');
-      setReportOpen(false);
-      soundEngine.playNotify();
-      onNotify?.('success', lang === 'my' ? 'Report တိုင်ကြားမှု အောင်မြင်စွာ ပေးပို့ပြီးပါပြီ။' : 'Report submitted.');
-    } finally {
-      setSubmittingReport(false);
+    if (!reportReason.trim()) return;
+    const rid = `rep_${Date.now()}`;
+    const payload = stripUndefined({
+      id: rid,
+      reporterId: currentUser.id,
+      reporterName: currentUser.displayName,
+      targetUserId: targetUser.id,
+      targetName: targetUser.displayName,
+      reason: reportReason.trim(),
+      status: 'pending',
+      createdAtMs: Date.now(),
+    });
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'reports', rid), payload).catch(() => {});
     }
+    setReportReason('');
+    setReportOpen(false);
+    onNotify?.('info', lang === 'my' ? 'Admin ထံ Report ပေးပို့ပြီးပါပြီ။' : 'Report sent to Administrator.');
   };
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
       <motion.div
-        initial={{ scale: 0.94, opacity: 0, y: 14 }}
-        animate={{ scale: 1, opacity: 1, y: 0 }}
-        transition={{ type: 'spring', stiffness: 360, damping: 26 }}
-        className="w-full max-w-md rounded-3xl cyber-panel border border-amber-400/40 overflow-hidden shadow-2xl max-h-[90dvh] flex flex-col"
+        initial={{ scale: 0.93, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 overflow-hidden shadow-2xl max-h-[92dvh] flex flex-col"
       >
-        {/* PREMIUM CUSTOM COVER BANNER */}
-        <div className={`h-24 bg-gradient-to-r ${bannerObj.bg} relative shrink-0`}>
-          <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#fbbf24_1px,transparent_1px)] [background-size:16px_16px]" />
-          <div className="absolute top-3 left-3 flex items-center gap-1.5">
-            <span className="px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-md border border-amber-400/40 text-[10px] font-mono font-bold text-amber-300 flex items-center gap-1">
-              <Crown className="w-3 h-3" /> LV.{level} · {targetUser.rank || 'Silver'}
+        {/* Top Profile Banner Header */}
+        <div className="relative h-28 sm:h-32 w-full shrink-0 bg-[#070b14]">
+          <img src={bannerSrc} alt="Player Banner" className="w-full h-full object-cover" />
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-black/30" />
+
+          <div className="absolute top-2.5 left-3 flex items-center gap-1.5">
+            <span
+              className={`px-2 py-0.5 rounded-full text-[10px] font-bold backdrop-blur-md border ${
+                isOnline
+                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                  : 'bg-black/60 border-white/15 text-slate-300'
+              }`}
+            >
+              {isOnline ? '● LIVE ONLINE' : '○ OFFLINE'}
             </span>
-            {isFriend && (
-              <span className="px-2 py-0.5 rounded-full bg-emerald-500/25 border border-emerald-400/40 text-[10px] font-bold text-emerald-200">
-                Friend
+            {targetUser.favoriteGame && (
+              <span className="p-1 rounded-lg bg-black/60 border border-white/15" title="Favorite Game">
+                <GameBadgeIcon gameType={targetUser.favoriteGame} className="w-4 h-4" />
               </span>
             )}
           </div>
+
           <button
             type="button"
             onClick={onClose}
-            className="absolute top-3 right-3 w-8 h-8 rounded-full bg-black/55 hover:bg-black/80 text-white flex items-center justify-center cursor-pointer"
+            className="absolute top-2.5 right-2.5 w-8 h-8 rounded-lg bg-black/65 hover:bg-black/85 border border-white/15 text-slate-200 flex items-center justify-center cursor-pointer"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {/* SCROLLABLE BODY */}
-        <div className="px-5 pb-5 -mt-10 relative z-10 overflow-y-auto space-y-4">
-          {/* Overlapping Avatar + Title + Copy ID */}
+        {/* Scrollable Profile Body */}
+        <div className="px-5 pb-5 -mt-10 relative z-10 space-y-3.5 overflow-y-auto">
+          {/* Avatar + Identity */}
           <div className="flex items-end gap-3.5">
             <AvatarWithFrame
               avatarUrl={targetUser.avatarUrl}
@@ -420,188 +262,169 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
               size="lg"
               status={isOnline ? 'online' : 'offline'}
             />
-            <div className="pb-0.5 min-w-0 space-y-0.5">
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/15 border border-amber-400/30 text-[10px] font-bold text-amber-300">
-                <Sparkles className="w-2.5 h-2.5" />
-                {lang === 'my' ? titleObj.labelMy : titleObj.labelEn}
-              </span>
-              <h3 className="text-lg font-display font-extrabold text-white truncate">{targetUser.displayName}</h3>
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 pb-0.5 flex-1">
+              <div className="flex items-center gap-1.5">
+                <h3 className="text-base font-display font-bold text-white truncate">
+                  {targetUser.displayName}
+                </h3>
+                <RankTierIcon tier={targetUser.rank || 'silver'} className="w-5 h-5 shrink-0" />
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 mt-1">
                 <button
                   type="button"
                   onClick={handleCopyGameId}
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-white/5 hover:bg-amber-500/20 border border-white/15 text-[11px] font-mono font-bold text-amber-300 cursor-pointer"
+                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-[11px] font-mono font-bold text-amber-300 cursor-pointer"
                 >
                   <span>{targetUser.gameId}</span>
                   {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
                 </button>
-                <span className="text-[11px] text-slate-400">
-                  {isOnline ? '🟢 Online' : '⚪ Offline'} · WR {winRate}%
+                <span className="text-[11px] font-semibold text-slate-300">
+                  {targetUser.rank || 'Silver'}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* PLAYER BIO / MOTTO */}
-          <div className="p-3 rounded-xl bg-[#070b13]/90 border border-white/10 text-xs text-slate-300 italic leading-relaxed">
-            {targetUser.bio?.trim()
-              ? `“${targetUser.bio.trim()}”`
-              : lang === 'my'
-              ? '“Vanguard Arena တွင် ယှဉ်ပြိုင်ကစားနေသူ”'
-              : '“Competing in Vanguard Arena.”'}
+          {/* Player Bio Box */}
+          <div className="p-3 rounded-xl bg-[#070b14]/90 border border-white/10">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-amber-400/80 mb-1">
+              {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio)' : 'Player Bio'}
+            </div>
+            <p className="text-xs text-slate-200 leading-relaxed">
+              {targetUser.bio && targetUser.bio.trim()
+                ? targetUser.bio
+                : lang === 'my'
+                ? 'Vanguard Arena တွင် ယှဉ်ပြိုင်နေသော ကစားသမားတစ်ဦးဖြစ်ပါသည်။'
+                : 'Competing live in Vanguard Arena.'}
+            </p>
           </div>
 
-          {/* STATS GRID */}
-          <div className="grid grid-cols-4 gap-2 text-center bg-[#070b13] p-2.5 rounded-xl border border-white/10 text-xs">
+          {/* Stats Strip */}
+          <div className="grid grid-cols-5 gap-1.5 text-center bg-[#070b14] p-2.5 rounded-xl border border-white/10 text-xs">
             <div>
-              <div className="text-[10px] text-slate-400 uppercase">XP</div>
-              <div className="font-mono font-bold text-amber-400 mt-0.5">{xp}</div>
+              <div className="text-[10px] text-slate-400">XP</div>
+              <div className="font-mono font-bold text-amber-400">{targetUser.xp || 0}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-400 uppercase">Win</div>
-              <div className="font-mono font-bold text-emerald-400 mt-0.5">{winCount}</div>
+              <div className="text-[10px] text-slate-400">Win</div>
+              <div className="font-mono font-bold text-emerald-400">{targetUser.wins || 0}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-400 uppercase">Loss</div>
-              <div className="font-mono font-bold text-rose-400 mt-0.5">{lossCount}</div>
+              <div className="text-[10px] text-slate-400">Loss</div>
+              <div className="font-mono font-bold text-rose-400">{targetUser.losses || 0}</div>
             </div>
             <div>
-              <div className="text-[10px] text-slate-400 uppercase">Draw</div>
-              <div className="font-mono font-bold text-sky-400 mt-0.5">{drawCount}</div>
+              <div className="text-[10px] text-slate-400">Draw</div>
+              <div className="font-mono font-bold text-sky-400">{targetUser.draws || 0}</div>
+            </div>
+            <div>
+              <div className="text-[10px] text-slate-400">WR%</div>
+              <div className="font-mono font-bold text-white">{winRate}%</div>
             </div>
           </div>
 
-          {/* TOURNAMENT TROPHIES & ADMIN GIFTS SHOWCASE */}
-          {userGifts.length > 0 && (
-            <div className="space-y-1.5">
+          {/* Tournament Gifts & Trophies Showcase */}
+          {gifts.length > 0 && (
+            <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-[#0b101d] to-amber-500/10 border border-amber-400/30 space-y-2">
               <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                <Gift className="w-3.5 h-3.5" />
+                <Award className="w-3.5 h-3.5" />
                 <span>
-                  {lang === 'my'
-                    ? `ရရှိထားသော ပြိုင်ပွဲဆုနှင့် လက်ဆောင်များ (${userGifts.length})`
-                    : `Awards & Gifts (${userGifts.length})`}
+                  {lang === 'my' ? `ဆုတံဆိပ်နှင့် လက်ဆောင်များ (${gifts.length})` : `Trophies & Gifts (${gifts.length})`}
                 </span>
               </div>
-              <div className="flex gap-2 overflow-x-auto no-scrollbar pb-1">
-                {userGifts.map((g, i) => {
-                  const meta = getGiftMeta(g.giftId);
-                  return (
-                    <div
-                      key={g.id || i}
-                      className={`p-2 rounded-xl bg-gradient-to-br border flex items-center gap-2 shrink-0 ${meta.accent}`}
-                    >
-                      <PremiumGiftSvg giftId={g.giftId} className="w-7 h-7 shrink-0" />
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-bold text-white truncate max-w-[130px]">
-                          {g.title || (lang === 'my' ? meta.nameMy : meta.nameEn)}
-                        </div>
-                        <div className="text-[9px] font-mono opacity-80 truncate max-w-[130px]">
-                          {g.tournamentTitle || meta.rarity}
-                        </div>
+              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                {gifts.map((g) => (
+                  <div
+                    key={g.id}
+                    className="px-2.5 py-1.5 rounded-xl bg-[#070b14] border border-amber-400/30 flex items-center gap-2 shrink-0"
+                    title={g.note || g.tournamentTitle}
+                  >
+                    <GiftTrophyIcon iconId={g.iconId} className="w-6 h-6" />
+                    <div>
+                      <div className="text-[10px] font-bold text-white leading-tight">
+                        {lang === 'my' ? g.nameMy : g.name}
                       </div>
+                      {g.placement && (
+                        <div className="text-[9px] font-mono text-amber-400 uppercase">{g.placement} Place</div>
+                      )}
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* SOCIAL ACTIONS */}
+          {/* Action Buttons for Other Players */}
           {!isSelf && (
-            <div className="space-y-2.5 pt-1">
+            <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
-                {isFriend ? (
-                  <button
-                    type="button"
-                    disabled={busyAction}
-                    onClick={handleUnfriend}
-                    className="h-10 rounded-xl bg-white/10 hover:bg-rose-500/20 border border-white/15 text-xs font-bold text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UserMinus className="w-4 h-4" />
-                    <span>{lang === 'my' ? 'မိတ်ဆွေဖြုတ်' : 'Unfriend'}</span>
-                  </button>
-                ) : requestStatus === 'outgoing' ? (
-                  <button
-                    type="button"
-                    disabled={busyAction}
-                    onClick={handleCancelRequest}
-                    className="h-10 rounded-xl bg-amber-500/15 hover:bg-rose-500/20 border border-amber-400/40 text-xs font-bold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Clock className="w-4 h-4" />
-                    <span>{lang === 'my' ? 'တောင်းဆိုပြီး (Cancel)' : 'Cancel Req'}</span>
-                  </button>
-                ) : requestStatus === 'incoming' ? (
-                  <button
-                    type="button"
-                    disabled={busyAction}
-                    onClick={handleAcceptRequest}
-                    className="h-10 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UserCheck className="w-4 h-4" />
-                    <span>{lang === 'my' ? 'လက်ခံမည်' : 'Accept'}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={busyAction || isBlocked}
-                    onClick={handleSendFriendRequest}
-                    className="h-10 rounded-xl cyber-cta-gold disabled:opacity-40 text-slate-950 text-xs font-extrabold flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <UserPlus className="w-4 h-4" />
-                    <span>{lang === 'my' ? 'Add Friend' : 'Add Friend'}</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={handleToggleFriend}
+                  className={`h-10 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
+                    isFriend
+                      ? 'bg-white/10 text-slate-200 border border-white/15'
+                      : 'cyber-cta-gold text-slate-950'
+                  }`}
+                >
+                  {isFriend ? <UserMinus className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                  <span>
+                    {isFriend
+                      ? lang === 'my' ? 'မိတ်ဆွေဖြုတ်မည်' : 'Unfriend'
+                      : lang === 'my' ? 'မိတ်ဆွေထည့်မည်' : 'Add Friend'}
+                  </span>
+                </button>
 
                 <button
                   type="button"
                   disabled={isBlocked}
                   onClick={() => {
                     onClose();
-                    onOpenChatWith?.(targetUser.id);
+                    if (onOpenChatWith) onOpenChatWith(targetUser.id);
                   }}
-                  className="h-10 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 disabled:opacity-40 border border-sky-400/35 text-xs font-bold text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                  className="h-10 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 disabled:opacity-40 border border-sky-400/40 text-xs font-bold text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer"
                 >
                   <MessageSquare className="w-4 h-4" />
                   <span>{lang === 'my' ? 'Chat ဖွင့်မည်' : 'Open Chat'}</span>
                 </button>
               </div>
 
+              {/* Quick Inline Direct Message */}
               {!isBlocked && (
                 <form onSubmit={handleQuickDm} className="flex gap-2">
                   <input
                     type="text"
                     value={dmText}
                     onChange={(e) => setDmText(e.target.value)}
-                    placeholder={lang === 'my' ? `${targetUser.displayName} ထံ စာတိုပို့မည်...` : 'Quick message...'}
-                    className="flex-1 h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                    placeholder={
+                      lang === 'my' ? `${targetUser.displayName} ထံ စာတိုပို့မည်...` : 'Send quick message...'
+                    }
+                    className="flex-1 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                   />
                   <button
                     type="submit"
                     disabled={sendingDm || !dmText.trim()}
-                    className="px-3.5 h-9 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-40 text-slate-950 font-bold text-xs cursor-pointer"
+                    className="px-3.5 h-10 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
                   </button>
                 </form>
               )}
 
-              <div className="grid grid-cols-3 gap-2 pt-1.5 border-t border-white/10">
+              {/* Challenge / Block / Report Row */}
+              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/10">
                 <button
                   type="button"
                   disabled={isBlocked}
-                  onClick={() => {
-                    onClose();
-                    onChallenge(targetUser.id, 'connect4');
-                  }}
-                  className="h-9 rounded-xl bg-indigo-500/15 hover:bg-indigo-500/25 disabled:opacity-40 border border-indigo-400/30 text-[11px] font-bold text-indigo-200 flex items-center justify-center gap-1 cursor-pointer"
+                  onClick={() => setDuelPickerOpen((v) => !v)}
+                  className="h-9 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 disabled:opacity-40 text-[11px] font-bold text-indigo-200 flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <Swords className="w-3.5 h-3.5" />
-                  <span>{lang === 'my' ? 'စိန်ခေါ်' : 'Duel'}</span>
+                  <span>{lang === 'my' ? 'စိန်ခေါ်မည်' : 'Duel'}</span>
                 </button>
 
                 <button
                   type="button"
-                  disabled={busyAction}
                   onClick={handleToggleBlock}
                   className={`h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
                     isBlocked
@@ -616,53 +439,64 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
                 <button
                   type="button"
                   onClick={() => setReportOpen((v) => !v)}
-                  className={`h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer border ${
-                    reportOpen
-                      ? 'bg-rose-500/25 border-rose-400 text-rose-200'
-                      : 'bg-white/5 hover:bg-white/10 border-white/10 text-slate-300'
-                  }`}
+                  className="h-9 rounded-xl bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-slate-300 flex items-center justify-center gap-1 cursor-pointer"
                 >
                   <Flag className="w-3.5 h-3.5 text-amber-400" />
                   <span>Report</span>
                 </button>
               </div>
 
+              {/* Multi-Game Challenge Picker */}
+              {duelPickerOpen && !isBlocked && (
+                <div className="p-2.5 rounded-xl bg-[#070b14] border border-indigo-400/35 space-y-2">
+                  <div className="text-[10px] font-bold text-indigo-300">
+                    {lang === 'my' ? 'စိန်ခေါ်လိုသော ဂိမ်းရွေးချယ်ပါ:' : 'Choose Game to Duel:'}
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {(
+                      [
+                        { id: 'connect4', label: 'Connect 4' },
+                        { id: 'tictactoe', label: 'Tic-Tac-Toe' },
+                        { id: 'rps', label: 'RPS' },
+                        { id: 'sakarhtar', label: lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz' },
+                      ] as Array<{ id: GameType; label: string }>
+                    ).map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        onClick={() => {
+                          onClose();
+                          onChallenge(targetUser.id, g.id);
+                        }}
+                        className="p-2 rounded-lg bg-[#10182b] hover:bg-indigo-500/25 border border-white/10 text-[11px] font-bold text-white flex items-center gap-2 cursor-pointer"
+                      >
+                        <GameBadgeIcon gameType={g.id} className="w-5 h-5" />
+                        <span className="truncate">{g.label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {reportOpen && (
                 <form
                   onSubmit={handleSubmitReport}
-                  className="p-3 rounded-xl bg-[#070b13] border border-rose-500/40 space-y-2"
+                  className="p-3 rounded-xl bg-[#070b14] border border-rose-500/30 space-y-2"
                 >
-                  <div className="flex items-center gap-1.5 text-xs font-bold text-rose-300">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    <span>{lang === 'my' ? 'Admin ထံ တိုင်ကြားရန်' : 'Report Player'}</span>
-                  </div>
-                  <select
-                    value={reportCategory}
-                    onChange={(e) => setReportCategory(e.target.value)}
-                    className="w-full h-9 px-2.5 rounded-lg bg-[#101728] border border-white/15 text-xs text-white"
-                  >
-                    {REPORT_CATEGORIES.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {lang === 'my' ? c.labelMy : c.labelEn}
-                      </option>
-                    ))}
-                  </select>
-                  <textarea
-                    rows={2}
+                  <input
+                    type="text"
                     required
-                    value={reportDetail}
-                    onChange={(e) => setReportDetail(e.target.value)}
-                    placeholder={lang === 'my' ? 'အသေးစိတ် ရေးသားပါ...' : 'Describe issue...'}
-                    className="w-full p-2 rounded-lg bg-[#101728] border border-white/15 text-xs text-white"
+                    value={reportReason}
+                    onChange={(e) => setReportReason(e.target.value)}
+                    placeholder={lang === 'my' ? 'တိုင်ကြားလိုသည့် အကြောင်းရင်း...' : 'Reason for reporting...'}
+                    className="w-full h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white"
                   />
-                  <div className="flex justify-end gap-2">
-                    <button type="button" onClick={() => setReportOpen(false)} className="px-3 h-8 rounded-lg bg-white/10 text-xs text-slate-300 cursor-pointer">
-                      Cancel
-                    </button>
-                    <button type="submit" disabled={submittingReport} className="px-4 h-8 rounded-lg bg-rose-500 text-white font-bold text-xs cursor-pointer">
-                      {submittingReport ? '...' : 'Submit'}
-                    </button>
-                  </div>
+                  <button
+                    type="submit"
+                    className="w-full h-8 rounded-lg bg-rose-500 text-white font-bold text-xs cursor-pointer"
+                  >
+                    {lang === 'my' ? 'Admin ထံ Report ပို့မည်' : 'Submit Report'}
+                  </button>
                 </form>
               )}
             </div>
