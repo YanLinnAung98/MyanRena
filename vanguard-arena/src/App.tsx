@@ -341,12 +341,12 @@ export default function App() {
     if (data.match) socket.setActiveMatch(data.match);
   };
 
-  const handleCreateSakarRoom = async (title: string, maxPlayers: number) => {
+  const handleCreateSakarRoom = async (title: string, maxPlayers: number, gameType: GameType = 'sakarhtar') => {
     if (!token) return;
     const res = await fetch('/api/sakar/rooms', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ title, maxPlayers }),
+      body: JSON.stringify({ title, maxPlayers, gameType }),
     });
     const data = await res.json();
     if (data.room) {
@@ -364,7 +364,10 @@ export default function App() {
     });
     const data = await res.json();
     if (!res.ok) socket.pushToast('error', data.error || 'Unable to join room.');
-    else if (data.room) socket.setCurrentRoom(data.room);
+    else if (data.room) {
+      socket.setRoomChat(data.room.chat || []);
+      socket.setCurrentRoom(data.room);
+    }
   };
 
   const handleLeaveSakarRoom = async () => {
@@ -396,7 +399,10 @@ export default function App() {
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = await res.json();
-    if (data.match) socket.setActiveMatch(data.match);
+    if (data.match) {
+      socket.setCurrentRoom(null);
+      socket.setActiveMatch(data.match);
+    }
   };
 
   const rootClass = lang === 'my' ? 'lang-my' : '';
@@ -452,6 +458,7 @@ export default function App() {
             }
           >
             <AdminPanel
+              key={`admin_live_${socket.onlinePlayers.length}`}
               token={token}
               adminUser={user}
               livePingMs={socket.pingMs}
@@ -480,11 +487,11 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-dvh-safe bg-[#0A0D14] text-slate-100 flex flex-col ${
-        !socket.activeMatch ? 'pb-safe-nav md:pb-0' : ''
+      className={`h-dvh md:h-auto md:min-h-dvh-safe overflow-hidden md:overflow-visible bg-[#0A0D14] text-slate-100 flex flex-col ${
+        !socket.activeMatch ? 'pb-16 md:pb-0' : ''
       } ${rootClass}`}
     >
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/90 backdrop-blur-md">
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/90 backdrop-blur-md shrink-0">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 md:h-16 flex items-center justify-between gap-2 sm:gap-5">
           <button
             type="button"
@@ -516,7 +523,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setAdminViewMode('admin')}
-                className="min-h-[44px] px-2.5 sm:px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                className="min-h-[40px] px-2.5 sm:px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
               >
                 <ShieldAlert className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">{t.nav.adminPanel}</span>
@@ -542,7 +549,7 @@ export default function App() {
               type="button"
               onClick={toggleMute}
               aria-label={muted ? 'Unmute audio' : 'Mute audio'}
-              className="min-h-[44px] min-w-[44px] rounded-xl bg-[#121826] hover:bg-white/5 border border-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#121826] hover:bg-white/5 border border-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -567,7 +574,7 @@ export default function App() {
               type="button"
               onClick={handleLogout}
               aria-label={t.nav.signOut}
-              className="min-h-[44px] min-w-[44px] rounded-xl bg-[#121826] hover:bg-rose-500/20 border border-white/10 text-slate-300 hover:text-rose-300 flex items-center justify-center cursor-pointer"
+              className="min-h-[40px] min-w-[40px] rounded-xl bg-[#121826] hover:bg-rose-500/20 border border-white/10 text-slate-300 hover:text-rose-300 flex items-center justify-center cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
             </button>
@@ -581,20 +588,16 @@ export default function App() {
             initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            className="bg-amber-500/15 border-b border-amber-400/40 px-4 py-3"
+            className="bg-amber-500/15 border-b border-amber-400/40 px-4 py-2 shrink-0"
           >
             <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2 text-xs">
                 <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
-                <div className="text-xs sm:text-sm">
-                  <span className="font-bold text-amber-300">{socket.announcement.title}: </span>
-                  <span className="text-slate-100">{socket.announcement.message}</span>
-                </div>
+                <span className="text-slate-100 truncate">{socket.announcement.message}</span>
               </div>
               <button
                 type="button"
                 onClick={() => socket.setAnnouncement(null)}
-                aria-label="Dismiss announcement"
                 className="text-slate-300 hover:text-white cursor-pointer"
               >
                 <X className="w-4 h-4" />
@@ -605,26 +608,15 @@ export default function App() {
       </AnimatePresence>
 
       {suspendedUntilMs > nowTs && (
-        <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-3">
-          <div className="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-3">
-              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
-              <div className="text-xs sm:text-sm">
-                <span className="font-bold text-rose-300">{t.moderation.suspendedBannerTitle}: </span>
-                <span className="text-rose-100/90">{t.moderation.suspendedBannerDesc}</span>
-              </div>
-            </div>
-            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-rose-950/80 border border-rose-500/40 text-xs font-mono tabular-nums text-rose-200">
-              <Clock className="w-3.5 h-3.5 text-rose-400" />
-              <span>
-                {t.moderation.remainingTime}: {formatCountdown(suspendedUntilMs - nowTs)}
-              </span>
-            </div>
+        <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-2 shrink-0">
+          <div className="max-w-7xl mx-auto flex items-center justify-between gap-3 text-xs">
+            <span className="font-bold text-rose-300">{t.moderation.suspendedBannerTitle}</span>
+            <span className="font-mono text-rose-200">{formatCountdown(suspendedUntilMs - nowTs)}</span>
           </div>
         </div>
       )}
 
-      <main className="flex-1">
+      <main className="flex-1 min-h-0 overflow-y-auto md:overflow-visible">
         {socket.activeMatch ? (
           <MatchArena
             lang={lang}
@@ -727,7 +719,7 @@ export default function App() {
       </main>
 
       {!socket.activeMatch && (
-        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0E131F]/95 backdrop-blur-md border-t border-white/10 safe-bottom-bar">
+        <nav className="md:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#0E131F]/95 backdrop-blur-md border-t border-white/10">
           <div className="grid grid-cols-5 h-16 items-center">
             {navItems.map((item) => {
               const active = activeTab === item.id;
