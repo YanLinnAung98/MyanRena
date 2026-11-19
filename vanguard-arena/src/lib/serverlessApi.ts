@@ -7,12 +7,15 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
+import { getShuffledQuizSet, QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
+import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { db, isFirebaseConfigured } from './firebase.ts';
 
-export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v6';
-export const ACTIVE_USER_KEY = 'vanguard_active_user_v6';
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v7';
+export const ACTIVE_USER_KEY = 'vanguard_active_user_v7';
+export const DEFAULT_SAKAR_RIDDLES = QUIZ_BANK_100;
 
 export function normalizeGameId(raw?: string): 'connect4' | 'tictactoe' | 'rps' | 'sakarhtar' {
   const s = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -22,64 +25,12 @@ export function normalizeGameId(raw?: string): 'connect4' | 'tictactoe' | 'rps' 
   return 'sakarhtar';
 }
 
-export const DEFAULT_SAKAR_RIDDLES = [
-  {
-    id: 'rid_1',
-    question: 'ခြေလေးချောင်းရှိသော်လည်း လမ်းမလျှောက်နိုင်သော အရာမှာ အဘယ်နည်း။',
-    questionMy: 'ခြေလေးချောင်းရှိသော်လည်း လမ်းမလျှောက်နိုင်သော အရာမှာ အဘယ်နည်း။',
-    questionEn: 'What has four legs but cannot walk?',
-    options: ['စားပွဲခုံ', 'ဆင်', 'လိပ်', 'မြင်း'],
-    optionsMy: ['စားပွဲခုံ', 'ဆင်', 'လိပ်', 'မြင်း'],
-    optionsEn: ['Table', 'Elephant', 'Turtle', 'Horse'],
-    answerIndex: 0,
-  },
-  {
-    id: 'rid_2',
-    question: 'အပေါ်ကလည်း မိုး၊ အောက်ကလည်း မိုး၊ အလယ်က အဘိုးအို ခါးကုန်းကုန်း ဆိုသည်မှာ အဘယ်နည်း။',
-    questionMy: 'အပေါ်ကလည်း မိုး၊ အောက်ကလည်း မိုး၊ အလယ်က အဘိုးအို ခါးကုန်းကုန်း ဆိုသည်မှာ အဘယ်နည်း။',
-    questionEn: 'Roof above, roof below, a hunchbacked old man in the middle. What is it?',
-    options: ['လိပ်', 'ဖား', 'ပုစွန်', 'ခရု'],
-    optionsMy: ['လိပ်', 'ဖား', 'ပုစွန်', 'ခရု'],
-    optionsEn: ['Turtle', 'Frog', 'Shrimp', 'Snail'],
-    answerIndex: 0,
-  },
-  {
-    id: 'rid_3',
-    question: 'သွားလည်း သွားသည်၊ ရပ်လည်း ရပ်သည်၊ ခြေထောက်မရှိသော အရာမှာ အဘယ်နည်း။',
-    questionMy: 'သွားလည်း သွားသည်၊ ရပ်လည်း ရပ်သည်၊ ခြေထောက်မရှိသော အရာမှာ အဘယ်နည်း။',
-    questionEn: 'It moves and it stops, yet it has no legs. What is it?',
-    options: ['နာရီ', 'လှည်း', 'စက်ဘီး', 'လေယာဉ်'],
-    optionsMy: ['နာရီ', 'လှည်း', 'စက်ဘီး', 'လေယာဉ်'],
-    optionsEn: ['Clock', 'Cart', 'Bicycle', 'Airplane'],
-    answerIndex: 0,
-  },
-  {
-    id: 'rid_4',
-    question: 'အမေက ဖြူဖြူ၊ သားက မည်းမည်း၊ သားက အမေ့ကို ပြန်ကိုက်သည် ဆိုသည်မှာ အဘယ်နည်း။',
-    questionMy: 'အမေက ဖြူဖြူ၊ သားက မည်းမည်း၊ သားက အမေ့ကို ပြန်ကိုက်သည် ဆိုသည်မှာ အဘယ်နည်း။',
-    questionEn: 'White mother, black son, the son bites the mother back. What is it?',
-    options: ['မီးခြစ်ဆံ', 'ကျီးကန်း', 'မီးသွေး', 'ဖယောင်းတိုင်'],
-    optionsMy: ['မီးခြစ်ဆံ', 'ကျီးကန်း', 'မီးသွေး', 'ဖယောင်းတိုင်'],
-    optionsEn: ['Matchstick', 'Crow', 'Charcoal', 'Candle'],
-    answerIndex: 0,
-  },
-  {
-    id: 'rid_5',
-    question: 'အမြီးတိုတို နှာခေါင်းရှည်၊ ရေထဲမှာ နေသည် ဆိုသည်မှာ အဘယ်နည်း။',
-    questionMy: 'အမြီးတိုတို နှာခေါင်းရှည်၊ ရေထဲမှာ နေသည် ဆိုသည်မှာ အဘယ်နည်း။',
-    questionEn: 'Short tail, long nose, lives in the water. What is it?',
-    options: ['ကရားအိုး', 'ဆင်', 'ငါးရှဉ့်', 'မိကျောင်း'],
-    optionsMy: ['ကရားအိုး', 'ဆင်', 'ငါးရှဉ့်', 'မိကျောင်း'],
-    optionsEn: ['Kettle', 'Elephant', 'Eel', 'Crocodile'],
-    answerIndex: 0,
-  },
-];
-
 export function getPatchedLandingContent(base = DEFAULT_LANDING_CONTENT) {
   const games = { ...(base.games || {}) } as any;
   (['connect4', 'tictactoe', 'rps', 'sakarhtar'] as const).forEach((gid) => {
     games[gid] = {
       ...(games[gid] || {}),
+      nameMy: gid === 'sakarhtar' ? 'ဉာဏ်စမ်းပဟေဠိ' : games[gid]?.nameMy,
       bannerUrl: GAME_ARTWORKS[gid],
     };
   });
@@ -92,10 +43,16 @@ export function getPatchedLandingContent(base = DEFAULT_LANDING_CONTENT) {
 
 export function saveActiveSessionUser(user: any) {
   try {
-    localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(user));
+    const dev = detectClientDevice();
+    const enriched = {
+      ...user,
+      ...dev,
+      online: true,
+    };
+    localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(enriched));
     const store = readServerlessStore();
-    if (user?.id) {
-      store.users[user.id] = user;
+    if (enriched?.id) {
+      store.users[enriched.id] = enriched;
       writeServerlessStore(store);
     }
   } catch {}
@@ -111,6 +68,7 @@ export function readActiveSessionUser(): any | null {
 }
 
 export function readServerlessStore() {
+  const adminDev = detectClientDevice();
   const defaultStore = {
     users: {
       admin_yanlinnaung: {
@@ -127,6 +85,8 @@ export function readServerlessStore() {
         draws: 1,
         frameId: 'legend',
         status: 'active',
+        online: true,
+        ...adminDev,
         avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
         friends: [],
         blocked: [],
@@ -135,9 +95,10 @@ export function readServerlessStore() {
     } as Record<string, any>,
     tournaments: [] as any[],
     rooms: [] as any[],
-    riddles: [...DEFAULT_SAKAR_RIDDLES],
+    riddles: [...QUIZ_BANK_100],
     reports: [] as any[],
     warnings: [] as any[],
+    directMessages: [] as any[],
     announcements: [] as any[],
     activeBroadcast: null as { id: string; title: string; message: string; createdAt: string } | null,
     auditLogs: [
@@ -145,7 +106,7 @@ export function readServerlessStore() {
         id: 'log_1',
         action: 'SYSTEM_READY',
         actor: 'yanlinnaung',
-        detail: 'Vanguard Arena Real-Time Core Active',
+        detail: 'Vanguard Arena Real-Time Core & 100 Quiz Bank Active',
         createdAt: new Date().toISOString(),
       },
     ],
@@ -176,7 +137,7 @@ export function readServerlessStore() {
       return {
         ...defaultStore,
         ...parsed,
-        riddles: parsed.riddles?.length ? parsed.riddles : defaultStore.riddles,
+        riddles: parsed.riddles?.length >= 10 ? parsed.riddles : defaultStore.riddles,
         landingContent: getPatchedLandingContent(parsed.landingContent || DEFAULT_LANDING_CONTENT),
         featureLocks: { ...defaultStore.featureLocks, ...(parsed.featureLocks || {}) },
         matchmakingSettings: { ...defaultStore.matchmakingSettings, ...(parsed.matchmakingSettings || {}) },
@@ -232,7 +193,7 @@ export function buildPlayableMatch(
 
   const tttBoard = Array(9).fill(null);
   const c4Board = Array.from({ length: 6 }, () => Array(7).fill(null));
-  const riddles = store.riddles?.length ? store.riddles : DEFAULT_SAKAR_RIDDLES;
+  const riddles = getShuffledQuizSet(10, store.riddles);
   const deadline = new Date(Date.now() + turnTimeLimit * 1000).toISOString();
 
   return {
@@ -325,8 +286,10 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         const uid = token.replace(/^token_/, '');
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
         if (snap && snap.exists()) {
-          const uData = { ...snap.data(), role: 'player', isAdmin: false };
+          const dev = detectClientDevice();
+          const uData = { ...snap.data(), ...dev, online: true, role: 'player', isAdmin: false };
           saveActiveSessionUser(uData);
+          await setDoc(doc(db, 'users', uid), { ...dev, online: true }, { merge: true }).catch(() => {});
           return jsonResponse({ user: uData });
         }
       }
@@ -462,6 +425,43 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ match });
     }
 
+    // Social & Direct Messages (Real-Time Sync between Users & Admin)
+    if ((path.includes('/dm') || path.includes('/message')) && method === 'POST') {
+      const targetId = body.targetUserId || body.toUserId || body.recipientId || path.split('/')[4] || '';
+      const text = body.message || body.text || body.content || '';
+      const dm = {
+        id: `dm_${Date.now()}_${Math.floor(Math.random() * 999)}`,
+        fromUserId: currentUser?.id || 'admin_yanlinnaung',
+        fromName: currentUser?.displayName || 'Yan Linn Aung (Admin)',
+        fromRole: currentUser?.role || 'admin',
+        toUserId: targetId,
+        text,
+        read: false,
+        createdAt: new Date().toISOString(),
+      };
+      store.directMessages.push(dm);
+      writeServerlessStore(store);
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'messages', dm.id), dm).catch(() => {});
+      }
+      return jsonResponse({ ok: true, message: dm });
+    }
+
+    if (path.startsWith('/api/social')) {
+      const myId = currentUser?.id || '';
+      const myDms = (store.directMessages || []).filter(
+        (m: any) => m.toUserId === myId || m.fromUserId === myId
+      );
+      return jsonResponse({
+        friends: [],
+        incomingRequests: [],
+        outgoingRequests: [],
+        blocked: currentUser?.blocked || [],
+        conversations: myDms,
+        messages: myDms,
+      });
+    }
+
     if (path.startsWith('/api/profile') && ['PATCH', 'POST', 'PUT'].includes(method)) {
       if (currentUser) {
         Object.assign(currentUser, body);
@@ -483,7 +483,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
-    // Admin Dashboard APIs — Merges Live Firestore Users & Delivers Live Notifications
+    // Admin Dashboard APIs — Merges Live Firestore Users + Full Device Info + Real-Time Messages
     if (path.startsWith('/api/admin')) {
       const mergedMap: Record<string, any> = { ...store.users };
       if (isFirebaseConfigured && db) {
@@ -491,7 +491,17 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         if (snap && !snap.empty) {
           snap.forEach((d) => {
             const u = d.data();
-            if (u?.id) mergedMap[u.id] = u;
+            if (u?.id) {
+              mergedMap[u.id] = {
+                device: u.device || 'Mobile / Web Client',
+                deviceType: u.deviceType || 'Mobile',
+                os: u.os || 'Android / iOS',
+                browser: u.browser || 'Browser',
+                online: u.online !== false,
+                lastActive: u.lastActive || new Date().toISOString(),
+                ...u,
+              };
+            }
           });
           store.users = mergedMap;
           writeServerlessStore(store);
@@ -503,7 +513,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
         const ann = {
           id: `ann_${Date.now()}`,
-          title: body.title || 'Admin Announcement',
+          title: body.title || 'Admin ကြေညာချက်',
           message: body.message || body.content || '',
           createdAt: new Date().toISOString(),
         };
@@ -516,7 +526,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         return jsonResponse({ ok: true, announcement: ann });
       }
 
-      // User Moderation (Warn -> Sends Live Warning Popup to Target User)
+      // User Moderation & Direct Admin Message to User
       if (path.includes('/users/') && ['POST', 'PATCH', 'PUT'].includes(method)) {
         const parts = path.split('/');
         const targetId = parts[4];
@@ -530,17 +540,19 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         } else if (action.includes('suspend')) {
           updates.status = 'suspended';
           updates.suspendedUntil = new Date(Date.now() + 3600000).toISOString();
-        } else if (action.includes('warn')) {
+        } else if (action.includes('warn') || action.includes('message') || action.includes('dm')) {
+          const reasonText = body.reason || body.message || body.text || 'Admin မှ အသိပေးစာ ပေးပို့ထားပါသည်။';
           const warnObj = {
             id: `warn_${Date.now()}`,
             userId: targetId,
-            reason: body.reason || body.message || 'Official Warning from Administrator.',
+            title: action.includes('warn') ? 'Official Warning' : 'Message from Admin',
+            reason: reasonText,
             acknowledged: false,
             createdAt: new Date().toISOString(),
           };
           store.warnings.push(warnObj);
-          updates.status = 'warned';
-          updates.warnMessage = warnObj.reason;
+          updates.status = action.includes('warn') ? 'warned' : updates.status || 'active';
+          updates.warnMessage = reasonText;
           if (isFirebaseConfigured && db) {
             await setDoc(doc(db, 'warnings', warnObj.id), warnObj).catch(() => {});
           }
@@ -581,7 +593,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       if (path.includes('riddle')) {
         if (method === 'POST') {
           const riddle = { id: `rid_${Date.now()}`, ...body };
-          store.riddles.push(riddle);
+          store.riddles.unshift(riddle);
           writeServerlessStore(store);
           if (isFirebaseConfigured && db) {
             await setDoc(doc(db, 'riddles', riddle.id), riddle).catch(() => {});
@@ -627,6 +639,15 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         metrics: fullCounters,
         telemetry: fullCounters,
         users: allUsers,
+        sessions: allUsers.map((u: any) => ({
+          userId: u.id,
+          username: u.username,
+          displayName: u.displayName,
+          device: u.device || 'Mobile / Web',
+          os: u.os || 'Android / iOS',
+          browser: u.browser || 'Browser',
+          lastActive: u.lastActive || new Date().toISOString(),
+        })),
         reports: store.reports,
         warnings: store.warnings,
         announcements: store.announcements,
