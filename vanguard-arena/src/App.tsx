@@ -9,22 +9,19 @@ import {
   CheckCheck,
   Clock,
   Gamepad2,
-  LogOut,
   Megaphone,
   RotateCcw,
+  Settings,
   ShieldAlert,
   Swords,
   Trophy,
   User,
   Users,
-  Volume2,
-  VolumeX,
   Wifi,
   Wrench,
   X,
 } from 'lucide-react';
 import { arrayRemove, arrayUnion, doc, updateDoc } from 'firebase/firestore';
-import { GAME_REGISTRY } from './games/registry.ts';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
@@ -32,6 +29,7 @@ import { db, isFirebaseConfigured } from './lib/firebase.ts';
 import {
   ACTIVE_USER_KEY,
   getPatchedLandingContent,
+  normalizeGameId,
   readActiveSessionUser,
   saveActiveSessionUser,
 } from './lib/serverlessApi.ts';
@@ -49,6 +47,7 @@ import { LeaderboardView } from './components/LeaderboardView.tsx';
 import { SocialHub } from './components/SocialHub.tsx';
 import { ProfileView } from './components/ProfileView.tsx';
 import { PlayerProfileModal } from './components/PlayerProfileModal.tsx';
+import { SettingsModal } from './components/SettingsModal.tsx';
 
 const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
@@ -110,6 +109,14 @@ function clearStoredToken() {
   localStorage.removeItem(ACTIVE_USER_KEY);
 }
 
+function safeChallengeGameName(rawType: string | undefined, lang: Language): string {
+  const norm = normalizeGameId(rawType);
+  if (norm === 'connect4') return lang === 'my' ? '၄ လုံးတန်း' : '4 in a Row';
+  if (norm === 'tictactoe') return 'Tic-Tac-Toe';
+  if (norm === 'rps') return lang === 'my' ? 'ကျောက်တုံး စက္ကူ ကတ်ကြေး' : 'Rock Paper Scissors';
+  return lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz';
+}
+
 function VanguardAppCore() {
   const [lang, setLang] = React.useState<Language>(() => {
     if (typeof window === 'undefined') return 'my';
@@ -124,8 +131,9 @@ function VanguardAppCore() {
   );
   const [activeTab, setActiveTab] = React.useState<LobbyTab>('lobby');
   const [adminViewMode, setAdminViewMode] = React.useState<'admin' | 'lobby'>('admin');
-  const [muted, setMuted] = React.useState(soundEngine.isMuted());
   const [inspectUserId, setInspectUserId] = React.useState<string | null>(null);
+  const [initialChatUserId, setInitialChatUserId] = React.useState<string | null>(null);
+  const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [kickBanner, setKickBanner] = React.useState<string | null>(null);
   const [notiDrawerOpen, setNotiDrawerOpen] = React.useState(false);
   const [nowTs, setNowTs] = React.useState(() => Date.now());
@@ -139,6 +147,7 @@ function VanguardAppCore() {
   }, []);
 
   const handleLogout = React.useCallback(async () => {
+    soundEngine.stopAmbientMusic();
     if (token) {
       await fetch('/api/auth/logout', {
         method: 'POST',
@@ -152,6 +161,7 @@ function VanguardAppCore() {
   }, [token]);
 
   const handleKicked = React.useCallback((reason: string) => {
+    soundEngine.stopAmbientMusic();
     clearStoredToken();
     setToken(null);
     setUser(null);
@@ -246,7 +256,7 @@ function VanguardAppCore() {
     [socket]
   );
 
-  // All Hooks declared before conditional returns
+  // Declare all Hooks before any early return
   const mergedLeaderboard = React.useMemo(() => {
     if (!user) return socket.leaderboard;
     const exists = socket.leaderboard.some((u) => u.id === user.id);
@@ -272,12 +282,6 @@ function VanguardAppCore() {
     setUser(cleanProfile);
     setActiveTab('lobby');
     setAdminViewMode(isAdminAccount ? 'admin' : 'lobby');
-  };
-
-  const toggleMute = () => {
-    const next = !muted;
-    soundEngine.setMuted(next);
-    setMuted(next);
   };
 
   const handleStartBot = async (
@@ -318,13 +322,15 @@ function VanguardAppCore() {
   };
 
   const handleAddFriend = async (targetUserId: string) => {
-    if (!token) return;
-    await fetch('/api/social/request', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ targetUserId }),
-    });
-    socket.pushToast('success', 'Friend request sent.');
+    if (!user) return;
+    const nextFriends = Array.from(new Set([...(user.friends || []), targetUserId]));
+    const updated = { ...user, friends: nextFriends };
+    saveActiveSessionUser(updated);
+    setUser(updated);
+    if (isFirebaseConfigured && db) {
+      await updateDoc(doc(db, 'users', user.id), { friends: arrayUnion(targetUserId) }).catch(() => {});
+    }
+    socket.pushToast('success', 'မိတ်ဆွေ ထည့်သွင်းပြီးပါပြီ!');
   };
 
   const handleStartSakarSolo = async () => {
@@ -442,7 +448,6 @@ function VanguardAppCore() {
 
   const isActualAdmin = token === 'admin-token' && user.role === 'admin';
 
-  // Global Maintenance Mode Gate (Admin can bypass freely)
   if (socket.maintenanceMode && !isActualAdmin) {
     return (
       <div className={`min-h-dvh-safe cyber-bg text-slate-100 flex items-center justify-center p-4 ${rootClass}`}>
@@ -500,6 +505,12 @@ function VanguardAppCore() {
     { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
   ];
 
+  const handleUserProfileUpdated = (updated: UserProfile) => {
+    const enforced = isActualAdmin ? updated : { ...updated, role: 'player' as const, isAdmin: false };
+    saveActiveSessionUser(enforced);
+    setUser(enforced);
+  };
+
   return (
     <div
       className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
@@ -539,6 +550,7 @@ function VanguardAppCore() {
             </nav>
           </div>
 
+          {/* Right Controls: Admin, Bell Noti, Language, Ping, Profile Avatar, Dedicated Settings Gear */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {isActualAdmin && (
               <button
@@ -574,14 +586,6 @@ function VanguardAppCore() {
 
             <button
               type="button"
-              onClick={toggleMute}
-              className="w-9 h-9 rounded-xl bg-[#0d1322] border border-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
-            >
-              {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-            </button>
-
-            <button
-              type="button"
               onClick={() => setActiveTab('profile')}
               className="cursor-pointer"
               title={user.displayName}
@@ -595,12 +599,17 @@ function VanguardAppCore() {
               />
             </button>
 
+            {/* Dedicated Settings Trigger (Music, Sound FX, Graphics, Logout) */}
             <button
               type="button"
-              onClick={handleLogout}
-              className="w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-rose-500/20 border border-white/10 text-slate-300 hover:text-rose-300 flex items-center justify-center cursor-pointer"
+              onClick={() => {
+                soundEngine.playClick();
+                setSettingsOpen(true);
+              }}
+              aria-label="Game Settings"
+              className="w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-amber-500/20 border border-white/10 hover:border-amber-400/40 text-slate-200 hover:text-amber-300 flex items-center justify-center cursor-pointer transition-colors"
             >
-              <LogOut className="w-4 h-4" />
+              <Settings className="w-4 h-4" />
             </button>
           </div>
         </div>
@@ -721,10 +730,12 @@ function VanguardAppCore() {
             lang={lang}
             token={token}
             currentUser={user}
+            allUsers={mergedLeaderboard}
             frames={socket.frames}
             featureLocks={socket.featureLocks}
-            refreshTick={socket.socialRefreshTick}
-            incomingDMs={socket.incomingDMs}
+            initialChatUserId={initialChatUserId}
+            onClearInitialChat={() => setInitialChatUserId(null)}
+            onUserUpdated={handleUserProfileUpdated}
             onInspectPlayer={(id) => setInspectUserId(id)}
             onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
             onNotify={socket.pushToast}
@@ -735,15 +746,24 @@ function VanguardAppCore() {
             token={token}
             user={user}
             frames={socket.frames}
-            onUserUpdated={(updated) => {
-              const enforced = isActualAdmin ? updated : { ...updated, role: 'player' as const, isAdmin: false };
-              saveActiveSessionUser(enforced);
-              setUser(enforced);
-            }}
+            onUserUpdated={handleUserProfileUpdated}
             onNotify={socket.pushToast}
           />
         )}
       </main>
+
+      {/* Dedicated Settings Modal */}
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        lang={lang}
+        onChangeLang={handleChangeLang}
+        user={user}
+        isAdmin={isActualAdmin}
+        onOpenAdmin={() => setAdminViewMode('admin')}
+        onLogout={handleLogout}
+        onNotify={socket.pushToast}
+      />
 
       <AnimatePresence>
         {notiDrawerOpen && (
@@ -848,7 +868,7 @@ function VanguardAppCore() {
                 <div className="text-xs font-semibold text-amber-400">{t.common.directChallenge}</div>
                 <div className="text-base font-bold text-white">{socket.pendingChallenge.from.displayName}</div>
                 <div className="text-xs text-slate-400">
-                  {GAME_REGISTRY[socket.pendingChallenge.gameType]?.nameMy}
+                  {safeChallengeGameName(socket.pendingChallenge.gameType, lang)}
                 </div>
               </div>
             </div>
@@ -877,11 +897,17 @@ function VanguardAppCore() {
           lang={lang}
           token={token}
           userId={inspectUserId}
-          currentUserId={user.id}
+          currentUser={user}
+          allUsers={mergedLeaderboard}
           frames={socket.frames}
           onClose={() => setInspectUserId(null)}
-          onAddFriend={handleAddFriend}
+          onUserUpdated={handleUserProfileUpdated}
+          onOpenChatWith={(targetId) => {
+            setInitialChatUserId(targetId);
+            setActiveTab('social');
+          }}
           onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
+          onNotify={socket.pushToast}
         />
       )}
 
