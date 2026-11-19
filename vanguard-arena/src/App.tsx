@@ -5,6 +5,8 @@ import { AnimatePresence, motion } from 'motion/react';
 import {
   AlertTriangle,
   Award,
+  Bell,
+  CheckCheck,
   Clock,
   Gamepad2,
   LogOut,
@@ -23,7 +25,12 @@ import { GAME_REGISTRY } from './games/registry.ts';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
-import { ACTIVE_USER_KEY, getPatchedLandingContent, readActiveSessionUser, saveActiveSessionUser } from './lib/serverlessApi.ts';
+import {
+  ACTIVE_USER_KEY,
+  getPatchedLandingContent,
+  readActiveSessionUser,
+  saveActiveSessionUser,
+} from './lib/serverlessApi.ts';
 import type { Difficulty, GameType, LandingContent, Language, TurnTimeLimit, UserProfile } from './types.ts';
 import { soundEngine } from './utils/sound.ts';
 import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
@@ -42,62 +49,6 @@ import { PlayerProfileModal } from './components/PlayerProfileModal.tsx';
 const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
 );
-
-class AdminErrorBoundary extends React.Component<
-  { children: React.ReactNode; onSwitchToLobby: () => void; onLogout: () => void },
-  { hasError: boolean; errorMessage: string }
-> {
-  constructor(props: { children: React.ReactNode; onSwitchToLobby: () => void; onLogout: () => void }) {
-    super(props);
-    this.state = { hasError: false, errorMessage: '' };
-  }
-
-  static getDerivedStateFromError(error: Error) {
-    return { hasError: true, errorMessage: error?.message || 'Admin Panel Render Error' };
-  }
-
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="min-h-screen cyber-bg text-slate-100 flex items-center justify-center p-4">
-          <div className="max-w-md w-full rounded-2xl cyber-panel border border-amber-500/40 p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center gap-3 text-amber-400">
-              <ShieldAlert className="w-6 h-6 shrink-0" />
-              <h2 className="text-lg font-display font-bold text-white">Master Admin Recovery</h2>
-            </div>
-            <div className="p-3 rounded-xl bg-[#070b14] border border-rose-500/30 text-xs font-mono text-rose-300 break-words">
-              {this.state.errorMessage}
-            </div>
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <button
-                type="button"
-                onClick={this.props.onSwitchToLobby}
-                className="min-h-[44px] rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
-              >
-                🎮 Game Lobby သို့သွားမည်
-              </button>
-              <button
-                type="button"
-                onClick={() => this.setState({ hasError: false, errorMessage: '' })}
-                className="min-h-[44px] rounded-xl bg-white/10 hover:bg-white/15 text-white font-semibold text-xs cursor-pointer"
-              >
-                🔄 ပြန်ကြိုးစားမည်
-              </button>
-            </div>
-            <button
-              type="button"
-              onClick={this.props.onLogout}
-              className="w-full py-2 text-xs text-slate-400 hover:text-rose-300 cursor-pointer"
-            >
-              Sign Out
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
 
 type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
 
@@ -130,6 +81,7 @@ export default function App() {
   const [muted, setMuted] = React.useState(soundEngine.isMuted());
   const [inspectUserId, setInspectUserId] = React.useState<string | null>(null);
   const [kickBanner, setKickBanner] = React.useState<string | null>(null);
+  const [notiDrawerOpen, setNotiDrawerOpen] = React.useState(false);
   const [nowTs, setNowTs] = React.useState(() => Date.now());
   const [acknowledgingWarning, setAcknowledgingWarning] = React.useState(false);
 
@@ -137,17 +89,21 @@ export default function App() {
 
   const handleChangeLang = React.useCallback((next: Language) => {
     setLang(next);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('vanguard_lang', next);
-    }
+    if (typeof window !== 'undefined') localStorage.setItem('vanguard_lang', next);
   }, []);
 
   const handleLogout = React.useCallback(async () => {
+    if (token) {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      }).catch(() => {});
+    }
     clearStoredToken();
     setToken(null);
     setUser(null);
     setAdminViewMode('admin');
-  }, []);
+  }, [token]);
 
   const handleKicked = React.useCallback((reason: string) => {
     clearStoredToken();
@@ -172,11 +128,11 @@ export default function App() {
         if (token) {
           const saved = readActiveSessionUser();
           if (saved && active) {
-            const safeUser =
+            setUser(
               token === 'admin-token'
                 ? saved
-                : ({ ...saved, role: 'player', isAdmin: false } as UserProfile);
-            setUser(safeUser);
+                : ({ ...saved, role: 'player', isAdmin: false } as UserProfile)
+            );
           } else {
             const meRes = await fetch('/api/auth/me', {
               headers: { Authorization: `Bearer ${token}` },
@@ -184,11 +140,11 @@ export default function App() {
             if (meRes.ok && active) {
               const me = await meRes.json();
               if (me.user) {
-                const safeUser =
+                setUser(
                   token === 'admin-token'
                     ? me.user
-                    : ({ ...me.user, role: 'player', isAdmin: false } as UserProfile);
-                setUser(safeUser);
+                    : ({ ...me.user, role: 'player', isAdmin: false } as UserProfile)
+                );
               }
             } else if (active) {
               clearStoredToken();
@@ -233,11 +189,9 @@ export default function App() {
     } as UserProfile;
 
     saveActiveSessionUser(cleanProfile);
-    if (rememberMe) {
-      localStorage.setItem('vanguard_token', nextToken);
-    } else {
-      sessionStorage.setItem('vanguard_token', nextToken);
-    }
+    if (rememberMe) localStorage.setItem('vanguard_token', nextToken);
+    else sessionStorage.setItem('vanguard_token', nextToken);
+
     setKickBanner(null);
     setToken(nextToken);
     setUser(cleanProfile);
@@ -262,19 +216,14 @@ export default function App() {
 
   const handleAcknowledgeWarning = React.useCallback(
     async (warningId: string) => {
-      if (!token) return;
       setAcknowledgingWarning(true);
       try {
-        await fetch(`/api/warnings/${encodeURIComponent(warningId)}/ack`, {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${token}` },
-        }).catch(() => {});
-        socket.dismissWarningLocal(warningId);
+        await socket.dismissWarningLocal(warningId);
       } finally {
         setAcknowledgingWarning(false);
       }
     },
-    [token, socket]
+    [socket]
   );
 
   const handleStartBot = async (
@@ -290,11 +239,8 @@ export default function App() {
       body: JSON.stringify({ gameType, difficulty, bestOf, turnTimeLimit }),
     });
     const data = await res.json();
-    if (!res.ok) {
-      socket.pushToast('error', data.error || 'Unable to start bot match.');
-    } else if (data.match) {
-      socket.setActiveMatch(data.match);
-    }
+    if (!res.ok) socket.pushToast('error', data.error || 'Unable to start bot match.');
+    else if (data.match) socket.setActiveMatch(data.match);
   };
 
   const handleAddFriend = async (targetUserId: string) => {
@@ -305,34 +251,6 @@ export default function App() {
       body: JSON.stringify({ targetUserId }),
     });
     socket.pushToast('success', 'Friend request sent.');
-  };
-
-  const handleJoinTournament = async (id: string) => {
-    if (!token) return;
-    await fetch(`/api/tournaments/${id}/join`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    socket.pushToast('success', 'Registered for tournament!');
-  };
-
-  const handleLeaveTournament = async (id: string) => {
-    if (!token) return;
-    await fetch(`/api/tournaments/${id}/leave`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    socket.pushToast('info', 'Withdrawn from tournament.');
-  };
-
-  const handleLaunchBracketMatch = async (tournamentId: string, bmId: string) => {
-    if (!token) return;
-    const res = await fetch(`/api/tournaments/${tournamentId}/matches/${bmId}/launch`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (data.match) socket.setActiveMatch(data.match);
   };
 
   const handleStartSakarSolo = async () => {
@@ -376,8 +294,7 @@ export default function App() {
 
   const handleLeaveSakarRoom = async () => {
     if (!token || !socket.currentRoom) return;
-    const roomId = socket.currentRoom.id;
-    await fetch(`/api/sakar/rooms/${roomId}/leave`, {
+    await fetch(`/api/sakar/rooms/${socket.currentRoom.id}/leave`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -425,11 +342,7 @@ export default function App() {
         {kickBanner && (
           <div className="bg-rose-500/15 border-b border-rose-500/40 px-4 py-2.5 text-xs text-rose-200 flex items-center justify-between gap-4">
             <span>{kickBanner}</span>
-            <button
-              type="button"
-              onClick={() => setKickBanner(null)}
-              className="text-rose-200 hover:text-white cursor-pointer"
-            >
+            <button type="button" onClick={() => setKickBanner(null)} className="text-rose-200 cursor-pointer">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -450,32 +363,26 @@ export default function App() {
   if (isActualAdmin && adminViewMode === 'admin') {
     return (
       <div className={rootClass}>
-        <AdminErrorBoundary
-          onSwitchToLobby={() => setAdminViewMode('lobby')}
-          onLogout={handleLogout}
+        <Suspense
+          fallback={
+            <div className="min-h-screen cyber-bg flex items-center justify-center text-sm text-amber-300">
+              {t.common.loading}
+            </div>
+          }
         >
-          <Suspense
-            fallback={
-              <div className="min-h-screen cyber-bg flex items-center justify-center text-sm text-amber-300">
-                {t.common.loading}
-              </div>
-            }
-          >
-            <AdminPanel
-              key={`admin_live_${socket.onlinePlayers.length}`}
-              token={token}
-              adminUser={user}
-              livePingMs={socket.pingMs}
-              lang={lang}
-              onChangeLang={handleChangeLang}
-              onSwitchToLobby={() => setAdminViewMode('lobby')}
-              landingContent={socket.landingContent}
-              onLandingUpdated={socket.setLandingContent}
-              onLogout={handleLogout}
-              onNotify={socket.pushToast}
-            />
-          </Suspense>
-        </AdminErrorBoundary>
+          <AdminPanel
+            token={token}
+            adminUser={user}
+            livePingMs={socket.pingMs}
+            lang={lang}
+            onChangeLang={handleChangeLang}
+            onSwitchToLobby={() => setAdminViewMode('lobby')}
+            landingContent={socket.landingContent}
+            onLandingUpdated={socket.setLandingContent}
+            onLogout={handleLogout}
+            onNotify={socket.pushToast}
+          />
+        </Suspense>
         <ToastStack toasts={socket.toasts} />
       </div>
     );
@@ -489,13 +396,18 @@ export default function App() {
     { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
   ];
 
+  // Ensure current user is ALWAYS included in the leaderboard list
+  const mergedLeaderboard = React.useMemo(() => {
+    const exists = socket.leaderboard.some((u) => u.id === user.id);
+    return exists ? socket.leaderboard : [...socket.leaderboard, user];
+  }, [socket.leaderboard, user]);
+
   return (
     <div
       className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
         !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
       } ${rootClass}`}
     >
-      {/* Vanguard Cyber Top Navigation Bar */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
@@ -507,7 +419,6 @@ export default function App() {
               Vanguard
             </button>
 
-            {/* PC Desktop Horizontal Nav Tabs */}
             <nav className="hidden lg:flex items-center gap-1 text-xs font-semibold">
               {navItems.map((item) => {
                 const active = activeTab === item.id;
@@ -530,7 +441,6 @@ export default function App() {
             </nav>
           </div>
 
-          {/* Right Controls: Admin Pill, Language Pill, 23ms Telemetry, Sound, Avatar, Logout */}
           <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
             {isActualAdmin && (
               <button
@@ -543,6 +453,21 @@ export default function App() {
               </button>
             )}
 
+            {/* Real-Time Notification Bell (🔔) for Admin Broadcasts & Messages */}
+            <button
+              type="button"
+              onClick={() => setNotiDrawerOpen((v) => !v)}
+              aria-label="Notifications"
+              className="relative w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-white/10 border border-white/10 text-amber-300 flex items-center justify-center cursor-pointer"
+            >
+              <Bell className="w-4 h-4" />
+              {socket.unreadNotiCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-rose-500 text-white text-[10px] font-bold flex items-center justify-center animate-bounce">
+                  {socket.unreadNotiCount}
+                </span>
+              )}
+            </button>
+
             <LanguageSwitcher lang={lang} onChange={handleChangeLang} />
 
             <div className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-[#0d1322] border border-emerald-500/25 text-emerald-300">
@@ -553,8 +478,7 @@ export default function App() {
             <button
               type="button"
               onClick={toggleMute}
-              aria-label={muted ? 'Unmute audio' : 'Mute audio'}
-              className="w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-white/5 border border-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+              className="w-9 h-9 rounded-xl bg-[#0d1322] border border-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
@@ -562,7 +486,7 @@ export default function App() {
             <button
               type="button"
               onClick={() => setActiveTab('profile')}
-              className="p-0.5 rounded-full bg-gradient-to-b from-amber-300 to-amber-600 cursor-pointer"
+              className="cursor-pointer"
               title={user.displayName}
             >
               <AvatarWithFrame
@@ -577,7 +501,6 @@ export default function App() {
             <button
               type="button"
               onClick={handleLogout}
-              aria-label={t.nav.signOut}
               className="w-9 h-9 rounded-xl bg-[#0d1322] hover:bg-rose-500/20 border border-white/10 text-slate-300 hover:text-rose-300 flex items-center justify-center cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
@@ -586,25 +509,23 @@ export default function App() {
         </div>
       </header>
 
+      {/* Live Admin Announcement Banner */}
       <AnimatePresence>
         {socket.announcement && (
           <motion.div
             initial={{ opacity: 0, y: -12 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -12 }}
-            className="bg-amber-500/15 border-b border-amber-400/40 px-4 py-1.5 shrink-0"
+            className="bg-amber-500/15 border-b border-amber-400/40 px-4 py-2 shrink-0"
           >
             <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
               <div className="flex items-center gap-2 text-xs">
-                <Megaphone className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                <Megaphone className="w-4 h-4 text-amber-400 shrink-0" />
+                <span className="font-bold text-amber-300">{socket.announcement.title}:</span>
                 <span className="text-slate-100 truncate">{socket.announcement.message}</span>
               </div>
-              <button
-                type="button"
-                onClick={() => socket.setAnnouncement(null)}
-                className="text-slate-300 hover:text-white cursor-pointer"
-              >
-                <X className="w-3.5 h-3.5" />
+              <button type="button" onClick={() => socket.setAnnouncement(null)} className="text-slate-300 cursor-pointer">
+                <X className="w-4 h-4" />
               </button>
             </div>
           </motion.div>
@@ -626,121 +547,164 @@ export default function App() {
         </div>
       )}
 
-      {/* Main Viewport with Smooth Motion Transitions */}
+      {/* Main Content */}
       <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-visible">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={socket.activeMatch ? 'match' : socket.currentRoom ? 'room' : activeTab}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="h-full"
-          >
-            {socket.activeMatch ? (
-              <MatchArena
-                lang={lang}
-                token={token}
-                match={socket.activeMatch}
-                currentUser={user}
-                frames={socket.frames}
-                featureLocks={socket.featureLocks}
-                chatMessages={socket.matchChat}
-                onMove={socket.sendMove}
-                onForfeit={socket.forfeitMatch}
-                onSendChat={socket.sendMatchChat}
-                onLeaveFinished={() => socket.setActiveMatch(null)}
-                onNotify={socket.pushToast}
-              />
-            ) : activeTab === 'lobby' && socket.currentRoom ? (
-              <SakarRoomLobby
-                lang={lang}
-                room={socket.currentRoom}
-                currentUser={user}
-                frames={socket.frames}
-                featureLocks={socket.featureLocks}
-                chatMessages={socket.roomChat}
-                onLeaveRoom={handleLeaveSakarRoom}
-                onStartMatch={handleStartSakarRoomMatch}
-                onKickPlayer={handleKickSakarRoomPlayer}
-                onSendChat={socket.sendRoomChat}
-              />
-            ) : activeTab === 'lobby' ? (
-              <LobbyView
-                lang={lang}
-                landingContent={socket.landingContent}
-                currentUser={user}
-                onlinePlayers={socket.onlinePlayers}
-                frames={socket.frames}
-                featureLocks={socket.featureLocks}
-                matchmakingSettings={socket.matchmakingSettings}
-                queuedGame={socket.queuedGame}
-                sakarQuickCount={socket.sakarQuickCount}
-                openRooms={socket.openRooms}
-                onStartBot={handleStartBot}
-                onJoinQueue={socket.joinQueue}
-                onLeaveQueue={socket.leaveQueue}
-                onStartSakarSolo={handleStartSakarSolo}
-                onJoinSakarQuick={socket.joinSakarQuick}
-                onStartSakarQuickNow={socket.startSakarQuickNow}
-                onCreateSakarRoom={handleCreateSakarRoom}
-                onJoinSakarRoom={handleJoinSakarRoom}
-                onSendChallenge={socket.sendChallenge}
-                onInspectPlayer={(id) => setInspectUserId(id)}
-                onAddFriend={handleAddFriend}
-              />
-            ) : activeTab === 'tournaments' ? (
-              <TournamentView
-                lang={lang}
-                tournaments={socket.tournaments}
-                featureLocks={socket.featureLocks}
-                currentUser={user}
-                frames={socket.frames}
-                onJoin={handleJoinTournament}
-                onLeave={handleLeaveTournament}
-                onLaunchBracketMatch={handleLaunchBracketMatch}
-              />
-            ) : activeTab === 'leaderboard' ? (
-              <LeaderboardView
-                lang={lang}
-                leaderboard={socket.leaderboard}
-                currentUserId={user.id}
-                currentUserRp={user.xp}
-                frames={socket.frames}
-                onInspectPlayer={(id) => setInspectUserId(id)}
-              />
-            ) : activeTab === 'social' ? (
-              <SocialHub
-                lang={lang}
-                token={token}
-                currentUser={user}
-                frames={socket.frames}
-                featureLocks={socket.featureLocks}
-                refreshTick={socket.socialRefreshTick}
-                incomingDMs={socket.incomingDMs}
-                onInspectPlayer={(id) => setInspectUserId(id)}
-                onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
-                onNotify={socket.pushToast}
-              />
-            ) : (
-              <ProfileView
-                lang={lang}
-                token={token}
-                user={user}
-                frames={socket.frames}
-                onUserUpdated={(updated) => {
-                  const enforced = isActualAdmin ? updated : { ...updated, role: 'player' as const, isAdmin: false };
-                  saveActiveSessionUser(enforced);
-                  setUser(enforced);
-                }}
-                onNotify={socket.pushToast}
-              />
-            )}
-          </motion.div>
-        </AnimatePresence>
+        {socket.activeMatch ? (
+          <MatchArena
+            lang={lang}
+            token={token}
+            match={socket.activeMatch}
+            currentUser={user}
+            frames={socket.frames}
+            featureLocks={socket.featureLocks}
+            chatMessages={socket.matchChat}
+            onMove={socket.sendMove}
+            onForfeit={socket.forfeitMatch}
+            onSendChat={socket.sendMatchChat}
+            onLeaveFinished={() => socket.setActiveMatch(null)}
+            onNotify={socket.pushToast}
+          />
+        ) : activeTab === 'lobby' && socket.currentRoom ? (
+          <SakarRoomLobby
+            lang={lang}
+            room={socket.currentRoom}
+            currentUser={user}
+            frames={socket.frames}
+            featureLocks={socket.featureLocks}
+            chatMessages={socket.roomChat}
+            onLeaveRoom={handleLeaveSakarRoom}
+            onStartMatch={handleStartSakarRoomMatch}
+            onKickPlayer={handleKickSakarRoomPlayer}
+            onSendChat={socket.sendRoomChat}
+          />
+        ) : activeTab === 'lobby' ? (
+          <LobbyView
+            lang={lang}
+            landingContent={socket.landingContent}
+            currentUser={user}
+            onlinePlayers={mergedLeaderboard}
+            frames={socket.frames}
+            featureLocks={socket.featureLocks}
+            matchmakingSettings={socket.matchmakingSettings}
+            queuedGame={socket.queuedGame}
+            sakarQuickCount={socket.sakarQuickCount}
+            openRooms={socket.openRooms}
+            onStartBot={handleStartBot}
+            onJoinQueue={socket.joinQueue}
+            onLeaveQueue={socket.leaveQueue}
+            onStartSakarSolo={handleStartSakarSolo}
+            onJoinSakarQuick={socket.joinSakarQuick}
+            onStartSakarQuickNow={socket.startSakarQuickNow}
+            onCreateSakarRoom={handleCreateSakarRoom}
+            onJoinSakarRoom={handleJoinSakarRoom}
+            onSendChallenge={socket.sendChallenge}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+            onAddFriend={handleAddFriend}
+          />
+        ) : activeTab === 'tournaments' ? (
+          <TournamentView
+            lang={lang}
+            tournaments={socket.tournaments}
+            featureLocks={socket.featureLocks}
+            currentUser={user}
+            frames={socket.frames}
+            onJoin={() => socket.pushToast('success', 'Registered!')}
+            onLeave={() => socket.pushToast('info', 'Withdrawn.')}
+            onLaunchBracketMatch={() => {}}
+          />
+        ) : activeTab === 'leaderboard' ? (
+          <LeaderboardView
+            lang={lang}
+            leaderboard={mergedLeaderboard}
+            currentUserId={user.id}
+            currentUserRp={user.xp}
+            frames={socket.frames}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+          />
+        ) : activeTab === 'social' ? (
+          <SocialHub
+            lang={lang}
+            token={token}
+            currentUser={user}
+            frames={socket.frames}
+            featureLocks={socket.featureLocks}
+            refreshTick={socket.socialRefreshTick}
+            incomingDMs={socket.incomingDMs}
+            onInspectPlayer={(id) => setInspectUserId(id)}
+            onChallenge={(id, gt) => socket.sendChallenge(id, gt)}
+            onNotify={socket.pushToast}
+          />
+        ) : (
+          <ProfileView
+            lang={lang}
+            token={token}
+            user={user}
+            frames={socket.frames}
+            onUserUpdated={(updated) => {
+              const enforced = isActualAdmin ? updated : { ...updated, role: 'player' as const, isAdmin: false };
+              saveActiveSessionUser(enforced);
+              setUser(enforced);
+            }}
+            onNotify={socket.pushToast}
+          />
+        )}
       </main>
 
-      {/* Mobile Cyber Bottom Navigation Bar */}
+      {/* Notification Inbox Drawer */}
+      <AnimatePresence>
+        {notiDrawerOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="fixed top-16 right-3 z-50 w-80 max-w-[calc(100vw-1.5rem)] rounded-2xl cyber-panel border border-amber-400/40 p-3.5 shadow-2xl space-y-2.5"
+          >
+            <div className="flex items-center justify-between border-b border-white/10 pb-2">
+              <span className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                <Bell className="w-4 h-4" /> Notifications ({socket.notifications.length})
+              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={socket.markAllNotificationsRead}
+                  className="text-[11px] text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <CheckCheck className="w-3.5 h-3.5" /> Read All
+                </button>
+                <button type="button" onClick={() => setNotiDrawerOpen(false)} className="text-slate-400 cursor-pointer">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {socket.notifications.length === 0 ? (
+                <div className="text-xs text-slate-500 text-center py-6">
+                  {lang === 'my' ? 'Notification အသစ် မရှိသေးပါ။' : 'No notifications yet.'}
+                </div>
+              ) : (
+                socket.notifications.map((n) => (
+                  <div
+                    key={n.id}
+                    className={`p-2.5 rounded-xl border text-xs space-y-1 ${
+                      n.read ? 'bg-[#090d16] border-white/5 opacity-75' : 'bg-amber-500/10 border-amber-400/40'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-300">{n.title}</span>
+                      <span className="text-[10px] text-slate-400">
+                        {new Date(n.createdAtMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <p className="text-slate-200 leading-relaxed">{n.message}</p>
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mobile Bottom Nav */}
       {!socket.activeMatch && (
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
           <div className="grid grid-cols-5 h-16 items-center">
@@ -751,14 +715,12 @@ export default function App() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
-                  className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 transition-colors cursor-pointer ${
-                    active ? 'text-amber-400' : 'text-slate-400 hover:text-slate-200'
+                  className={`min-h-[48px] flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                    active ? 'text-amber-400' : 'text-slate-400'
                   }`}
                 >
                   {item.icon}
-                  <span className="text-[10px] font-semibold tracking-tight truncate max-w-full px-1">
-                    {item.label}
-                  </span>
+                  <span className="text-[10px] font-semibold truncate max-w-full px-1">{item.label}</span>
                 </button>
               );
             })}
@@ -791,14 +753,9 @@ export default function App() {
               />
               <div>
                 <div className="text-xs font-semibold text-amber-400">{t.common.directChallenge}</div>
-                <div className="text-base font-display font-bold text-white">
-                  {socket.pendingChallenge.from.displayName}
-                </div>
+                <div className="text-base font-bold text-white">{socket.pendingChallenge.from.displayName}</div>
                 <div className="text-xs text-slate-400">
-                  {t.common.wantsToPlay}{' '}
-                  {lang === 'my'
-                    ? GAME_REGISTRY[socket.pendingChallenge.gameType].nameMy
-                    : GAME_REGISTRY[socket.pendingChallenge.gameType].name}
+                  {GAME_REGISTRY[socket.pendingChallenge.gameType]?.nameMy}
                 </div>
               </div>
             </div>
@@ -806,7 +763,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => socket.respondChallenge(socket.pendingChallenge!.id, false)}
-                className="min-h-[44px] rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white cursor-pointer"
+                className="min-h-[44px] rounded-xl bg-white/10 text-xs font-semibold text-white cursor-pointer"
               >
                 {t.common.decline}
               </button>
@@ -835,21 +792,22 @@ export default function App() {
         />
       )}
 
+      {/* Instant Real-Time Popup Modal when Admin Sends a Notification or Warning */}
       {socket.pendingWarnings.length > 0 && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 p-6 space-y-4 shadow-2xl">
+          <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/60 p-6 space-y-4 shadow-2xl">
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/40 flex items-center justify-center shrink-0">
-                <ShieldAlert className="w-5 h-5 text-amber-400" />
+                <Bell className="w-5 h-5 text-amber-400" />
               </div>
               <div>
-                <h3 className="text-base font-display font-bold text-white">
-                  {t.moderation.warningModalTitle}
+                <h3 className="text-base font-bold text-white">
+                  {socket.pendingWarnings[0].title || 'Admin မှ အသိပေးစာ'}
                 </h3>
-                <p className="text-xs text-slate-400 mt-1">{t.moderation.warningModalDesc}</p>
+                <p className="text-xs text-slate-400 mt-0.5">Real-Time Notification from Vanguard Admin</p>
               </div>
             </div>
-            <div className="rounded-xl bg-[#070b14] border border-white/10 p-3.5 text-sm text-amber-100">
+            <div className="rounded-xl bg-[#070b14] border border-white/10 p-3.5 text-sm text-amber-100 leading-relaxed">
               {socket.pendingWarnings[0].reason}
             </div>
             <button
@@ -858,7 +816,7 @@ export default function App() {
               onClick={() => handleAcknowledgeWarning(socket.pendingWarnings[0].id)}
               className="w-full min-h-[44px] rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs cursor-pointer"
             >
-              {acknowledgingWarning ? t.common.loading : t.moderation.warningAckBtn}
+              {acknowledgingWarning ? '...' : 'နားလည်ပါပြီ (OK)'}
             </button>
           </div>
         </div>
@@ -871,14 +829,10 @@ export default function App() {
 
 function formatCountdown(ms: number): string {
   const totalSec = Math.max(0, Math.floor(ms / 1000));
-  const days = Math.floor(totalSec / 86400);
-  const hours = Math.floor((totalSec % 86400) / 3600);
+  const hours = Math.floor(totalSec / 3600);
   const mins = Math.floor((totalSec % 3600) / 60);
   const secs = totalSec % 60;
-  const hh = String(hours).padStart(2, '0');
-  const mm = String(mins).padStart(2, '0');
-  const ss = String(secs).padStart(2, '0');
-  return days > 0 ? `${days}d ${hh}:${mm}:${ss}` : `${hh}:${mm}:${ss}`;
+  return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
 function ToastStack({ toasts }: { toasts: { id: string; level: string; message: string }[] }) {
@@ -897,7 +851,7 @@ function ToastStack({ toasts }: { toasts: { id: string; level: string; message: 
                 ? 'bg-rose-950/95 border-rose-500/40 text-rose-100'
                 : t.level === 'success'
                 ? 'bg-emerald-950/95 border-emerald-500/40 text-emerald-100'
-                : 'bg-[#121a2d]/95 border-amber-400/30 text-slate-100'
+                : 'bg-[#121a2d]/95 border-amber-400/35 text-slate-100'
             }`}
           >
             <Award className="w-4 h-4 shrink-0 text-amber-400" />
