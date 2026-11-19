@@ -11,11 +11,22 @@ import { getShuffledQuizSet, QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
-import { db, isFirebaseConfigured } from './firebase.ts';
+import { db, isFirebaseConfigured, stripUndefined } from './firebase.ts';
 
-export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v7';
-export const ACTIVE_USER_KEY = 'vanguard_active_user_v7';
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v8';
+export const ACTIVE_USER_KEY = 'vanguard_active_user_v8';
+export const SYNC_CHANNEL_NAME = 'vanguard_realtime_sync_v8';
 export const DEFAULT_SAKAR_RIDDLES = QUIZ_BANK_100;
+
+export function broadcastLocalSync(type = 'STATE_UPDATED') {
+  try {
+    if (typeof BroadcastChannel !== 'undefined') {
+      const ch = new BroadcastChannel(SYNC_CHANNEL_NAME);
+      ch.postMessage({ type, ts: Date.now() });
+      ch.close();
+    }
+  } catch {}
+}
 
 export function normalizeGameId(raw?: string): 'connect4' | 'tictactoe' | 'rps' | 'sakarhtar' {
   const s = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -44,17 +55,19 @@ export function getPatchedLandingContent(base = DEFAULT_LANDING_CONTENT) {
 export function saveActiveSessionUser(user: any) {
   try {
     const dev = detectClientDevice();
-    const enriched = {
+    const enriched = stripUndefined({
       ...user,
       ...dev,
       online: true,
-    };
+      lastSeenMs: Date.now(),
+    });
     localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(enriched));
     const store = readServerlessStore();
     if (enriched?.id) {
       store.users[enriched.id] = enriched;
       writeServerlessStore(store);
     }
+    broadcastLocalSync('USER_UPDATED');
   } catch {}
 }
 
@@ -86,6 +99,7 @@ export function readServerlessStore() {
         frameId: 'legend',
         status: 'active',
         online: true,
+        lastSeenMs: Date.now(),
         ...adminDev,
         avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
         friends: [],
@@ -97,19 +111,8 @@ export function readServerlessStore() {
     rooms: [] as any[],
     riddles: [...QUIZ_BANK_100],
     reports: [] as any[],
-    warnings: [] as any[],
-    directMessages: [] as any[],
-    announcements: [] as any[],
-    activeBroadcast: null as { id: string; title: string; message: string; createdAt: string } | null,
-    auditLogs: [
-      {
-        id: 'log_1',
-        action: 'SYSTEM_READY',
-        actor: 'yanlinnaung',
-        detail: 'Vanguard Arena Real-Time Core & 100 Quiz Bank Active',
-        createdAt: new Date().toISOString(),
-      },
-    ],
+    notifications: [] as any[],
+    activeBroadcast: null as { id: string; title: string; message: string; createdAtMs: number } | null,
     landingContent: getPatchedLandingContent(DEFAULT_LANDING_CONTENT),
     featureLocks: {
       connect4: false,
@@ -196,7 +199,7 @@ export function buildPlayableMatch(
   const riddles = getShuffledQuizSet(10, store.riddles);
   const deadline = new Date(Date.now() + turnTimeLimit * 1000).toISOString();
 
-  return {
+  return stripUndefined({
     id: opts.matchId || `match_${Date.now()}_${Math.floor(Math.random() * 999)}`,
     gameType,
     mode: opts.mode || 'bot',
@@ -221,7 +224,7 @@ export function buildPlayableMatch(
     winnerId: null as string | null,
     isDraw: false,
     createdAt: new Date().toISOString(),
-  };
+  });
 }
 
 function jsonResponse(data: any, status = 200): Response {
@@ -287,9 +290,16 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
         if (snap && snap.exists()) {
           const dev = detectClientDevice();
-          const uData = { ...snap.data(), ...dev, online: true, role: 'player', isAdmin: false };
+          const uData = stripUndefined({
+            ...snap.data(),
+            ...dev,
+            online: true,
+            lastSeenMs: Date.now(),
+            role: 'player',
+            isAdmin: false,
+          });
           saveActiveSessionUser(uData);
-          await setDoc(doc(db, 'users', uid), { ...dev, online: true }, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'users', uid), uData, { merge: true }).catch((e) => console.error(e));
           return jsonResponse({ user: uData });
         }
       }
@@ -298,6 +308,13 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     }
 
     if (path === '/api/auth/logout') {
+      if (currentUser?.id && isFirebaseConfigured && db) {
+        await setDoc(
+          doc(db, 'users', currentUser.id),
+          { online: false, lastSeenMs: Date.now() },
+          { merge: true }
+        ).catch(() => {});
+      }
       localStorage.removeItem(ACTIVE_USER_KEY);
       return jsonResponse({ ok: true });
     }
@@ -319,7 +336,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       const code = 'MR-' + Math.floor(1000 + Math.random() * 9000);
       const gameType = normalizeGameId(body.gameType || 'sakarhtar');
       const maxPlayers = gameType === 'sakarhtar' ? Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)) : 2;
-      const room = {
+      const room = stripUndefined({
         id: `room_${Date.now()}_${Math.floor(Math.random() * 999)}`,
         code,
         gameType,
@@ -331,12 +348,13 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         status: 'waiting',
         activeMatchId: null,
         createdAt: Date.now(),
-      };
+      });
       store.rooms.push(room);
       writeServerlessStore(store);
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'rooms', room.id), room).catch(() => {});
+        await setDoc(doc(db, 'rooms', room.id), room).catch((e) => console.error(e));
       }
+      broadcastLocalSync('ROOM_CREATED');
       return jsonResponse({ room });
     }
 
@@ -369,13 +387,14 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       if (room.status !== 'waiting') return jsonResponse({ error: 'ပွဲစတင်နေပြီ ဖြစ်ပါသည်။' }, 400);
       if (!room.players.some((p: any) => p.id === player.id)) {
         if (room.players.length >= room.maxPlayers) return jsonResponse({ error: 'အခန်း လူပြည့်သွားပါပြီ။' }, 400);
-        room.players.push(player);
+        room.players.push(stripUndefined(player));
       }
       store.rooms = [...store.rooms.filter((r: any) => r.id !== room.id), room];
       writeServerlessStore(store);
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'rooms', room.id), room, { merge: true }).catch(() => {});
+        await setDoc(doc(db, 'rooms', room.id), stripUndefined(room), { merge: true }).catch((e) => console.error(e));
       }
+      broadcastLocalSync('ROOM_JOINED');
       return jsonResponse({ room });
     }
 
@@ -390,7 +409,9 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
           if (isFirebaseConfigured && db) await deleteDoc(doc(db, 'rooms', roomId)).catch(() => {});
         } else {
           if (target.hostId === player?.id) target.hostId = target.players[0].id;
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'rooms', roomId), stripUndefined(target), { merge: true }).catch(() => {});
+          }
         }
         writeServerlessStore(store);
       }
@@ -415,51 +436,14 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       });
 
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'matches', match.id), match).catch(() => {});
+        await setDoc(doc(db, 'matches', match.id), stripUndefined(match)).catch((e) => console.error(e));
         if (target) {
           target.status = 'playing';
           target.activeMatchId = match.id;
-          await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'rooms', roomId), stripUndefined(target), { merge: true }).catch((e) => console.error(e));
         }
       }
       return jsonResponse({ match });
-    }
-
-    // Social & Direct Messages (Real-Time Sync between Users & Admin)
-    if ((path.includes('/dm') || path.includes('/message')) && method === 'POST') {
-      const targetId = body.targetUserId || body.toUserId || body.recipientId || path.split('/')[4] || '';
-      const text = body.message || body.text || body.content || '';
-      const dm = {
-        id: `dm_${Date.now()}_${Math.floor(Math.random() * 999)}`,
-        fromUserId: currentUser?.id || 'admin_yanlinnaung',
-        fromName: currentUser?.displayName || 'Yan Linn Aung (Admin)',
-        fromRole: currentUser?.role || 'admin',
-        toUserId: targetId,
-        text,
-        read: false,
-        createdAt: new Date().toISOString(),
-      };
-      store.directMessages.push(dm);
-      writeServerlessStore(store);
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'messages', dm.id), dm).catch(() => {});
-      }
-      return jsonResponse({ ok: true, message: dm });
-    }
-
-    if (path.startsWith('/api/social')) {
-      const myId = currentUser?.id || '';
-      const myDms = (store.directMessages || []).filter(
-        (m: any) => m.toUserId === myId || m.fromUserId === myId
-      );
-      return jsonResponse({
-        friends: [],
-        incomingRequests: [],
-        outgoingRequests: [],
-        blocked: currentUser?.blocked || [],
-        conversations: myDms,
-        messages: myDms,
-      });
     }
 
     if (path.startsWith('/api/profile') && ['PATCH', 'POST', 'PUT'].includes(method)) {
@@ -467,209 +451,29 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         Object.assign(currentUser, body);
         saveActiveSessionUser(currentUser);
         if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'users', currentUser.id), stripUndefined(currentUser), { merge: true }).catch((e) =>
+            console.error(e)
+          );
         }
       }
       return jsonResponse({ user: currentUser });
     }
 
-    if (path.match(/^\/api\/warnings\/[^/]+\/ack$/) && method === 'POST') {
-      const wid = decodeURIComponent(path.split('/')[3] || '');
-      store.warnings = store.warnings.filter((w: any) => w.id !== wid);
-      writeServerlessStore(store);
-      if (isFirebaseConfigured && db && wid) {
-        await updateDoc(doc(db, 'warnings', wid), { acknowledged: true }).catch(() => {});
+    if (path.startsWith('/api/users/')) {
+      const uid = path.split('/')[3];
+      if (isFirebaseConfigured && db) {
+        const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
+        if (snap && snap.exists()) return jsonResponse({ user: snap.data() });
       }
-      return jsonResponse({ ok: true });
+      return jsonResponse({ user: store.users[uid] || currentUser });
     }
 
-    // Admin Dashboard APIs — Merges Live Firestore Users + Full Device Info + Real-Time Messages
-    if (path.startsWith('/api/admin')) {
-      const mergedMap: Record<string, any> = { ...store.users };
-      if (isFirebaseConfigured && db) {
-        const snap = await getDocs(collection(db, 'users')).catch(() => null);
-        if (snap && !snap.empty) {
-          snap.forEach((d) => {
-            const u = d.data();
-            if (u?.id) {
-              mergedMap[u.id] = {
-                device: u.device || 'Mobile / Web Client',
-                deviceType: u.deviceType || 'Mobile',
-                os: u.os || 'Android / iOS',
-                browser: u.browser || 'Browser',
-                online: u.online !== false,
-                lastActive: u.lastActive || new Date().toISOString(),
-                ...u,
-              };
-            }
-          });
-          store.users = mergedMap;
-          writeServerlessStore(store);
-        }
+    if (path.match(/^\/api\/warnings\/[^/]+\/ack$/) && method === 'POST') {
+      const wid = decodeURIComponent(path.split('/')[3] || '');
+      if (isFirebaseConfigured && db && wid) {
+        await updateDoc(doc(db, 'notifications', wid), { read: true }).catch(() => {});
       }
-      const allUsers = Object.values(mergedMap);
-
-      // Broadcast Announcement to ALL Users in Real-Time
-      if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
-        const ann = {
-          id: `ann_${Date.now()}`,
-          title: body.title || 'Admin ကြေညာချက်',
-          message: body.message || body.content || '',
-          createdAt: new Date().toISOString(),
-        };
-        store.announcements.unshift(ann);
-        store.activeBroadcast = ann;
-        writeServerlessStore(store);
-        if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'system', 'announcement'), ann).catch(() => {});
-        }
-        return jsonResponse({ ok: true, announcement: ann });
-      }
-
-      // User Moderation & Direct Admin Message to User
-      if (path.includes('/users/') && ['POST', 'PATCH', 'PUT'].includes(method)) {
-        const parts = path.split('/');
-        const targetId = parts[4];
-        const action = parts[5] || body.action || '';
-        const updates: any = {};
-
-        if (action.includes('ban') && !action.includes('unban')) updates.status = 'banned';
-        else if (action.includes('unban') || action.includes('restore')) {
-          updates.status = 'active';
-          updates.suspendedUntil = null;
-        } else if (action.includes('suspend')) {
-          updates.status = 'suspended';
-          updates.suspendedUntil = new Date(Date.now() + 3600000).toISOString();
-        } else if (action.includes('warn') || action.includes('message') || action.includes('dm')) {
-          const reasonText = body.reason || body.message || body.text || 'Admin မှ အသိပေးစာ ပေးပို့ထားပါသည်။';
-          const warnObj = {
-            id: `warn_${Date.now()}`,
-            userId: targetId,
-            title: action.includes('warn') ? 'Official Warning' : 'Message from Admin',
-            reason: reasonText,
-            acknowledged: false,
-            createdAt: new Date().toISOString(),
-          };
-          store.warnings.push(warnObj);
-          updates.status = action.includes('warn') ? 'warned' : updates.status || 'active';
-          updates.warnMessage = reasonText;
-          if (isFirebaseConfigured && db) {
-            await setDoc(doc(db, 'warnings', warnObj.id), warnObj).catch(() => {});
-          }
-        } else if (typeof body.xp === 'number') {
-          updates.xp = body.xp;
-        }
-
-        if (store.users[targetId]) {
-          Object.assign(store.users[targetId], updates);
-          writeServerlessStore(store);
-        }
-        if (isFirebaseConfigured && db && targetId) {
-          await setDoc(doc(db, 'users', targetId), updates, { merge: true }).catch(() => {});
-        }
-        return jsonResponse({ ok: true });
-      }
-
-      if (path.includes('tournament') && method === 'POST') {
-        const newTourney = {
-          id: `tourney_${Date.now()}`,
-          title: body.title || 'Vanguard Knockout Cup',
-          gameType: normalizeGameId(body.gameType || 'rps'),
-          bracketSize: body.bracketSize || 8,
-          prizeXp: body.prizeXp || 300,
-          status: 'open',
-          participants: [],
-          rounds: [],
-          createdAt: new Date().toISOString(),
-        };
-        store.tournaments.push(newTourney);
-        writeServerlessStore(store);
-        if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'tournaments', newTourney.id), newTourney).catch(() => {});
-        }
-        return jsonResponse({ ok: true, tournament: newTourney });
-      }
-
-      if (path.includes('riddle')) {
-        if (method === 'POST') {
-          const riddle = { id: `rid_${Date.now()}`, ...body };
-          store.riddles.unshift(riddle);
-          writeServerlessStore(store);
-          if (isFirebaseConfigured && db) {
-            await setDoc(doc(db, 'riddles', riddle.id), riddle).catch(() => {});
-          }
-          return jsonResponse({ ok: true, riddle });
-        }
-        if (method === 'DELETE') {
-          const rid = path.split('/').pop() || '';
-          store.riddles = store.riddles.filter((r: any) => r.id !== rid);
-          writeServerlessStore(store);
-          if (isFirebaseConfigured && db) {
-            await deleteDoc(doc(db, 'riddles', rid)).catch(() => {});
-          }
-          return jsonResponse({ ok: true });
-        }
-      }
-
-      const fullCounters = {
-        totalUsers: allUsers.length,
-        onlineUsers: allUsers.length,
-        activeUsers: allUsers.length,
-        bannedUsers: allUsers.filter((u: any) => u.status === 'banned').length,
-        suspendedUsers: allUsers.filter((u: any) => u.status === 'suspended').length,
-        activeMatches: 0,
-        totalMatches: 48,
-        pendingReports: store.reports.length,
-        resolvedReports: 0,
-        totalReports: store.reports.length,
-        openTournaments: store.tournaments.length,
-        activeTournaments: store.tournaments.length,
-        totalRiddles: store.riddles.length,
-        openRooms: store.rooms.length,
-        uptimeSec: Math.floor(performance.now() / 1000),
-      };
-
-      return jsonResponse({
-        ok: true,
-        ...fullCounters,
-        stats: fullCounters,
-        overview: fullCounters,
-        summary: fullCounters,
-        counts: fullCounters,
-        metrics: fullCounters,
-        telemetry: fullCounters,
-        users: allUsers,
-        sessions: allUsers.map((u: any) => ({
-          userId: u.id,
-          username: u.username,
-          displayName: u.displayName,
-          device: u.device || 'Mobile / Web',
-          os: u.os || 'Android / iOS',
-          browser: u.browser || 'Browser',
-          lastActive: u.lastActive || new Date().toISOString(),
-        })),
-        reports: store.reports,
-        warnings: store.warnings,
-        announcements: store.announcements,
-        tournaments: store.tournaments,
-        riddles: store.riddles,
-        activeMatches: [],
-        matches: [],
-        auditLogs: store.auditLogs,
-        logs: store.auditLogs,
-        frames: [
-          { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
-          { id: 'silver', name: 'Silver Striker', minXp: 1000 },
-          { id: 'gold', name: 'Gold Champion', minXp: 1300 },
-          { id: 'platinum', name: 'Emerald Jade', minXp: 1600 },
-          { id: 'diamond', name: 'Diamond Sovereign', minXp: 1900 },
-          { id: 'master', name: 'Amethyst Master', minXp: 2200 },
-          { id: 'legend', name: 'Legend Mythic Crown', minXp: 2500 },
-        ],
-        featureLocks: store.featureLocks,
-        matchmakingSettings: store.matchmakingSettings,
-        landingContent: store.landingContent,
-      });
+      return jsonResponse({ ok: true });
     }
 
     return jsonResponse({ ok: true });
