@@ -6,7 +6,7 @@ import {
   Check,
   Copy,
   Crown,
-  Flame,
+  Gift,
   Lock,
   Palette,
   Save,
@@ -21,6 +21,14 @@ import type { Language, UserProfile } from '../types.ts';
 import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
+import {
+  BANNER_THEMES,
+  getBannerTheme,
+  getGiftMeta,
+  getPlayerTitle,
+  PLAYER_TITLES,
+  PremiumGiftSvg,
+} from './PremiumIcons.tsx';
 
 interface ProfileViewProps {
   lang: Language;
@@ -30,22 +38,6 @@ interface ProfileViewProps {
   onUserUpdated: (user: UserProfile) => void;
   onNotify: (level: string, message: string) => void;
 }
-
-const BANNER_THEMES = [
-  { id: 'imperial', name: 'Imperial Gold', bg: 'from-amber-900/70 via-slate-900 to-[#0a0f1c]' },
-  { id: 'cyber', name: 'Cyber Sapphire', bg: 'from-sky-900/70 via-indigo-950 to-[#0a0f1c]' },
-  { id: 'crimson', name: 'Crimson Flame', bg: 'from-rose-900/70 via-slate-900 to-[#0a0f1c]' },
-  { id: 'emerald', name: 'Jade Forest', bg: 'from-emerald-900/70 via-teal-950 to-[#0a0f1c]' },
-  { id: 'amethyst', name: 'Mythic Violet', bg: 'from-purple-900/70 via-fuchsia-950 to-[#0a0f1c]' },
-];
-
-const PLAYER_TITLES = [
-  { id: 'rookie', labelMy: 'အာရီနာ ကစားသမား', labelEn: 'Arena Challenger', minXp: 0 },
-  { id: 'tactician', labelMy: 'ဗျူဟာပညာရှင်', labelEn: 'Grand Tactician', minXp: 1100 },
-  { id: 'owl_sage', labelMy: 'ပညာရှိ ဇီးကွက်တပည့်', labelEn: 'Wise Owl Scholar', minXp: 1300 },
-  { id: 'champion', labelMy: 'ရွှေတံဆိပ် ချန်ပီယံ', labelEn: 'Golden Champion', minXp: 1800 },
-  { id: 'mythic', labelMy: 'ဒဏ္ဍာရီ သူရဲကောင်း', labelEn: 'Mythic Sovereign', minXp: 2400 },
-];
 
 function getRankProgress(xp: number) {
   const tiers = [
@@ -58,7 +50,7 @@ function getRankProgress(xp: number) {
   const current = tiers.find((t) => xp >= t.min && xp < t.max) || tiers[tiers.length - 1];
   const pct = Math.min(100, Math.max(4, Math.round(((xp - current.min) / (current.max - current.min)) * 100)));
   const level = Math.max(1, Math.floor(xp / 150) + 1);
-  return { current, pct, level, remaining: Math.max(0, current.max - xp) };
+  return { current, pct, level };
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -74,11 +66,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [selectedFrame, setSelectedFrame] = React.useState(user.frameId || 'bronze');
   const [selectedBanner, setSelectedBanner] = React.useState(uAny.bannerTheme || 'imperial');
   const [selectedTitle, setSelectedTitle] = React.useState(uAny.titleId || 'rookie');
-  const [activeTab, setActiveTab] = React.useState<'overview' | 'frames' | 'customize'>('overview');
+  const [activeTab, setActiveTab] = React.useState<'overview' | 'gifts' | 'frames' | 'customize'>('overview');
   const [saving, setSaving] = React.useState(false);
   const [copiedId, setCopiedId] = React.useState(false);
 
-  // Image Cropper State
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const [cropSource, setCropSource] = React.useState<string | null>(null);
   const [zoom, setZoom] = React.useState<number>(1.15);
@@ -94,15 +85,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const totalGames = wins + losses + draws;
   const winRate = totalGames > 0 ? Math.round((wins / totalGames) * 100) : 0;
   const rankProg = getRankProgress(xp);
-  const bannerObj = BANNER_THEMES.find((b) => b.id === selectedBanner) || BANNER_THEMES[0];
-  const titleObj = PLAYER_TITLES.find((t) => t.id === selectedTitle) || PLAYER_TITLES[0];
+  const bannerObj = getBannerTheme(selectedBanner);
+  const titleObj = getPlayerTitle(selectedTitle);
+  const unlockedFrames: string[] = Array.isArray(uAny.unlockedFrames) ? uAny.unlockedFrames : [];
+  const userGifts: any[] = Array.isArray(uAny.gifts) ? uAny.gifts : [];
 
   const achievements = [
     { id: 'first', icon: '⚔️', title: lang === 'my' ? 'ပထမဆုံး အောင်ပွဲ' : 'First Victory', unlocked: wins >= 1 },
     { id: 'five', icon: '🔥', title: lang === 'my' ? '၅ ပွဲနိုင် စစ်သည်' : '5-Win Striker', unlocked: wins >= 5 },
     { id: 'gold', icon: '🥇', title: lang === 'my' ? 'Gold အဆင့်ရောက်' : 'Gold Tier', unlocked: xp >= 1300 },
     { id: 'diamond', icon: '💎', title: lang === 'my' ? 'Diamond သခင်' : 'Diamond Tier', unlocked: xp >= 1900 },
-    { id: 'social', icon: '🤝', title: lang === 'my' ? 'မိတ်ဆွေပေါသူ' : 'Social Star', unlocked: (user.friends || []).length >= 1 },
+    { id: 'gift', icon: '🎁', title: lang === 'my' ? 'ပြိုင်ပွဲဆုရှင်' : 'Prize Winner', unlocked: userGifts.length >= 1 },
     { id: 'legend', icon: '👑', title: lang === 'my' ? 'ဒဏ္ဍာရီ ချန်ပီယံ' : 'Arena Legend', unlocked: xp >= 2500 },
   ];
 
@@ -187,7 +180,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleEquipFrame = async (frameId: string, unlocked: boolean) => {
     if (!unlocked) {
-      onNotify('error', lang === 'my' ? 'ဤ Frame ရရှိရန် XP ပိုမိုစုဆောင်းပါ။' : 'Earn more XP to unlock.');
+      onNotify('error', lang === 'my' ? 'ဤ Frame ရရှိရန် XP စုဆောင်းပါ သို့မဟုတ် ပြိုင်ပွဲဆုရယူပါ။' : 'Earn XP or tournament prize to unlock.');
       return;
     }
     setSelectedFrame(frameId);
@@ -221,7 +214,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         body: JSON.stringify(patch),
       });
       soundEngine.playNotify();
-      onNotify('success', lang === 'my' ? 'Profile အချက်အလက်အားလုံး သိမ်းဆည်းပြီးပါပြီ!' : 'Profile updated!');
+      onNotify('success', lang === 'my' ? 'Profile သိမ်းဆည်းပြီးပါပြီ!' : 'Profile saved!');
     } finally {
       setSaving(false);
     }
@@ -229,34 +222,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-3 sm:px-6 py-3 sm:py-5 space-y-4">
-      {/* PREMIUM HERO PROFILE HEADER CARD */}
+      {/* HERO PROFILE HEADER */}
       <div className="cyber-panel rounded-3xl overflow-hidden border border-amber-400/25 shadow-2xl">
-        {/* Dynamic Gradient Cover Banner */}
         <div className={`h-24 sm:h-32 bg-gradient-to-r ${bannerObj.bg} relative overflow-hidden`}>
           <div className="absolute inset-0 opacity-20 bg-[radial-gradient(#fbbf24_1px,transparent_1px)] [background-size:18px_18px]" />
-          <div className="absolute top-3 right-3 flex items-center gap-2">
+          <div className="absolute top-3 right-3">
             <span className="px-3 py-1 rounded-full bg-black/55 backdrop-blur-md border border-amber-400/40 text-[11px] font-mono font-bold text-amber-300 flex items-center gap-1">
               <Crown className="w-3.5 h-3.5" /> LV.{rankProg.level} · {user.rank || rankProg.current.name}
             </span>
           </div>
         </div>
 
-        {/* Overlapping Avatar + Identity Info */}
         <div className="px-4 sm:px-6 pb-5 -mt-12 sm:-mt-14 relative z-10 space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
             <div className="flex items-end gap-4">
               <div className="relative">
-                <AvatarWithFrame
-                  avatarUrl={user.avatarUrl}
-                  frameId={selectedFrame}
-                  displayName={user.displayName}
-                  size="xl"
-                />
+                <AvatarWithFrame avatarUrl={user.avatarUrl} frameId={selectedFrame} displayName={user.displayName} size="xl" />
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
                   className="absolute bottom-0 right-0 z-30 w-9 h-9 rounded-full cyber-cta-gold text-slate-950 flex items-center justify-center shadow-lg cursor-pointer"
-                  title="Change & Crop Avatar"
                 >
                   <Camera className="w-4 h-4" />
                 </button>
@@ -275,7 +260,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   <button
                     type="button"
                     onClick={handleCopyId}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/5 hover:bg-amber-500/20 border border-white/10 text-xs font-mono text-amber-300 cursor-pointer transition-colors"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-white/5 hover:bg-amber-500/20 border border-white/10 text-xs font-mono text-amber-300 cursor-pointer"
                   >
                     <span>ID: {user.gameId}</span>
                     {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
@@ -301,12 +286,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </p>
           )}
 
-          {/* Next Rank XP Progress Bar */}
           <div className="space-y-1.5 pt-1">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-semibold text-slate-300">
-                {rankProg.current.name} Tier Progress
-              </span>
+              <span className="font-semibold text-slate-300">{rankProg.current.name} Tier Progress</span>
               <span className="font-mono font-bold text-amber-400">
                 {xp} / {rankProg.current.max} XP ({rankProg.pct}%)
               </span>
@@ -315,20 +297,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${rankProg.pct}%` }}
-                transition={{ duration: 0.7, ease: 'easeOut' }}
-                className="h-full rounded-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.5)]"
+                transition={{ duration: 0.7 }}
+                className="h-full rounded-full bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-300"
               />
             </div>
           </div>
         </div>
       </div>
 
-      {/* Sub-Navigation Pills */}
-      <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl cyber-panel text-xs font-bold">
+      {/* 4 Sub-Tabs */}
+      <div className="grid grid-cols-4 gap-1.5 p-1 rounded-2xl cyber-panel text-[11px] sm:text-xs font-bold">
         {[
-          { id: 'overview', label: lang === 'my' ? '📊 မှတ်တမ်း & ဆုတံဆိပ်' : 'Stats & Medals' },
-          { id: 'frames', label: lang === 'my' ? '🖼️ Profile Frames' : 'Rank Frames' },
-          { id: 'customize', label: lang === 'my' ? '🎨 ပြင်ဆင်ရန်' : 'Customize' },
+          { id: 'overview', label: lang === 'my' ? '📊 မှတ်တမ်း' : 'Stats' },
+          { id: 'gifts', label: `${lang === 'my' ? '🎁 လက်ဆောင်' : 'Gifts'} (${userGifts.length})` },
+          { id: 'frames', label: '🖼️ Frames' },
+          { id: 'customize', label: lang === 'my' ? '🎨 ပြင်ဆင်' : 'Edit' },
         ].map((tb) => (
           <button
             key={tb.id}
@@ -337,7 +320,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               soundEngine.playClick();
               setActiveTab(tb.id as any);
             }}
-            className={`py-2.5 rounded-xl transition-all cursor-pointer ${
+            className={`py-2.5 rounded-xl transition-all cursor-pointer truncate ${
               activeTab === tb.id ? 'cyber-gold-active text-amber-200' : 'text-slate-400 hover:text-white'
             }`}
           >
@@ -346,10 +329,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         ))}
       </div>
 
-      {/* TAB 1: STATS RING + ACHIEVEMENTS */}
+      {/* TAB 1: STATS & MEDALS */}
       {activeTab === 'overview' && (
         <div className="grid md:grid-cols-12 gap-4">
-          {/* Win Rate Gauge & Match Counters */}
           <div className="md:col-span-5 cyber-panel rounded-2xl p-5 flex flex-col items-center justify-center gap-4">
             <div className="relative w-32 h-32 flex items-center justify-center">
               <svg viewBox="0 0 120 120" className="w-full h-full -rotate-90">
@@ -365,15 +347,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                   strokeDasharray={314}
                   initial={{ strokeDashoffset: 314 }}
                   animate={{ strokeDashoffset: 314 - (314 * winRate) / 100 }}
-                  transition={{ duration: 0.9, ease: 'easeOut' }}
+                  transition={{ duration: 0.9 }}
                 />
               </svg>
               <div className="absolute text-center">
                 <div className="text-2xl font-display font-extrabold text-white">{winRate}%</div>
-                <div className="text-[10px] text-slate-400 uppercase tracking-wider">Win Rate</div>
+                <div className="text-[10px] text-slate-400 uppercase">Win Rate</div>
               </div>
             </div>
-
             <div className="grid grid-cols-3 gap-2 w-full text-center">
               <div className="p-2.5 rounded-xl bg-[#070b13] border border-emerald-500/20">
                 <div className="text-lg font-mono font-extrabold text-emerald-400">{wins}</div>
@@ -390,27 +371,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           </div>
 
-          {/* Achievements / Medals Wall */}
           <div className="md:col-span-7 cyber-panel rounded-2xl p-5 space-y-3">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Trophy className="w-4 h-4 text-amber-400" />
-              <span>{lang === 'my' ? 'အောင်မြင်မှု ဆုတံဆိပ်များ (Achievements)' : 'Arena Achievements'}</span>
+              <span>{lang === 'my' ? 'အောင်မြင်မှု ဆုတံဆိပ်များ' : 'Arena Achievements'}</span>
             </h3>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               {achievements.map((ach) => (
                 <div
                   key={ach.id}
-                  className={`p-3 rounded-2xl border text-center space-y-1.5 transition-all ${
-                    ach.unlocked
-                      ? 'bg-amber-500/10 border-amber-400/35'
-                      : 'bg-[#070b13] border-white/5 opacity-45 grayscale'
+                  className={`p-3 rounded-2xl border text-center space-y-1.5 ${
+                    ach.unlocked ? 'bg-amber-500/10 border-amber-400/35' : 'bg-[#070b13] border-white/5 opacity-45 grayscale'
                   }`}
                 >
                   <div className="text-2xl">{ach.icon}</div>
-                  <div className="text-[11px] font-bold text-white leading-tight">{ach.title}</div>
-                  <div className="text-[10px] font-mono text-amber-300">
-                    {ach.unlocked ? '✓ Unlocked' : 'Locked'}
-                  </div>
+                  <div className="text-[11px] font-bold text-white">{ach.title}</div>
+                  <div className="text-[10px] font-mono text-amber-300">{ach.unlocked ? '✓ Unlocked' : 'Locked'}</div>
                 </div>
               ))}
             </div>
@@ -418,7 +394,56 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
-      {/* TAB 2: SVG PROFILE FRAMES */}
+      {/* TAB 2: RECEIVED TOURNAMENT GIFTS & TROPHIES VAULT */}
+      {activeTab === 'gifts' && (
+        <div className="cyber-panel rounded-2xl p-5 space-y-3">
+          <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+            <Gift className="w-4 h-4" />
+            <span>{lang === 'my' ? 'ပြိုင်ပွဲဆုနှင့် Admin ချီးမြှင့်ထားသော လက်ဆောင်များ' : 'Tournament Prizes & Gifts Vault'}</span>
+          </h3>
+          {userGifts.length === 0 ? (
+            <div className="py-10 text-center space-y-2">
+              <PremiumGiftSvg giftId="vip_gift_box" className="w-12 h-12 mx-auto opacity-60" />
+              <div className="text-xs text-slate-400">
+                {lang === 'my'
+                  ? 'လက်ဆောင် ရရှိထားခြင်း မရှိသေးပါ။ ပြိုင်ပွဲကြီးများတွင် ဝင်ရောက်ယှဉ်ပြိုင်ပြီး ဆုလက်ဆောင်များ ရယူပါ!'
+                  : 'Compete in official tournaments to earn exclusive prizes and gifts!'}
+              </div>
+            </div>
+          ) : (
+            <div className="grid sm:grid-cols-2 gap-3">
+              {userGifts.map((g, i) => {
+                const meta = getGiftMeta(g.giftId);
+                return (
+                  <div
+                    key={g.id || i}
+                    className={`p-3.5 rounded-2xl bg-gradient-to-br border flex items-center gap-3.5 ${meta.accent}`}
+                  >
+                    <PremiumGiftSvg giftId={g.giftId} className="w-12 h-12 shrink-0" />
+                    <div className="min-w-0 space-y-0.5">
+                      <span className="text-[10px] font-mono font-bold uppercase tracking-wider opacity-85">
+                        {g.placement || meta.rarity}
+                      </span>
+                      <div className="text-sm font-bold text-white truncate">
+                        {g.title || (lang === 'my' ? meta.nameMy : meta.nameEn)}
+                      </div>
+                      {g.tournamentTitle && (
+                        <div className="text-[11px] text-amber-200/90 truncate">🏆 {g.tournamentTitle}</div>
+                      )}
+                      {g.note && <div className="text-[11px] text-slate-200/80 italic">“{g.note}”</div>}
+                      {g.bonusXp ? (
+                        <div className="text-[10px] font-mono font-bold text-emerald-300">+{g.bonusXp} Bonus XP</div>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* TAB 3: FRAMES */}
       {activeTab === 'frames' && (
         <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3">
           <div className="flex items-center justify-between">
@@ -428,10 +453,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </h3>
             <span className="text-xs font-mono text-amber-400">{xp} XP</span>
           </div>
-
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {SVG_FRAME_TEMPLATES.map((tpl) => {
-              const unlocked = user.role === 'admin' || xp >= tpl.minXp;
+              const unlocked = user.role === 'admin' || xp >= tpl.minXp || unlockedFrames.includes(tpl.id);
               const equipped = selectedFrame === tpl.id;
               return (
                 <motion.button
@@ -471,7 +495,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </div>
       )}
 
-      {/* TAB 3: CUSTOMIZE NAME, BIO, TITLE & COVER THEME */}
+      {/* TAB 4: CUSTOMIZE */}
       {activeTab === 'customize' && (
         <form onSubmit={handleSaveCustomization} className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-4">
           <div className="grid sm:grid-cols-2 gap-3">
@@ -515,7 +539,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               maxLength={120}
               value={bio}
               onChange={(e) => setBio(e.target.value)}
-              placeholder={lang === 'my' ? 'သင့်အကြောင်း စာတစ်ကြောင်း ရေးထည့်ပါ...' : 'Write a short motto...'}
+              placeholder={lang === 'my' ? 'အခြားသူများ သင့် Profile ဝင်ကြည့်လျှင် မြင်ရမည့် Bio စာသား...' : 'Write your profile bio...'}
               className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
             />
           </div>
@@ -551,7 +575,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         </form>
       )}
 
-      {/* Interactive Circular Avatar Cropper Modal */}
+      {/* Crop Modal */}
       {cropSource && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/50 p-5 space-y-4 shadow-2xl">
@@ -559,15 +583,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
               <h3 className="text-base font-bold text-white">
                 {lang === 'my' ? 'Frame အတွင်း ပုံနေရာညှိပြီး Crop ဖြတ်ပါ' : 'Fit & Crop Avatar'}
               </h3>
-              <button
-                type="button"
-                onClick={() => setCropSource(null)}
-                className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
-              >
+              <button type="button" onClick={() => setCropSource(null)} className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer">
                 <X className="w-4 h-4" />
               </button>
             </div>
-
             <div className="flex justify-center">
               <div
                 onPointerDown={handlePointerDown}
@@ -587,35 +606,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <div className="absolute inset-0 rounded-full ring-2 ring-inset ring-white/30 pointer-events-none" />
               </div>
             </div>
-
             <div className="flex items-center gap-3 px-2">
               <ZoomOut className="w-4 h-4 text-slate-400" />
-              <input
-                type="range"
-                min="1"
-                max="3"
-                step="0.05"
-                value={zoom}
-                onChange={(e) => setZoom(parseFloat(e.target.value))}
-                className="flex-1 accent-amber-500 cursor-pointer"
-              />
+              <input type="range" min="1" max="3" step="0.05" value={zoom} onChange={(e) => setZoom(parseFloat(e.target.value))} className="flex-1 accent-amber-500 cursor-pointer" />
               <ZoomIn className="w-4 h-4 text-amber-400" />
             </div>
-
             <div className="grid grid-cols-2 gap-2.5">
-              <button
-                type="button"
-                onClick={() => setCropSource(null)}
-                className="h-11 rounded-xl bg-white/10 text-xs font-bold text-white cursor-pointer"
-              >
-                {lang === 'my' ? 'မလုပ်တော့ပါ' : 'Cancel'}
+              <button type="button" onClick={() => setCropSource(null)} className="h-11 rounded-xl bg-white/10 text-xs font-bold text-white cursor-pointer">
+                Cancel
               </button>
-              <button
-                type="button"
-                onClick={applyCroppedAvatar}
-                className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs cursor-pointer"
-              >
-                {lang === 'my' ? '✓ Crop လုပ်ပြီး တင်မည်' : '✓ Crop & Save'}
+              <button type="button" onClick={applyCroppedAvatar} className="h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs cursor-pointer">
+                ✓ Crop & Save
               </button>
             </div>
           </div>
