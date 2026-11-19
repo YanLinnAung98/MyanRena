@@ -11,8 +11,16 @@ import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { db, isFirebaseConfigured } from './firebase.ts';
 
-export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v5';
-export const ACTIVE_USER_KEY = 'vanguard_active_user_v5';
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v6';
+export const ACTIVE_USER_KEY = 'vanguard_active_user_v6';
+
+export function normalizeGameId(raw?: string): 'connect4' | 'tictactoe' | 'rps' | 'sakarhtar' {
+  const s = String(raw || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (s.includes('connect') || s === 'c4') return 'connect4';
+  if (s.includes('tic') || s === 'ttt') return 'tictactoe';
+  if (s.includes('rps') || s.includes('rock')) return 'rps';
+  return 'sakarhtar';
+}
 
 export const DEFAULT_SAKAR_RIDDLES = [
   {
@@ -131,6 +139,7 @@ export function readServerlessStore() {
     reports: [] as any[],
     warnings: [] as any[],
     announcements: [] as any[],
+    activeBroadcast: null as { id: string; title: string; message: string; createdAt: string } | null,
     auditLogs: [
       {
         id: 'log_1',
@@ -196,7 +205,7 @@ export function buildPlayableMatch(
   }
 ) {
   const store = readServerlessStore();
-  const gameType = opts.gameType || 'tictactoe';
+  const gameType = normalizeGameId(opts.gameType);
   const difficulty = opts.difficulty || 'medium';
   const bestOf = opts.bestOf || 3;
   const turnTimeLimit = opts.turnTimeLimit || 20;
@@ -205,12 +214,12 @@ export function buildPlayableMatch(
   const botPlayer = {
     id: 'aegis_bot',
     username: 'aegis_bot',
-    displayName: `Aegis Bot (${difficulty.toUpperCase()})`,
+    displayName: gameType === 'sakarhtar' ? 'ပညာရှိ ဇီးကွက်' : `Aegis Bot (${difficulty.toUpperCase()})`,
     gameId: 'BOT-001',
     xp: p1?.xp || 1000,
     rank: 'Gold',
     frameId: 'gold',
-    avatarUrl: createAvatarSvg('AI', '#4f46e5', '#ffffff'),
+    avatarUrl: createAvatarSvg('🦉', '#451a03', '#fbbf24'),
     isBot: true,
   };
 
@@ -259,27 +268,6 @@ function jsonResponse(data: any, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
-}
-
-if (typeof window !== 'undefined' && !(window as any).__vanguardImgGuard) {
-  (window as any).__vanguardImgGuard = true;
-  window.addEventListener(
-    'error',
-    (ev: Event) => {
-      const target = ev.target as HTMLImageElement | null;
-      if (target && target.tagName === 'IMG' && !target.dataset.repaired) {
-        target.dataset.repaired = '1';
-        const alt = (target.alt || '').toLowerCase();
-        if (alt.includes('connect') || alt.includes('4')) target.src = GAME_ARTWORKS.connect4;
-        else if (alt.includes('tic')) target.src = GAME_ARTWORKS.tictactoe;
-        else if (alt.includes('rock') || alt.includes('rps')) target.src = GAME_ARTWORKS.rps;
-        else if (alt.includes('sakar') || alt.includes('riddle')) target.src = GAME_ARTWORKS.sakarhtar;
-        else if (alt.includes('stage') || alt.includes('banner')) target.src = GAME_ARTWORKS.heroBanner;
-        else target.src = createAvatarSvg(target.alt || 'P');
-      }
-    },
-    true
-  );
 }
 
 if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
@@ -351,7 +339,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
-    // Bot & Solo Matches
     if (path === '/api/matches/bot' && method === 'POST') {
       const p = currentUser || activeSaved;
       return jsonResponse({ match: buildPlayableMatch([p], body) });
@@ -364,11 +351,10 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       });
     }
 
-    // Create Real-Time Room (Works for Sakar-Htar 1-8P AND 1v1 Games)
     if (path === '/api/sakar/rooms' && method === 'POST') {
       const host = currentUser || activeSaved;
       const code = 'MR-' + Math.floor(1000 + Math.random() * 9000);
-      const gameType = body.gameType || 'sakarhtar';
+      const gameType = normalizeGameId(body.gameType || 'sakarhtar');
       const maxPlayers = gameType === 'sakarhtar' ? Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)) : 2;
       const room = {
         id: `room_${Date.now()}_${Math.floor(Math.random() * 999)}`,
@@ -391,7 +377,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ room });
     }
 
-    // Join Real-Time Room by Code (e.g. MR-1234)
     if (path === '/api/sakar/rooms/join' && method === 'POST') {
       const player = currentUser || activeSaved;
       const rawCode = String(body.roomId || '').trim().toUpperCase();
@@ -417,19 +402,12 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         });
       }
 
-      if (!room) {
-        return jsonResponse({ error: 'Room code မတွေ့ပါ။ Code မှန်မမှန် ပြန်စစ်ပါ။' }, 404);
-      }
-      if (room.status !== 'waiting') {
-        return jsonResponse({ error: 'ဤအခန်းသည် ပွဲစတင်နေပြီ ဖြစ်ပါသည်။' }, 400);
-      }
+      if (!room) return jsonResponse({ error: 'Room code မတွေ့ပါ။' }, 404);
+      if (room.status !== 'waiting') return jsonResponse({ error: 'ပွဲစတင်နေပြီ ဖြစ်ပါသည်။' }, 400);
       if (!room.players.some((p: any) => p.id === player.id)) {
-        if (room.players.length >= room.maxPlayers) {
-          return jsonResponse({ error: 'အခန်း လူပြည့်သွားပါပြီ။' }, 400);
-        }
+        if (room.players.length >= room.maxPlayers) return jsonResponse({ error: 'အခန်း လူပြည့်သွားပါပြီ။' }, 400);
         room.players.push(player);
       }
-
       store.rooms = [...store.rooms.filter((r: any) => r.id !== room.id), room];
       writeServerlessStore(store);
       if (isFirebaseConfigured && db) {
@@ -456,24 +434,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ ok: true });
     }
 
-    if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/kick$/) && method === 'POST') {
-      const roomId = path.split('/')[4];
-      const targetUserId = body.userId;
-      let target = store.rooms.find((r: any) => r.id === roomId);
-      if (!target && isFirebaseConfigured && db) {
-        const snap = await getDoc(doc(db, 'rooms', roomId)).catch(() => null);
-        if (snap && snap.exists()) target = snap.data();
-      }
-      if (target) {
-        target.players = target.players.filter((p: any) => p.id !== targetUserId);
-        store.rooms = [...store.rooms.filter((r: any) => r.id !== roomId), target];
-        writeServerlessStore(store);
-        if (isFirebaseConfigured && db) await setDoc(doc(db, 'rooms', roomId), target, { merge: true }).catch(() => {});
-      }
-      return jsonResponse({ room: target });
-    }
-
-    // Start Real-Time Match from Room for ALL Players inside the Room
     if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/start$/) && method === 'POST') {
       const roomId = path.split('/')[4];
       const host = currentUser || activeSaved;
@@ -482,9 +442,8 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         const snap = await getDoc(doc(db, 'rooms', roomId)).catch(() => null);
         if (snap && snap.exists()) target = snap.data();
       }
-
       const roomPlayers = target?.players?.length ? target.players : [host];
-      const gameType = target?.gameType || 'sakarhtar';
+      const gameType = normalizeGameId(target?.gameType || 'sakarhtar');
       const match = buildPlayableMatch(roomPlayers, {
         gameType,
         mode: 'custom',
@@ -503,33 +462,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       return jsonResponse({ match });
     }
 
-    if (path.match(/^\/api\/tournaments\/[^/]+\/join$/) && method === 'POST') {
-      return jsonResponse({ ok: true });
-    }
-
-    if (path.match(/^\/api\/tournaments\/[^/]+\/leave$/) && method === 'POST') {
-      return jsonResponse({ ok: true });
-    }
-
-    if (path === '/api/social/request' && method === 'POST') {
-      return jsonResponse({ ok: true });
-    }
-
-    if (path.startsWith('/api/social')) {
-      return jsonResponse({
-        friends: [],
-        incomingRequests: [],
-        outgoingRequests: [],
-        blocked: currentUser?.blocked || [],
-        conversations: [],
-      });
-    }
-
-    if (path.startsWith('/api/users/')) {
-      const uid = path.split('/')[3];
-      return jsonResponse({ user: store.users[uid] || currentUser });
-    }
-
     if (path.startsWith('/api/profile') && ['PATCH', 'POST', 'PUT'].includes(method)) {
       if (currentUser) {
         Object.assign(currentUser, body);
@@ -542,10 +474,16 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     }
 
     if (path.match(/^\/api\/warnings\/[^/]+\/ack$/) && method === 'POST') {
+      const wid = decodeURIComponent(path.split('/')[3] || '');
+      store.warnings = store.warnings.filter((w: any) => w.id !== wid);
+      writeServerlessStore(store);
+      if (isFirebaseConfigured && db && wid) {
+        await updateDoc(doc(db, 'warnings', wid), { acknowledged: true }).catch(() => {});
+      }
       return jsonResponse({ ok: true });
     }
 
-    // Admin Dashboard APIs — Always Merges Live Firestore Users
+    // Admin Dashboard APIs — Merges Live Firestore Users & Delivers Live Notifications
     if (path.startsWith('/api/admin')) {
       const mergedMap: Record<string, any> = { ...store.users };
       if (isFirebaseConfigured && db) {
@@ -561,39 +499,30 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       }
       const allUsers = Object.values(mergedMap);
 
-      if ((path.includes('lock') || path.includes('config')) && ['PUT', 'POST', 'PATCH'].includes(method)) {
-        store.featureLocks = { ...store.featureLocks, ...(body.featureLocks || body) };
-        writeServerlessStore(store);
-        return jsonResponse({ ok: true, featureLocks: store.featureLocks });
-      }
-
-      if (path.includes('matchmaking') && ['PUT', 'POST', 'PATCH'].includes(method)) {
-        store.matchmakingSettings = { ...store.matchmakingSettings, ...body };
-        writeServerlessStore(store);
-        return jsonResponse({ ok: true, matchmakingSettings: store.matchmakingSettings });
-      }
-
-      if (path.includes('landing') && ['PUT', 'POST', 'PATCH'].includes(method)) {
-        store.landingContent = getPatchedLandingContent(body);
+      // Broadcast Announcement to ALL Users in Real-Time
+      if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
+        const ann = {
+          id: `ann_${Date.now()}`,
+          title: body.title || 'Admin Announcement',
+          message: body.message || body.content || '',
+          createdAt: new Date().toISOString(),
+        };
+        store.announcements.unshift(ann);
+        store.activeBroadcast = ann;
         writeServerlessStore(store);
         if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'system', 'landing'), store.landingContent, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'system', 'announcement'), ann).catch(() => {});
         }
-        return jsonResponse({ ok: true, landingContent: store.landingContent });
-      }
-
-      if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
-        const ann = { id: `ann_${Date.now()}`, ...body, createdAt: new Date().toISOString() };
-        store.announcements.unshift(ann);
-        writeServerlessStore(store);
         return jsonResponse({ ok: true, announcement: ann });
       }
 
+      // User Moderation (Warn -> Sends Live Warning Popup to Target User)
       if (path.includes('/users/') && ['POST', 'PATCH', 'PUT'].includes(method)) {
         const parts = path.split('/');
         const targetId = parts[4];
         const action = parts[5] || body.action || '';
         const updates: any = {};
+
         if (action.includes('ban') && !action.includes('unban')) updates.status = 'banned';
         else if (action.includes('unban') || action.includes('restore')) {
           updates.status = 'active';
@@ -602,11 +531,23 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
           updates.status = 'suspended';
           updates.suspendedUntil = new Date(Date.now() + 3600000).toISOString();
         } else if (action.includes('warn')) {
+          const warnObj = {
+            id: `warn_${Date.now()}`,
+            userId: targetId,
+            reason: body.reason || body.message || 'Official Warning from Administrator.',
+            acknowledged: false,
+            createdAt: new Date().toISOString(),
+          };
+          store.warnings.push(warnObj);
           updates.status = 'warned';
-          updates.warnMessage = body.reason || 'Official Warning';
+          updates.warnMessage = warnObj.reason;
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'warnings', warnObj.id), warnObj).catch(() => {});
+          }
         } else if (typeof body.xp === 'number') {
           updates.xp = body.xp;
         }
+
         if (store.users[targetId]) {
           Object.assign(store.users[targetId], updates);
           writeServerlessStore(store);
@@ -621,7 +562,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         const newTourney = {
           id: `tourney_${Date.now()}`,
           title: body.title || 'Vanguard Knockout Cup',
-          gameType: body.gameType || 'rps',
+          gameType: normalizeGameId(body.gameType || 'rps'),
           bracketSize: body.bracketSize || 8,
           prizeXp: body.prizeXp || 300,
           status: 'open',
@@ -685,13 +626,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         counts: fullCounters,
         metrics: fullCounters,
         telemetry: fullCounters,
-        kpi: fullCounters,
-        kpis: fullCounters,
-        moderation: fullCounters,
-        reportStats: fullCounters,
-        health: fullCounters,
-        serverHealth: fullCounters,
-        dashboard: fullCounters,
         users: allUsers,
         reports: store.reports,
         warnings: store.warnings,
@@ -706,8 +640,10 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
           { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
           { id: 'silver', name: 'Silver Striker', minXp: 1000 },
           { id: 'gold', name: 'Gold Champion', minXp: 1300 },
-          { id: 'diamond', name: 'Diamond Sovereign', minXp: 1800 },
-          { id: 'legend', name: 'Legend Mythic', minXp: 2500 },
+          { id: 'platinum', name: 'Emerald Jade', minXp: 1600 },
+          { id: 'diamond', name: 'Diamond Sovereign', minXp: 1900 },
+          { id: 'master', name: 'Amethyst Master', minXp: 2200 },
+          { id: 'legend', name: 'Legend Mythic Crown', minXp: 2500 },
         ],
         featureLocks: store.featureLocks,
         matchmakingSettings: store.matchmakingSettings,
