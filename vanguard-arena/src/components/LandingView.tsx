@@ -6,7 +6,6 @@ import {
   Copy,
   KeyRound,
   Lock,
-  Mail,
   Shield,
   Swords,
   Trophy,
@@ -15,11 +14,10 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { sendPasswordResetEmail, signInWithPopup } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { auth, db, googleAuthProvider, isFirebaseConfigured } from '../lib/firebase.ts';
+import { db, isFirebaseConfigured } from '../lib/firebase.ts';
 import { saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
@@ -46,7 +44,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [username, setUsername] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [displayName, setDisplayName] = React.useState('');
-  const [email, setEmail] = React.useState('');
   const [rememberMe, setRememberMe] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
@@ -61,11 +58,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [pinCopied, setPinCopied] = React.useState(false);
 
   const [recoveryOpen, setRecoveryOpen] = React.useState(false);
-  const [recoveryTab, setRecoveryTab] = React.useState<'pin' | 'email'>('pin');
   const [recUsername, setRecUsername] = React.useState('');
   const [recPin, setRecPin] = React.useState('');
   const [recNewPassword, setRecNewPassword] = React.useState('');
-  const [recEmail, setRecEmail] = React.useState('');
   const [recLoading, setRecLoading] = React.useState(false);
   const [recError, setRecError] = React.useState('');
   const [recSuccess, setRecSuccess] = React.useState('');
@@ -112,7 +107,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
       }
 
       if (authMode === 'signin') {
-        // 1. Stealth Admin Login ONLY for yanlinnaung / 163104
         if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
           const adminProfile = {
             id: 'admin_yanlinnaung',
@@ -146,7 +140,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
           throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
         }
 
-        // 2. Normal Player Sign In (Strictly role: 'player')
         const playerId = `player_${cleanUser}`;
         let foundRecord: any = null;
 
@@ -187,7 +180,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
         soundEngine.playNotify();
         onAuthenticated(`token_${playerId}`, playerProfile, rememberMe);
       } else {
-        // 3. Player Sign Up (Creates Player Account + 6-Digit PIN)
         if (cleanUser === 'yanlinnaung' || cleanUser === 'admin') {
           throw new Error('This username is reserved.');
         }
@@ -206,7 +198,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
         const recordToSave = {
           ...newUser,
           password: cleanPass,
-          email: email.trim(),
           recoveryPin,
           status: 'active',
           createdAt: Date.now(),
@@ -244,51 +235,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
     }
   };
 
-  const handleGoogleSignIn = async () => {
-    setError('');
-    if (!isFirebaseConfigured || !auth) {
-      setError(
-        lang === 'my'
-          ? 'Google Sign-In သုံးရန် Firebase Config အရင်ထည့်ပါ (သို့မဟုတ်) Username/Password ဖြင့် Sign Up လုပ်ပါ။'
-          : 'Please configure Firebase first, or Sign Up with Username & Password.'
-      );
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const cred = await signInWithPopup(auth, googleAuthProvider);
-      const userId = `google_${cred.user.uid}`;
-      const cleanName = (cred.user.displayName || 'Player').replace(/\s+/g, '_').toLowerCase();
-
-      let profile = buildPlayerProfile({
-        id: userId,
-        username: cleanName,
-        displayName: cred.user.displayName || 'Google Player',
-        gameId: `MR-${cred.user.uid.substring(0, 6).toUpperCase()}`,
-        avatarUrl: cred.user.photoURL || createAvatarSvg(cred.user.displayName || 'G'),
-      });
-
-      if (db) {
-        const userRef = doc(db, 'users', userId);
-        const snap = await getDoc(userRef).catch(() => null);
-        if (snap && snap.exists()) {
-          profile = buildPlayerProfile({ ...(snap.data() as UserProfile), id: userId, username: cleanName });
-        } else {
-          await setDoc(userRef, { ...profile, email: cred.user.email || '', status: 'active' }).catch(() => {});
-        }
-      }
-
-      saveActiveSessionUser(profile);
-      soundEngine.playNotify();
-      onAuthenticated(`token_${userId}`, profile, rememberMe);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Google sign-in cancelled.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleRecoverySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setRecError('');
@@ -296,54 +242,42 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecLoading(true);
 
     try {
-      if (recoveryTab === 'pin') {
-        const cleanUser = recUsername.trim().toLowerCase();
-        let updated = false;
+      const cleanUser = recUsername.trim().toLowerCase();
+      let updated = false;
 
-        if (isFirebaseConfigured && db) {
-          const userRef = doc(db, 'users', `player_${cleanUser}`);
-          const snap = await getDoc(userRef).catch(() => null);
-          if (snap && snap.exists()) {
-            const data = snap.data() as { recoveryPin?: string };
-            if (data.recoveryPin !== recPin.trim()) {
-              throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
-            }
-            await updateDoc(userRef, { password: recNewPassword.trim() });
-            updated = true;
-          }
-        }
-
-        const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed.recoveryPin !== recPin.trim()) {
+      if (isFirebaseConfigured && db) {
+        const userRef = doc(db, 'users', `player_${cleanUser}`);
+        const snap = await getDoc(userRef).catch(() => null);
+        if (snap && snap.exists()) {
+          const data = snap.data() as { recoveryPin?: string };
+          if (data.recoveryPin !== recPin.trim()) {
             throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
           }
-          parsed.password = recNewPassword.trim();
-          localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
+          await updateDoc(userRef, { password: recNewPassword.trim() });
           updated = true;
         }
-
-        if (!updated) {
-          throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
-        }
-
-        setRecSuccess(
-          lang === 'my'
-            ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။'
-            : 'Password updated successfully! You can now sign in.'
-        );
-      } else {
-        if (!isFirebaseConfigured || !auth) {
-          throw new Error('Firebase Auth is not configured.');
-        }
-        await sendPasswordResetEmail(auth, recEmail.trim());
-        setRecSuccess(
-          lang === 'my'
-            ? 'အီးမေးလ်ပြန်လည်သတ်မှတ်မှုကို ပေးပို့ပြီးပါပြီ။'
-            : 'Password reset email sent.'
-        );
       }
+
+      const raw = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.recoveryPin !== recPin.trim()) {
+          throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid 6-digit Recovery PIN.');
+        }
+        parsed.password = recNewPassword.trim();
+        localStorage.setItem(`myanrena_acc_${cleanUser}`, JSON.stringify(parsed));
+        updated = true;
+      }
+
+      if (!updated) {
+        throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
+      }
+
+      setRecSuccess(
+        lang === 'my'
+          ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။'
+          : 'Password updated successfully! You can now sign in.'
+      );
     } catch (err: any) {
       setRecError(err?.message || 'Recovery failed.');
     } finally {
@@ -355,424 +289,269 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const heroSubtitle = lang === 'my' ? landingContent.heroSubtitleMy : landingContent.heroSubtitleEn;
 
   return (
-    <div className="min-h-dvh-safe bg-[#0A0D14] text-slate-100 flex flex-col">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/85 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-8">
-          <a
-            href="#top"
-            className="text-base sm:text-xl font-display font-bold tracking-tight text-white truncate min-w-0"
-          >
-            {t.brandName}
-          </a>
+    <div className="h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible bg-[#0A0D14] text-slate-100 flex flex-col">
+      {/* Compact Header */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0A0D14]/90 backdrop-blur-md shrink-0">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-base sm:text-xl font-display font-bold tracking-tight text-white truncate">
+              {t.brandName}
+            </span>
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold shrink-0">
+              ● {onlineCount}
+            </span>
+          </div>
 
-          <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-400">
-            <a href="#games" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-              {t.nav.games}
-            </a>
-            <a href="#modes" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-              {t.nav.matchmaking}
-            </a>
-            <a href="#tournaments" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-              {t.nav.tournaments}
-            </a>
-            <a href="#rankings" className="hover:text-white transition-colors whitespace-nowrap shrink-0">
-              {t.nav.rankings}
-            </a>
-          </nav>
-
-          <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
+          <div className="flex items-center gap-1.5 shrink-0">
             <LanguageSwitcher lang={lang} onChange={onChangeLang} />
             <button
               type="button"
               onClick={toggleMute}
               aria-label={muted ? 'Unmute audio' : 'Mute audio'}
-              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-white/10 text-slate-300 hover:text-white hover:bg-white/5 transition-colors cursor-pointer"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl border border-white/10 text-slate-300 hover:text-white cursor-pointer"
             >
               {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
             </button>
-            <a
-              href="#auth-card"
-              className="hidden sm:inline-flex min-h-[44px] items-center px-4 py-2.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-xs sm:text-sm transition-colors whitespace-nowrap shrink-0"
-            >
-              {t.nav.enterArena}
-            </a>
           </div>
         </div>
       </header>
 
-      <main id="top" className="flex-1">
-        <section className="relative overflow-hidden border-b border-white/10">
-          <div className="absolute inset-0 pointer-events-none">
-            <img
-              src={GAME_ARTWORKS.heroBanner}
-              alt="Vanguard Arena Tournament Stage"
-              className="w-full h-full object-cover opacity-50"
-            />
-            <div className="absolute inset-0 bg-gradient-to-b from-[#0A0D14]/60 via-[#0A0D14]/80 to-[#0A0D14]" />
-          </div>
+      {/* Main Viewport — Fits 100% on Mobile Without Scrolling */}
+      <main className="flex-1 flex flex-col justify-center lg:block relative overflow-hidden">
+        <div className="absolute inset-0 pointer-events-none">
+          <img
+            src={GAME_ARTWORKS.heroBanner}
+            alt="Vanguard Arena Stage"
+            className="w-full h-full object-cover opacity-35"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-[#0A0D14]/70 via-[#0A0D14]/85 to-[#0A0D14]" />
+        </div>
 
-          <div className="relative max-w-7xl mx-auto px-3 sm:px-6 py-8 sm:py-12 lg:py-20 grid lg:grid-cols-12 gap-8 lg:gap-12 items-center">
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4 }}
-              className="lg:col-span-7 space-y-5 min-w-0"
-            >
-              <div className="flex flex-wrap items-center gap-2 sm:gap-3 text-xs font-medium text-amber-400">
-                <span className="tabular-nums">
-                  {onlineCount} {t.landing.playersOnlineNow}
-                </span>
-                <span aria-hidden="true" className="text-slate-600">·</span>
-                <span className="text-slate-300">{t.landing.lowLatency}</span>
-                <span aria-hidden="true" className="text-slate-600">·</span>
-                <span className="text-slate-300">{t.landing.rankedAndTournaments}</span>
+        <div className="relative max-w-7xl mx-auto w-full px-3 sm:px-6 py-3 lg:py-16 grid lg:grid-cols-12 gap-4 lg:gap-12 items-center">
+          {/* Desktop Hero Column (Hidden on Mobile so Auth Form fits with Zero Scroll) */}
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="hidden lg:block lg:col-span-7 space-y-6"
+          >
+            <div className="flex items-center gap-3 text-xs font-medium text-amber-400">
+              <span>{onlineCount} {t.landing.playersOnlineNow}</span>
+              <span className="text-slate-600">·</span>
+              <span className="text-slate-300">{t.landing.lowLatency}</span>
+              <span className="text-slate-600">·</span>
+              <span className="text-slate-300">{t.landing.rankedAndTournaments}</span>
+            </div>
+            <h1 className="fluid-hero font-display font-bold tracking-tight text-white">
+              {heroTitle}
+            </h1>
+            <p className="text-base text-slate-300 max-w-2xl leading-relaxed">
+              {heroSubtitle}
+            </p>
+            <div className="grid grid-cols-3 gap-4 pt-2 max-w-xl">
+              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
+                <div className="text-2xl font-display font-bold text-white">4</div>
+                <div className="text-xs text-slate-400 mt-1">{t.landing.competitiveTitles}</div>
               </div>
-
-              <h1
-                className={`fluid-hero font-display font-bold tracking-tight text-white text-balance ${
-                  lang === 'my' ? 'leading-snug' : 'leading-[1.1]'
-                }`}
-              >
-                {heroTitle}
-              </h1>
-
-              <p className="text-sm sm:text-lg text-slate-300 max-w-2xl leading-relaxed">
-                {heroSubtitle}
-              </p>
-
-              <div className="grid grid-cols-3 gap-2.5 sm:gap-4 pt-2 max-w-xl">
-                <div className="p-3 sm:p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                  <div className="text-lg sm:text-2xl font-display font-bold text-white tabular-nums">4</div>
-                  <div className="text-[11px] sm:text-xs text-slate-400 mt-1">{t.landing.competitiveTitles}</div>
-                </div>
-                <div className="p-3 sm:p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                  <div className="text-lg sm:text-2xl font-display font-bold text-amber-400 tabular-nums">30s</div>
-                  <div className="text-[11px] sm:text-xs text-slate-400 mt-1">{t.landing.competitiveTitlesDesc}</div>
-                </div>
-                <div className="p-3 sm:p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
-                  <div className="text-lg sm:text-2xl font-display font-bold text-sky-400 tabular-nums">8 Tiers</div>
-                  <div className="text-[11px] sm:text-xs text-slate-400 mt-1">{t.nav.rankings}</div>
-                </div>
+              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
+                <div className="text-2xl font-display font-bold text-amber-400">1-8P</div>
+                <div className="text-xs text-slate-400 mt-1">Custom & Sakar-Htar</div>
               </div>
-            </motion.div>
+              <div className="p-4 rounded-2xl bg-[#121826]/90 border border-white/10">
+                <div className="text-2xl font-display font-bold text-sky-400">Live</div>
+                <div className="text-xs text-slate-400 mt-1">Real-Time PvP</div>
+              </div>
+            </div>
+          </motion.div>
 
-            <motion.div
-              id="auth-card"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.08 }}
-              className="lg:col-span-5"
-            >
-              <div className="p-5 sm:p-8 rounded-2xl bg-[#121826]/95 backdrop-blur-xl border border-white/10 shadow-2xl">
-                <div className="flex items-center justify-between gap-2 mb-5">
-                  <h2 className="text-xl font-display font-bold text-white">
+          {/* Sign In / Sign Up Card — Directly Visible Above Fold on Mobile */}
+          <div id="auth-card" className="lg:col-span-5 w-full max-w-md mx-auto">
+            <div className="p-5 sm:p-7 rounded-2xl bg-[#121826]/95 backdrop-blur-xl border border-white/10 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-lg sm:text-xl font-display font-bold text-white">
                     {authMode === 'signin' ? t.auth.signInTitle : t.auth.signUpTitle}
                   </h2>
-                  <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0A0D14] border border-white/10 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('signin');
-                        setError('');
-                      }}
-                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                        authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {t.auth.signIn}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setAuthMode('signup');
-                        setError('');
-                      }}
-                      className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer whitespace-nowrap ${
-                        authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {t.auth.signUp}
-                    </button>
-                  </div>
+                  <p className="text-[11px] text-slate-400 lg:hidden">
+                    Connect 4 · Tic-Tac-Toe · RPS · စကားထာ
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 p-1 rounded-xl bg-[#0A0D14] border border-white/10 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('signin');
+                      setError('');
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                      authMode === 'signin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {t.auth.signIn}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAuthMode('signup');
+                      setError('');
+                    }}
+                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors cursor-pointer ${
+                      authMode === 'signup' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {t.auth.signUp}
+                  </button>
+                </div>
+              </div>
+
+              <form onSubmit={handleSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    {t.auth.username}
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    placeholder={t.auth.usernamePlaceholder}
+                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                  />
                 </div>
 
-                <form onSubmit={handleSubmit} className="space-y-3.5">
+                {authMode === 'signup' && (
                   <div>
                     <label className="block text-xs font-medium text-slate-300 mb-1">
-                      {t.auth.username}
+                      {t.auth.displayName}
                     </label>
                     <input
                       type="text"
-                      required
-                      autoComplete="username"
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder={t.auth.usernamePlaceholder}
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
+                      value={displayName}
+                      onChange={(e) => setDisplayName(e.target.value)}
+                      placeholder={t.auth.displayNamePlaceholder}
+                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
                     />
                   </div>
+                )}
 
-                  {authMode === 'signup' && (
-                    <>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1">
-                          {t.auth.displayName}
-                        </label>
-                        <input
-                          type="text"
-                          value={displayName}
-                          onChange={(e) => setDisplayName(e.target.value)}
-                          placeholder={t.auth.displayNamePlaceholder}
-                          className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
-                        />
-                      </div>
-                      <div>
-                        <label className="block text-xs font-medium text-slate-300 mb-1">
-                          {t.auth.emailLabel} <span className="text-slate-500">(Optional)</span>
-                        </label>
-                        <input
-                          type="email"
-                          value={email}
-                          onChange={(e) => setEmail(e.target.value)}
-                          placeholder="player@example.com"
-                          className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
-                        />
-                      </div>
-                    </>
-                  )}
-
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1">
-                      {t.auth.password}
-                    </label>
-                    <input
-                      type="password"
-                      required
-                      autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder={t.auth.passwordPlaceholder}
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400 transition-colors"
-                    />
-                  </div>
-
-                  {authMode === 'signin' && (
-                    <div className="flex items-center justify-between gap-2 text-xs pt-0.5">
-                      <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer select-none">
-                        <input
-                          type="checkbox"
-                          checked={rememberMe}
-                          onChange={(e) => setRememberMe(e.target.checked)}
-                          className="w-4 h-4 rounded border-white/20 bg-[#0A0D14] accent-amber-500 cursor-pointer"
-                        />
-                        <span>{t.auth.rememberMe}</span>
-                      </label>
-
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setRecoveryOpen(true);
-                          setRecError('');
-                          setRecSuccess('');
-                        }}
-                        className="text-amber-400 hover:text-amber-300 font-medium cursor-pointer"
-                      >
-                        {t.auth.forgotPassword}
-                      </button>
-                    </div>
-                  )}
-
-                  {error && (
-                    <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
-                      {error}
-                    </div>
-                  )}
-
-                  <button
-                    type="submit"
-                    disabled={loading}
-                    className="w-full h-12 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
-                  >
-                    <span>
-                      {loading
-                        ? t.auth.authenticating
-                        : authMode === 'signin'
-                        ? t.auth.signIn
-                        : t.auth.createAccount}
-                    </span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </form>
-
-                <div className="my-4 flex items-center gap-3">
-                  <div className="h-px flex-1 bg-white/10" />
-                  <span className="text-xs text-slate-500">{t.auth.orDivider}</span>
-                  <div className="h-px flex-1 bg-white/10" />
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    {t.auth.password}
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={t.auth.passwordPlaceholder}
+                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400"
+                  />
                 </div>
 
-                <button
-                  type="button"
-                  disabled={loading}
-                  onClick={handleGoogleSignIn}
-                  className="w-full h-11 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm font-medium text-white flex items-center justify-center gap-2.5 transition-colors cursor-pointer"
-                >
-                  <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      fill="#EA4335"
-                      d="M12 5c1.6 0 3 .6 4.1 1.6l3.1-3.1C17.3 1.7 14.8 1 12 1 7.4 1 3.5 3.6 1.6 7.4l3.7 2.8C6.2 7.2 8.9 5 12 5z"
-                    />
-                    <path
-                      fill="#4285F4"
-                      d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.7-2.4 3.6l3.7 2.9c2.2-2 3.7-5 3.7-8.7z"
-                    />
-                    <path
-                      fill="#FBBC05"
-                      d="M5.3 14.8c-.2-.8-.4-1.8-.4-2.8s.2-2 .4-2.8L1.6 6.4C.6 8.3 0 10.6 0 12s.6 3.7 1.6 5.6l3.7-2.8z"
-                    />
-                    <path
-                      fill="#34A853"
-                      d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3.1 0-5.8-2.1-6.7-5l-3.7 2.8C3.5 20.4 7.4 23 12 23z"
-                    />
-                  </svg>
-                  <span>{t.auth.continueGoogle}</span>
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        </section>
+                {authMode === 'signin' && (
+                  <div className="flex items-center justify-between gap-2 text-xs">
+                    <label className="inline-flex items-center gap-2 text-slate-300 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={rememberMe}
+                        onChange={(e) => setRememberMe(e.target.checked)}
+                        className="w-4 h-4 rounded border-white/20 bg-[#0A0D14] accent-amber-500 cursor-pointer"
+                      />
+                      <span>{t.auth.rememberMe}</span>
+                    </label>
 
-        <section id="games" className="max-w-7xl mx-auto px-4 sm:px-6 py-14 space-y-8">
-          <div>
-            <h2 className="text-2xl sm:text-3xl font-display font-bold text-white">
-              {t.landing.featuredTitles}
-            </h2>
-            <p className="text-sm text-slate-400 mt-1">{t.landing.featuredTitlesDesc}</p>
-          </div>
-
-          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            {GAME_LIST.map((game) => {
-              const cmsGame = landingContent.games?.[game.id];
-              const gameTitle = lang === 'my' ? cmsGame?.nameMy || game.nameMy : cmsGame?.nameEn || game.name;
-              const gameTagline =
-                lang === 'my' ? cmsGame?.taglineMy || game.taglineMy : cmsGame?.taglineEn || game.tagline;
-              const gameBanner = GAME_ARTWORKS[game.id] || cmsGame?.bannerUrl || game.artwork;
-              const gameRules = lang === 'my' ? game.rulesMy : game.rules;
-
-              return (
-                <motion.article
-                  key={game.id}
-                  whileHover={{ y: -4 }}
-                  transition={{ duration: 0.18 }}
-                  className="rounded-2xl bg-[#121826] border border-white/10 overflow-hidden flex flex-col"
-                >
-                  <div className="aspect-[4/3] bg-[#0B101B] relative overflow-hidden">
-                    <img
-                      src={gameBanner}
-                      alt={gameTitle}
-                      className="w-full h-full object-cover"
-                    />
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#121826] via-transparent to-transparent" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecoveryOpen(true);
+                        setRecError('');
+                        setRecSuccess('');
+                      }}
+                      className="text-amber-400 hover:text-amber-300 font-medium cursor-pointer"
+                    >
+                      {t.auth.forgotPassword}
+                    </button>
                   </div>
-                  <div className="p-5 flex-1 flex flex-col justify-between space-y-4">
+                )}
+
+                {error && (
+                  <div className="p-2.5 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full h-12 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-bold text-sm flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <span>
+                    {loading
+                      ? t.auth.authenticating
+                      : authMode === 'signin'
+                      ? t.auth.signIn
+                      : t.auth.createAccount}
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              </form>
+
+              <div className="pt-1 flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
+                <Lock className="w-3 h-3 text-amber-400" />
+                <span>{lang === 'my' ? 'အကောင့်သစ်ဖွင့်လျှင် 6-Digit PIN ရရှိပါမည်' : 'Instant account with 6-Digit Recovery PIN'}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Desktop Game Showcase */}
+        <section id="games" className="hidden lg:block max-w-7xl mx-auto px-6 py-14 space-y-8 relative">
+          <h2 className="text-3xl font-display font-bold text-white">{t.landing.featuredTitles}</h2>
+          <div className="grid grid-cols-4 gap-6">
+            {GAME_LIST.map((game) => {
+              const gameTitle = lang === 'my' ? game.nameMy : game.name;
+              const gameTagline = lang === 'my' ? game.taglineMy : game.tagline;
+              return (
+                <article key={game.id} className="rounded-2xl bg-[#121826] border border-white/10 overflow-hidden flex flex-col">
+                  <div className="aspect-[4/3] bg-[#0B101B]">
+                    <img src={GAME_ARTWORKS[game.id]} alt={gameTitle} className="w-full h-full object-cover" />
+                  </div>
+                  <div className="p-5 flex-1 flex flex-col justify-between">
                     <div>
                       <h3 className="text-lg font-display font-bold text-white">{gameTitle}</h3>
-                      <p className="text-xs sm:text-sm text-slate-400 mt-1 leading-relaxed">{gameTagline}</p>
-                      <ul className="mt-3 space-y-1.5 text-xs text-slate-300">
-                        {gameRules.map((rule, idx) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <span className="text-amber-400 font-mono tabular-nums">0{idx + 1}.</span>
-                            <span>{rule}</span>
-                          </li>
-                        ))}
-                      </ul>
+                      <p className="text-xs text-slate-400 mt-1">{gameTagline}</p>
                     </div>
-                    <a
-                      href="#auth-card"
-                      className="inline-flex items-center gap-2 text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors pt-2"
-                    >
-                      <span>
-                        {t.landing.signInToLaunch} ({game.shortName})
-                      </span>
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </a>
                   </div>
-                </motion.article>
+                </article>
               );
             })}
           </div>
         </section>
-
-        <section id="modes" className="border-t border-white/10 bg-[#0E131E]">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 py-12 grid sm:grid-cols-2 lg:grid-cols-4 gap-6">
-            <div className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
-              <Swords className="w-6 h-6 text-amber-400" />
-              <h3 className="text-base font-display font-semibold text-white">
-                {t.landing.rankedMatchmakingTitle}
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.rankedMatchmakingDesc}</p>
-            </div>
-            <div id="tournaments" className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
-              <Trophy className="w-6 h-6 text-sky-400" />
-              <h3 className="text-base font-display font-semibold text-white">
-                {t.landing.knockoutTitle}
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.knockoutDesc}</p>
-            </div>
-            <div id="rankings" className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
-              <Users className="w-6 h-6 text-emerald-400" />
-              <h3 className="text-base font-display font-semibold text-white">
-                {t.landing.friendsChatTitle}
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.friendsChatDesc}</p>
-            </div>
-            <div className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-2.5">
-              <Shield className="w-6 h-6 text-amber-300" />
-              <h3 className="text-base font-display font-semibold text-white">
-                {t.landing.resilienceTitle}
-              </h3>
-              <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">{t.landing.resilienceDesc}</p>
-            </div>
-          </div>
-        </section>
       </main>
 
-      <footer className="border-t border-white/10 py-6 px-4 sm:px-6 text-xs text-slate-500">
-        <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-          <span>{t.landing.footerNote}</span>
-          <span className="flex items-center gap-1.5 text-slate-500">
-            <Lock className="w-3.5 h-3.5" />
-            {t.landing.serverValidated}
-          </span>
-        </div>
-      </footer>
-
+      {/* One-Time 6-Digit Backup Recovery PIN Modal */}
       <AnimatePresence>
         {signupPinModal && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="w-full max-w-md rounded-2xl bg-[#121826] border border-amber-400/50 p-6 space-y-5 shadow-2xl"
-            >
+            <div className="w-full max-w-md rounded-2xl bg-[#121826] border border-amber-400/50 p-6 space-y-4 shadow-2xl">
               <div className="flex items-center gap-3">
-                <div className="w-11 h-11 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center shrink-0">
+                <div className="w-10 h-10 rounded-xl bg-amber-500/15 border border-amber-400/30 flex items-center justify-center shrink-0">
                   <KeyRound className="w-5 h-5 text-amber-400" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-display font-bold text-white">{t.auth.pinModalTitle}</h3>
+                  <h3 className="text-base font-display font-bold text-white">{t.auth.pinModalTitle}</h3>
                   <p className="text-xs font-mono text-amber-300">{signupPinModal.user.gameId}</p>
                 </div>
               </div>
-
-              <p className="text-sm text-slate-300 leading-relaxed">{t.auth.pinModalDesc}</p>
-
-              <div className="p-4 rounded-xl bg-[#0A0D14] border border-white/10 flex items-center justify-between gap-3">
-                <span className="text-3xl font-mono font-bold tracking-[0.28em] text-amber-400 tabular-nums">
+              <p className="text-xs text-slate-300 leading-relaxed">{t.auth.pinModalDesc}</p>
+              <div className="p-3.5 rounded-xl bg-[#0A0D14] border border-white/10 flex items-center justify-between gap-3">
+                <span className="text-2xl font-mono font-bold tracking-[0.25em] text-amber-400">
                   {signupPinModal.pin}
                 </span>
                 <button
@@ -782,13 +561,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     setPinCopied(true);
                     setTimeout(() => setPinCopied(false), 2000);
                   }}
-                  className="min-h-[40px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
+                  className="px-3 py-2 rounded-xl bg-white/10 text-xs font-semibold text-white flex items-center gap-1.5 cursor-pointer"
                 >
                   {pinCopied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
                   <span>{pinCopied ? t.auth.copied : t.auth.copyPin}</span>
                 </button>
               </div>
-
               <button
                 type="button"
                 onClick={() => {
@@ -796,152 +574,73 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   setSignupPinModal(null);
                   onAuthenticated(payload.token, payload.user, payload.rememberMe);
                 }}
-                className="w-full min-h-[46px] rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm cursor-pointer"
+                className="w-full h-11 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-sm cursor-pointer"
               >
                 {t.auth.pinSavedBtn}
               </button>
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
+      {/* PIN Password Recovery Modal */}
       <AnimatePresence>
         {recoveryOpen && (
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
           >
-            <motion.div
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="w-full max-w-md rounded-2xl bg-[#121826] border border-white/15 p-6 space-y-5 shadow-2xl"
-            >
+            <div className="w-full max-w-md rounded-2xl bg-[#121826] border border-white/15 p-6 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-display font-bold text-white">{t.auth.recoveryTitle}</h3>
+                <h3 className="text-base font-display font-bold text-white">{t.auth.recoveryTitle}</h3>
                 <button
                   type="button"
                   onClick={() => setRecoveryOpen(false)}
-                  aria-label="Close recovery modal"
-                  className="min-h-[38px] min-w-[38px] rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+                  className="w-9 h-9 rounded-xl bg-white/5 text-slate-300 flex items-center justify-center cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
-
-              <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-[#0A0D14] border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecoveryTab('pin');
-                    setRecError('');
-                    setRecSuccess('');
-                  }}
-                  className={`min-h-[40px] rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
-                    recoveryTab === 'pin' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <KeyRound className="w-3.5 h-3.5" />
-                  <span>{t.auth.recoveryByPin}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setRecoveryTab('email');
-                    setRecError('');
-                    setRecSuccess('');
-                  }}
-                  className={`min-h-[40px] rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 cursor-pointer ${
-                    recoveryTab === 'email' ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
-                  }`}
-                >
-                  <Mail className="w-3.5 h-3.5" />
-                  <span>{t.auth.recoveryByEmail}</span>
-                </button>
-              </div>
-
-              <form onSubmit={handleRecoverySubmit} className="space-y-4">
-                {recoveryTab === 'pin' ? (
-                  <>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                        {t.auth.username}
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        value={recUsername}
-                        onChange={(e) => setRecUsername(e.target.value)}
-                        placeholder={t.auth.usernamePlaceholder}
-                        className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                        {t.auth.recoveryPinLabel}
-                      </label>
-                      <input
-                        type="text"
-                        required
-                        maxLength={6}
-                        value={recPin}
-                        onChange={(e) => setRecPin(e.target.value.replace(/\D/g, ''))}
-                        placeholder={t.auth.recoveryPinPlaceholder}
-                        className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm font-mono tracking-widest text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                        {t.auth.newPasswordLabel}
-                      </label>
-                      <input
-                        type="password"
-                        required
-                        minLength={4}
-                        value={recNewPassword}
-                        onChange={(e) => setRecNewPassword(e.target.value)}
-                        placeholder={t.auth.passwordPlaceholder}
-                        className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                      />
-                    </div>
-                  </>
-                ) : (
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      {t.auth.emailLabel}
-                    </label>
-                    <input
-                      type="email"
-                      required
-                      value={recEmail}
-                      onChange={(e) => setRecEmail(e.target.value)}
-                      placeholder="player@example.com"
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                )}
-
-                {recError && (
-                  <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-xs text-rose-300">
-                    {recError}
-                  </div>
-                )}
-                {recSuccess && (
-                  <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-xs text-emerald-300">
-                    {recSuccess}
-                  </div>
-                )}
-
+              <form onSubmit={handleRecoverySubmit} className="space-y-3">
+                <input
+                  type="text"
+                  required
+                  value={recUsername}
+                  onChange={(e) => setRecUsername(e.target.value)}
+                  placeholder={t.auth.usernamePlaceholder}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
+                />
+                <input
+                  type="text"
+                  required
+                  maxLength={6}
+                  value={recPin}
+                  onChange={(e) => setRecPin(e.target.value.replace(/\D/g, ''))}
+                  placeholder={t.auth.recoveryPinPlaceholder}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm font-mono tracking-widest text-white"
+                />
+                <input
+                  type="password"
+                  required
+                  minLength={4}
+                  value={recNewPassword}
+                  onChange={(e) => setRecNewPassword(e.target.value)}
+                  placeholder={t.auth.newPasswordLabel}
+                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
+                />
+                {recError && <div className="p-2.5 rounded-xl bg-rose-500/10 text-xs text-rose-300">{recError}</div>}
+                {recSuccess && <div className="p-2.5 rounded-xl bg-emerald-500/10 text-xs text-emerald-300">{recSuccess}</div>}
                 <button
                   type="submit"
                   disabled={recLoading}
-                  className="w-full min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-semibold text-sm cursor-pointer"
+                  className="w-full h-11 rounded-xl bg-amber-500 text-slate-950 font-bold text-sm cursor-pointer"
                 >
-                  {recoveryTab === 'pin' ? t.auth.resetPasswordBtn : t.auth.sendResetEmailBtn}
+                  {t.auth.resetPasswordBtn}
                 </button>
               </form>
-            </motion.div>
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
