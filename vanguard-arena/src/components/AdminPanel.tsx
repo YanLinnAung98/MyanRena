@@ -1,44 +1,23 @@
 import React from 'react';
-import { AnimatePresence, motion } from 'motion/react';
 import {
   Activity,
+  AlertTriangle,
   Ban,
   Bell,
-  BookOpen,
   CheckCircle2,
-  Clock,
-  Database,
-  Download,
-  Edit3,
-  Eye,
-  EyeOff,
-  Flag,
-  Gamepad2,
-  KeyRound,
+  FileText,
   Lock,
-  LogOut,
-  Megaphone,
-  Monitor,
-  Palette,
-  Plus,
-  Power,
-  Save,
+  Radio,
+  RefreshCw,
   Search,
   Send,
-  ShieldAlert,
+  Shield,
   Sliders,
-  Smartphone,
-  Swords,
-  Tablet,
-  Trash2,
   Trophy,
   Unlock,
-  UserCog,
   Users,
-  Wifi,
-  WifiOff,
   Wrench,
-  X,
+  XCircle,
 } from 'lucide-react';
 import {
   collection,
@@ -47,1992 +26,848 @@ import {
   onSnapshot,
   setDoc,
 } from 'firebase/firestore';
-import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
-import {
-  db,
-  firebaseInitError,
-  firebaseProjectId,
-  isFirebaseConfigured,
-  stripUndefined,
-} from '../lib/firebase.ts';
+import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
-  getPatchedLandingContent,
   readServerlessStore,
-  SYNC_CHANNEL_NAME,
   writeServerlessStore,
 } from '../lib/serverlessApi.ts';
-import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
-import type { LandingContent, Language, UserProfile } from '../types.ts';
+import type { Language, Tournament, UserProfile } from '../types.ts';
+import { AdminTournamentSection } from './AdminTournamentSection.tsx';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import { LanguageSwitcher } from './LanguageSwitcher.tsx';
+import { RankTierIcon } from './PremiumIcons.tsx';
 
 interface AdminPanelProps {
-  token: string;
-  adminUser: UserProfile;
-  livePingMs: number;
-  lang: Language;
-  onChangeLang: (lang: Language) => void;
-  onSwitchToLobby: () => void;
-  landingContent: LandingContent;
-  onLandingUpdated: (content: LandingContent) => void;
-  onLogout: () => void;
+  lang?: Language;
+  token?: string;
+  currentUser: UserProfile;
+  users?: UserProfile[];
+  tournaments?: Tournament[];
+  rooms?: any[];
+  featureLocks?: Record<string, boolean>;
+  onSwitchToLobby?: () => void;
   onNotify: (level: string, message: string) => void;
 }
 
 type AdminSection =
   | 'overview'
   | 'users'
+  | 'tournaments'
   | 'reports'
   | 'engine'
-  | 'tournaments'
-  | 'quiz'
-  | 'noti'
-  | 'cms';
-
-interface EngineConfigState {
-  hideAdminFromUsers: boolean;
-  maintenanceMode: boolean;
-  maintenanceMessage: string;
-  featureLocks: Record<string, boolean>;
-  xpRules: {
-    winXp: number;
-    drawXp: number;
-    lossXp: number;
-    quizCountPerMatch: number;
-  };
-  matchmakingSettings: {
-    maxWaitSec: number;
-    botFallbackSec: number;
-    xpRange: number;
-    defaultTurnTime: number;
-  };
-}
-
-const DEFAULT_ENGINE_CONFIG: EngineConfigState = {
-  hideAdminFromUsers: true,
-  maintenanceMode: false,
-  maintenanceMessage:
-    'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။',
-  featureLocks: {
-    connect4: false,
-    tictactoe: false,
-    rps: false,
-    sakarhtar: false,
-    matchmaking: false,
-    customRooms: false,
-    tournaments: false,
-    chat: false,
-  },
-  xpRules: {
-    winXp: 75,
-    drawXp: 25,
-    lossXp: -20,
-    quizCountPerMatch: 10,
-  },
-  matchmakingSettings: {
-    maxWaitSec: 30,
-    botFallbackSec: 8,
-    xpRange: 400,
-    defaultTurnTime: 20,
-  },
-};
-
-function computeRankFromXp(xp: number): string {
-  if (xp >= 2500) return 'Legend';
-  if (xp >= 1900) return 'Diamond';
-  if (xp >= 1300) return 'Gold';
-  if (xp >= 1000) return 'Silver';
-  return 'Bronze';
-}
+  | 'broadcast'
+  | 'logs';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
-  adminUser,
-  livePingMs,
-  lang,
-  onChangeLang,
+  currentUser,
+  users: propUsers = [],
+  tournaments: propTournaments = [],
+  rooms: propRooms = [],
+  featureLocks: propLocks = {},
   onSwitchToLobby,
-  landingContent,
-  onLandingUpdated,
-  onLogout,
   onNotify,
 }) => {
   const [section, setSection] = React.useState<AdminSection>('overview');
-  const [users, setUsers] = React.useState<any[]>([]);
+  const [users, setUsers] = React.useState<UserProfile[]>(propUsers);
+  const [tournaments, setTournaments] = React.useState<Tournament[]>(propTournaments);
+  const [rooms, setRooms] = React.useState<any[]>(propRooms);
   const [reports, setReports] = React.useState<any[]>([]);
-  const [notiHistory, setNotiHistory] = React.useState<any[]>([]);
-  const [tournaments, setTournaments] = React.useState<any[]>([]);
-  const [rooms, setRooms] = React.useState<any[]>([]);
-  const [customRiddles, setCustomRiddles] = React.useState<any[]>([]);
   const [auditLogs, setAuditLogs] = React.useState<any[]>([]);
-  const [engineConfig, setEngineConfig] = React.useState<EngineConfigState>(DEFAULT_ENGINE_CONFIG);
+  const [syncError, setSyncError] = React.useState<string>('');
 
-  const [cloudStatus, setCloudStatus] = React.useState<'connected' | 'error' | 'offline'>(
-    isFirebaseConfigured ? 'connected' : 'offline'
+  // Engine / Config state
+  const [maintenance, setMaintenance] = React.useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = React.useState(
+    'စနစ်အဆင့်မြှင့်တင်နေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပေးပါ။'
   );
-  const [cloudErrText, setCloudErrText] = React.useState<string>(firebaseInitError || '');
-  const [nowMs, setNowMs] = React.useState(() => Date.now());
+  const [locks, setLocks] = React.useState<Record<string, boolean>>(propLocks || {});
 
-  // User Filter & Editor
+  // User Management state
   const [userSearch, setUserSearch] = React.useState('');
-  const [userFilter, setUserFilter] = React.useState<'all' | 'live' | 'restricted'>('all');
-  const [editingUser, setEditingUser] = React.useState<any | null>(null);
-  const [editDraft, setEditDraft] = React.useState<any>({});
+  const [selectedUserId, setSelectedUserId] = React.useState<string | null>(null);
+  const [directMsgText, setDirectMsgText] = React.useState('');
+  const [warnReason, setWarnReason] = React.useState('');
+  const [xpDelta, setXpDelta] = React.useState(100);
 
-  // Report Filter & Note
-  const [reportFilter, setReportFilter] = React.useState<'pending' | 'resolved' | 'dismissed' | 'all'>('pending');
-  const [adminReportNotes, setAdminReportNotes] = React.useState<Record<string, string>>({});
+  // Broadcast state
+  const [broadcastTitle, setBroadcastTitle] = React.useState('Vanguard Official Notice');
+  const [broadcastMessage, setBroadcastMessage] = React.useState('');
 
-  // Notification Composer
-  const [notiTarget, setNotiTarget] = React.useState<string>('ALL');
-  const [notiType, setNotiType] = React.useState<'broadcast' | 'message' | 'warning'>('broadcast');
-  const [notiTitle, setNotiTitle] = React.useState<string>('Admin ကြေညာချက်');
-  const [notiMessage, setNotiMessage] = React.useState<string>('');
-  const [sendingNoti, setSendingNoti] = React.useState(false);
-
-  // Tournament Creator
-  const [tTitle, setTTitle] = React.useState('');
-  const [tGame, setTGame] = React.useState('connect4');
-  const [tBracket, setTBracket] = React.useState<8 | 16 | 32>(8);
-  const [tPrizeXp, setTPrizeXp] = React.useState(500);
-
-  // Quiz Manager
-  const [quizSearch, setQuizSearch] = React.useState('');
-  const [quizCatFilter, setQuizCatFilter] = React.useState<'all' | 'riddle' | 'myanmar' | 'science' | 'general'>('all');
-  const [newQ, setNewQ] = React.useState('');
-  const [newQCat, setNewQCat] = React.useState<'riddle' | 'myanmar' | 'science' | 'general'>('general');
-  const [newOpt0, setNewOpt0] = React.useState('');
-  const [newOpt1, setNewOpt1] = React.useState('');
-  const [newOpt2, setNewOpt2] = React.useState('');
-  const [newOpt3, setNewOpt3] = React.useState('');
-  const [newAnsIdx, setNewAnsIdx] = React.useState(0);
-
-  // CMS Branding Editor
-  const [cmsDraft, setCmsDraft] = React.useState<LandingContent>(() =>
-    getPatchedLandingContent(landingContent)
-  );
-  const [savingConfig, setSavingConfig] = React.useState(false);
-
+  // Real-time Firestore Subscriptions
   React.useEffect(() => {
-    const t = window.setInterval(() => setNowMs(Date.now()), 5000);
-    return () => window.clearInterval(t);
-  }, []);
-
-  const logAdminAction = React.useCallback(
-    async (action: string, detail: string) => {
-      const entry = {
-        id: `log_${Date.now()}_${Math.floor(Math.random() * 999)}`,
-        action,
-        actor: adminUser.username || 'yanlinnaung',
-        detail,
-        createdAtMs: Date.now(),
-      };
-      setAuditLogs((prev) => [entry, ...prev].slice(0, 40));
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'auditLogs', entry.id), entry).catch(() => {});
-      }
-    },
-    [adminUser.username]
-  );
-
-  // Real-Time Firestore Subscriptions
-  React.useEffect(() => {
-    const syncLocal = () => {
-      const store = readServerlessStore();
-      setUsers(
-        Object.values(store.users).sort((a: any, b: any) => (b.lastSeenMs || 0) - (a.lastSeenMs || 0))
-      );
-      setNotiHistory(
-        (store.notifications || []).sort((a: any, b: any) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
-      );
-      setTournaments(store.tournaments || []);
-      setRooms(store.rooms || []);
-    };
-
-    syncLocal();
-    let ch: BroadcastChannel | null = null;
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        ch = new BroadcastChannel(SYNC_CHANNEL_NAME);
-        ch.onmessage = () => syncLocal();
-      }
-    } catch {}
-    window.addEventListener('storage', syncLocal);
-
     if (!isFirebaseConfigured || !db) {
-      setCloudStatus('offline');
-      return () => {
-        window.removeEventListener('storage', syncLocal);
-        ch?.close();
-      };
+      const store = readServerlessStore();
+      setUsers(Object.values(store.users || {}) as UserProfile[]);
+      return;
     }
 
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snap) => {
-        setCloudStatus('connected');
-        setCloudErrText('');
-        const list: any[] = [];
-        const store = readServerlessStore();
-        snap.forEach((d) => {
-          const u = d.data();
-          if (u?.id) {
-            list.push(u);
-            store.users[u.id] = u;
-          }
-        });
-        list.sort((a, b) => (b.lastSeenMs || 0) - (a.lastSeenMs || 0));
-        writeServerlessStore(store);
+        const list: UserProfile[] = [];
+        snap.forEach((d) => list.push(d.data() as UserProfile));
+        list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
         setUsers(list);
+        setSyncError('');
       },
-      (err) => {
-        setCloudStatus('error');
-        setCloudErrText(err.message);
-      }
+      (err) => setSyncError(err.message)
     );
 
-    const unsubReports = onSnapshot(collection(db, 'reports'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
-      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      setReports(list);
-    });
-
-    const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
-      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      setNotiHistory(list);
-    });
-
     const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
+      const list: Tournament[] = [];
+      snap.forEach((d) => list.push(d.data() as Tournament));
       list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
       setTournaments(list);
     });
 
     const unsubRooms = onSnapshot(collection(db, 'rooms'), (snap) => {
       const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
-      list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
       setRooms(list);
     });
 
-    const unsubRiddles = onSnapshot(collection(db, 'riddles'), (snap) => {
+    const unsubReports = onSnapshot(collection(db, 'reports'), (snap) => {
       const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
-      setCustomRiddles(list);
-    });
-
-    const unsubLogs = onSnapshot(collection(db, 'auditLogs'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
+      snap.forEach((d) => list.push({ id: d.id, ...d.data() }));
       list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      setAuditLogs(list.slice(0, 40));
+      setReports(list);
     });
 
     const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const data = snap.data() as any;
-        setEngineConfig((prev) => ({
-          hideAdminFromUsers:
-            typeof data.hideAdminFromUsers === 'boolean'
-              ? data.hideAdminFromUsers
-              : prev.hideAdminFromUsers,
-          maintenanceMode: Boolean(data.maintenanceMode),
-          maintenanceMessage: data.maintenanceMessage || prev.maintenanceMessage,
-          featureLocks: { ...prev.featureLocks, ...(data.featureLocks || {}) },
-          xpRules: { ...prev.xpRules, ...(data.xpRules || {}) },
-          matchmakingSettings: { ...prev.matchmakingSettings, ...(data.matchmakingSettings || {}) },
-        }));
+        setMaintenance(Boolean(data.maintenance));
+        if (data.maintenanceMessage) setMaintenanceMessage(data.maintenanceMessage);
+        if (data.featureLocks) setLocks(data.featureLocks);
       }
     });
 
-    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
-      if (snap.exists()) {
-        const patched = getPatchedLandingContent(snap.data() as LandingContent);
-        setCmsDraft(patched);
-        onLandingUpdated(patched);
-      }
+    const unsubLogs = onSnapshot(collection(db, 'auditLogs'), (snap) => {
+      const list: any[] = [];
+      snap.forEach((d) => list.push(d.data()));
+      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      setAuditLogs(list.slice(0, 50));
     });
 
     return () => {
-      window.removeEventListener('storage', syncLocal);
-      ch?.close();
       unsubUsers();
-      unsubReports();
-      unsubNotis();
       unsubTourneys();
       unsubRooms();
-      unsubRiddles();
-      unsubLogs();
+      unsubReports();
       unsubConfig();
-      unsubLanding();
+      unsubLogs();
     };
-  }, [onLandingUpdated]);
+  }, []);
 
-  const isUserLiveNow = (u: any) => Boolean(u.online && u.lastSeenMs && nowMs - Number(u.lastSeenMs) < 45000);
-  const liveCount = users.filter(isUserLiveNow).length;
-  const bannedCount = users.filter((u) => u.status === 'banned' || u.status === 'suspended').length;
-  const pendingReportsCount = reports.filter((r) => (r.status || 'pending') === 'pending').length;
-  const allQuizzes = React.useMemo(() => [...customRiddles, ...QUIZ_BANK_100], [customRiddles]);
-
-  // Handle Report Resolution Actions
-  const handleResolveReport = async (
-    rep: any,
-    outcome: 'warn' | 'suspend24' | 'ban' | 'resolve' | 'dismiss'
-  ) => {
-    const note = (adminReportNotes[rep.id] || '').trim();
-    const nextStatus = outcome === 'dismiss' ? 'dismissed' : 'resolved';
-    const actionText =
-      outcome === 'warn'
-        ? 'Warning ပေးပြီး'
-        : outcome === 'suspend24'
-        ? '၂၄ နာရီ ယာယီပိတ်ပြီး'
-        : outcome === 'ban'
-        ? 'အပြီးတိုင် Ban ပြီး'
-        : outcome === 'dismiss'
-        ? 'ပယ်ချပြီး (Dismissed)'
-        : 'စစ်ဆေးဖြေရှင်းပြီး';
-
-    try {
-      if (isFirebaseConfigured && db) {
-        if (outcome === 'warn') {
-          const nid = `warn_${Date.now()}`;
-          await setDoc(
-            doc(db, 'notifications', nid),
-            stripUndefined({
-              id: nid,
-              targetUserId: rep.targetUserId,
-              title: '⚠️ Official Admin Warning',
-              message:
-                note ||
-                `စည်းကမ်းချိုးဖောက်မှု (${rep.categoryLabel || rep.category}) ကြောင့် Admin မှ တရားဝင် သတိပေးအပ်ပါသည်။`,
-              type: 'warning',
-              senderName: 'Vanguard Admin',
-              createdAtMs: Date.now(),
-              read: false,
-            })
-          );
-          await setDoc(doc(db, 'users', rep.targetUserId), { status: 'warned' }, { merge: true }).catch(() => {});
-        } else if (outcome === 'suspend24') {
-          const untilIso = new Date(Date.now() + 24 * 60 * 60000).toISOString();
-          await setDoc(
-            doc(db, 'users', rep.targetUserId),
-            { status: 'suspended', suspendedUntil: untilIso },
-            { merge: true }
-          ).catch(() => {});
-        } else if (outcome === 'ban') {
-          await setDoc(doc(db, 'users', rep.targetUserId), { status: 'banned' }, { merge: true }).catch(() => {});
-        }
-
-        await setDoc(
-          doc(db, 'reports', rep.id),
-          stripUndefined({
-            status: nextStatus,
-            adminAction: actionText,
-            adminNote: note,
-            resolvedBy: adminUser.username,
-            resolvedAtMs: Date.now(),
-          }),
-          { merge: true }
-        );
-
-        if (rep.reporterId) {
-          const feedbackId = `repfb_${Date.now()}`;
-          await setDoc(
-            doc(db, 'notifications', feedbackId),
-            stripUndefined({
-              id: feedbackId,
-              targetUserId: rep.reporterId,
-              title: 'Report စစ်ဆေးမှု ရလဒ်',
-              message: `${rep.targetName} အား သင်တိုင်ကြားထားသော Report ကို Admin မှ စစ်ဆေးပြီး (${actionText}) ဖြစ်ပါသည်။`,
-              type: 'message',
-              senderName: 'Vanguard Admin',
-              createdAtMs: Date.now(),
-              read: false,
-            })
-          ).catch(() => {});
-        }
-      }
-
-      await logAdminAction('REPORT_ACTION', `${rep.targetName}: ${actionText}`);
-      onNotify('success', `Report ကို ${actionText} ဆောင်ရွက်ပြီးပါပြီ။`);
-    } catch (err: any) {
-      onNotify('error', err?.message || 'Report action failed');
-    }
-  };
-
-  const handleDeleteReport = async (repId: string) => {
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'reports', repId)).catch(() => {});
-    }
-    onNotify('info', 'Report မှတ်တမ်း ဖျက်ပြီးပါပြီ။');
-  };
-
-  // Save Engine Config (Includes Stealth Mode & Maintenance)
-  const persistEngineConfig = async (nextCfg: EngineConfigState, toastLabel: string) => {
-    setSavingConfig(true);
-    try {
-      setEngineConfig(nextCfg);
-      const store = readServerlessStore();
-      store.featureLocks = nextCfg.featureLocks;
-      store.matchmakingSettings = nextCfg.matchmakingSettings;
-      writeServerlessStore(store);
-
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'system', 'config'), stripUndefined(nextCfg), { merge: true });
-      }
-      broadcastLocalSync('CONFIG_UPDATED');
-      await logAdminAction('CONFIG_UPDATE', toastLabel);
-      onNotify('success', toastLabel);
-    } catch (err: any) {
-      onNotify('error', err?.message || 'Config save failed');
-    } finally {
-      setSavingConfig(false);
-    }
-  };
-
-  // Player Edit Modal
-  const openPlayerEditor = (u: any) => {
-    setEditingUser(u);
-    setEditDraft({
-      displayName: u.displayName || '',
-      xp: Number(u.xp || 1000),
-      frameId: u.frameId || 'bronze',
-      wins: Number(u.wins || 0),
-      losses: Number(u.losses || 0),
-      draws: Number(u.draws || 0),
-      status: u.status || 'active',
-      newPassword: '',
-    });
-  };
-
-  const handleSavePlayerEdit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!editingUser) return;
-    const nextXp = Math.max(0, Number(editDraft.xp) || 0);
-    const updates: Record<string, any> = {
-      displayName: editDraft.displayName.trim() || editingUser.displayName,
-      xp: nextXp,
-      rank: computeRankFromXp(nextXp),
-      frameId: editDraft.frameId,
-      wins: Math.max(0, Number(editDraft.wins) || 0),
-      losses: Math.max(0, Number(editDraft.losses) || 0),
-      draws: Math.max(0, Number(editDraft.draws) || 0),
-      status: editDraft.status,
-    };
-    if (editDraft.status === 'active') updates.suspendedUntil = null;
-    if (editDraft.newPassword.trim().length >= 4) updates.password = editDraft.newPassword.trim();
-
-    try {
-      const clean = stripUndefined(updates);
-      const store = readServerlessStore();
-      if (store.users[editingUser.id]) {
-        store.users[editingUser.id] = { ...store.users[editingUser.id], ...clean };
-        writeServerlessStore(store);
-      }
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'users', editingUser.id), clean, { merge: true });
-      }
-      broadcastLocalSync('USER_UPDATED');
-      await logAdminAction('EDIT_PLAYER', `${editingUser.displayName} (${editingUser.gameId}) updated`);
-      onNotify('success', `${editingUser.displayName} အချက်အလက် သိမ်းဆည်းပြီးပါပြီ။`);
-      setEditingUser(null);
-    } catch (err: any) {
-      onNotify('error', err?.message || 'Update failed');
-    }
-  };
-
-  const handleTimedSuspend = async (u: any, minutes: number) => {
-    const untilIso = new Date(Date.now() + minutes * 60000).toISOString();
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', u.id), { status: 'suspended', suspendedUntil: untilIso }, { merge: true }).catch(() => {});
-    }
-    await logAdminAction('SUSPEND_PLAYER', `${u.displayName} suspended for ${minutes}m`);
-    onNotify('info', `${u.displayName} ကို ${minutes} မိနစ် ယာယီပိတ်လိုက်ပါပြီ။`);
-    setEditingUser(null);
-  };
-
-  const handleForceKick = async (u: any) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', u.id), { forceLogoutAt: Date.now(), online: false }, { merge: true }).catch(() => {});
-    }
-    await logAdminAction('KICK_PLAYER', `Force-disconnected ${u.displayName}`);
-    onNotify('info', `${u.displayName} ကို ချက်ချင်း ထုတ်ပယ်လိုက်ပါပြီ။`);
-  };
-
-  const handleDeleteUser = async (u: any) => {
-    if (u.role === 'admin') return;
-    if (!window.confirm(`${u.displayName} (${u.gameId}) အကောင့်ကို အပြီးတိုင် ဖျက်မည်မှာ သေချာပါသလား?`)) return;
-    const store = readServerlessStore();
-    delete store.users[u.id];
-    writeServerlessStore(store);
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'users', u.id)).catch(() => {});
-    }
-    broadcastLocalSync('USER_DELETED');
-    await logAdminAction('DELETE_PLAYER', `Deleted account ${u.username}`);
-    onNotify('success', 'အကောင့် ဖျက်သိမ်းပြီးပါပြီ။');
-    setEditingUser(null);
-  };
-
-  const handleSendNotification = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!notiMessage.trim()) return;
-    setSendingNoti(true);
-    try {
-      const id = `noti_${Date.now()}_${Math.floor(Math.random() * 999)}`;
-      const payload = stripUndefined({
+  const logAdminAction = React.useCallback(
+    async (action: string, detail: string) => {
+      const id = `log_${Date.now()}_${Math.floor(Math.random() * 999)}`;
+      const entry = stripUndefined({
         id,
-        targetUserId: notiTarget,
-        title: notiTitle.trim() || 'Admin ကြေညာချက်',
-        message: notiMessage.trim(),
-        type: notiTarget === 'ALL' ? 'broadcast' : notiType,
-        senderName: 'Yan Linn Aung (Admin)',
+        admin: currentUser.username || 'yanlinnaung',
+        action,
+        detail,
         createdAtMs: Date.now(),
-        read: false,
       });
-
-      const store = readServerlessStore();
-      store.notifications = [payload, ...(store.notifications || [])];
-      writeServerlessStore(store);
-      broadcastLocalSync('NOTI_SENT');
-
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'notifications', id), payload);
+        await setDoc(doc(db, 'auditLogs', id), entry).catch(() => {});
       }
-
-      setNotiMessage('');
-      await logAdminAction('SEND_NOTI', `Sent to ${notiTarget}: ${payload.title}`);
-      onNotify('success', 'Real-Time Notification ပေးပို့ပြီးပါပြီ!');
-    } catch (err: any) {
-      onNotify('error', err?.message || 'Failed to send notification');
-    } finally {
-      setSendingNoti(false);
-    }
-  };
-
-  const handleDeleteNotification = async (id: string) => {
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'notifications', id)).catch(() => {});
-    }
-    setNotiHistory((prev) => prev.filter((n) => n.id !== id));
-    onNotify('info', 'Notification ဖျက်ပြီးပါပြီ။');
-  };
-
-  const handleCreateTournament = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tTitle.trim()) return;
-    const id = `tourney_${Date.now()}`;
-    const item = stripUndefined({
-      id,
-      title: tTitle.trim(),
-      gameType: tGame,
-      bracketSize: tBracket,
-      prizeXp: Number(tPrizeXp) || 300,
-      status: 'open',
-      participants: [],
-      rounds: [],
-      createdAtMs: Date.now(),
-      createdAt: new Date().toISOString(),
-    });
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'tournaments', id), item).catch(() => {});
-    }
-    setTTitle('');
-    await logAdminAction('CREATE_TOURNAMENT', `${item.title} (${tBracket}P)`);
-    onNotify('success', 'ပြိုင်ပွဲအသစ် ဖန်တီးပြီးပါပြီ!');
-  };
-
-  const handleTournamentStatus = async (tid: string, status: 'open' | 'ongoing' | 'completed') => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'tournaments', tid), { status }, { merge: true }).catch(() => {});
-    }
-    onNotify('success', `ပြိုင်ပွဲအခြေအနေ ${status.toUpperCase()} သို့ ပြောင်းပြီးပါပြီ။`);
-  };
-
-  const handleDeleteTournament = async (tid: string) => {
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'tournaments', tid)).catch(() => {});
-    }
-    onNotify('info', 'ပြိုင်ပွဲ ဖျက်ပြီးပါပြီ။');
-  };
+    },
+    [currentUser.username]
+  );
 
   const handleCloseRoom = async (roomId: string) => {
     if (isFirebaseConfigured && db) {
       await deleteDoc(doc(db, 'rooms', roomId)).catch(() => {});
     }
+    await logAdminAction('CLOSE_ROOM', `Closed room ${roomId}`);
+    onNotify('info', 'Room ပိတ်သိမ်းပြီးပါပြီ။');
+  };
+
+  const handleSaveSystemConfig = async (
+    nextMaintenance: boolean,
+    nextLocks: Record<string, boolean>,
+    nextMsg = maintenanceMessage
+  ) => {
+    setMaintenance(nextMaintenance);
+    setLocks(nextLocks);
+    if (isFirebaseConfigured && db) {
+      await setDoc(
+        doc(db, 'system', 'config'),
+        stripUndefined({
+          maintenance: nextMaintenance,
+          maintenanceMessage: nextMsg,
+          featureLocks: nextLocks,
+          updatedAtMs: Date.now(),
+        }),
+        { merge: true }
+      ).catch(() => {});
+    }
+    await logAdminAction(
+      'UPDATE_ENGINE',
+      `Maintenance=${nextMaintenance}, Locks=${JSON.stringify(nextLocks)}`
+    );
+    onNotify('success', 'Server Engine Settings သိမ်းဆည်းပြီးပါပြီ!');
+  };
+
+  const handleUserStatus = async (
+    target: UserProfile,
+    status: 'active' | 'warned' | 'suspended' | 'banned'
+  ) => {
+    if (target.role === 'admin') return;
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'users', target.id), { status }, { merge: true }).catch(() => {});
+    }
     const store = readServerlessStore();
-    store.rooms = (store.rooms || []).filter((r: any) => r.id !== roomId);
+    if (store.users[target.id]) {
+      store.users[target.id].status = status;
+      writeServerlessStore(store);
+    }
+    await logAdminAction('USER_STATUS', `${target.displayName} -> ${status}`);
+    onNotify('success', `${target.displayName} အား ${status.toUpperCase()} ပြောင်းပြီးပါပြီ။`);
+  };
+
+  const handleAdjustXp = async (target: UserProfile, delta: number) => {
+    const nextXp = Math.max(0, (target.xp || 0) + delta);
+    const nextRank =
+      nextXp >= 2500
+        ? 'Legend'
+        : nextXp >= 1900
+        ? 'Diamond'
+        : nextXp >= 1300
+        ? 'Gold'
+        : nextXp >= 1000
+        ? 'Silver'
+        : 'Bronze';
+
+    if (isFirebaseConfigured && db) {
+      await setDoc(
+        doc(db, 'users', target.id),
+        { xp: nextXp, rank: nextRank },
+        { merge: true }
+      ).catch(() => {});
+    }
+    await logAdminAction('ADJUST_XP', `${target.displayName} ${delta >= 0 ? '+' : ''}${delta} XP`);
+    onNotify('success', `${target.displayName} XP ကို ${nextXp} သို့ ပြောင်းပြီးပါပြီ။`);
+  };
+
+  const handleSendWarning = async (target: UserProfile, reasonText: string) => {
+    if (!reasonText.trim()) return;
+    const wid = `warn_${Date.now()}`;
+    const payload = stripUndefined({
+      id: wid,
+      userId: target.id,
+      reason: reasonText.trim(),
+      acknowledged: false,
+      createdAtMs: Date.now(),
+    });
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'warnings', wid), payload).catch(() => {});
+      await setDoc(doc(db, 'users', target.id), { status: 'warned' }, { merge: true }).catch(() => {});
+    }
+    setWarnReason('');
+    await logAdminAction('WARN_USER', `${target.displayName}: ${reasonText}`);
+    onNotify('success', `${target.displayName} ထံ သတိပေးချက် ပေးပို့ပြီးပါပြီ!`);
+  };
+
+  const handleSendDirectNoti = async (target: UserProfile, text: string) => {
+    if (!text.trim()) return;
+    const nid = `noti_${Date.now()}`;
+    const payload = stripUndefined({
+      id: nid,
+      targetUserId: target.id,
+      title: 'Admin မှ အသိပေးစာ',
+      message: text.trim(),
+      type: 'message',
+      senderName: 'Master Admin',
+      createdAtMs: Date.now(),
+      read: false,
+    });
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'notifications', nid), payload).catch(() => {});
+    }
+    setDirectMsgText('');
+    await logAdminAction('DIRECT_NOTI', `To ${target.displayName}: ${text}`);
+    onNotify('success', `${target.displayName} ထံ Notification ပေးပို့ပြီးပါပြီ!`);
+  };
+
+  const handleSendBroadcast = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!broadcastMessage.trim()) return;
+    const bid = `bc_${Date.now()}`;
+    const payload = stripUndefined({
+      id: bid,
+      title: broadcastTitle.trim() || 'Admin Announcement',
+      message: broadcastMessage.trim(),
+      createdAtMs: Date.now(),
+    });
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'system', 'announcement'), payload).catch(() => {});
+      await setDoc(
+        doc(db, 'notifications', bid),
+        stripUndefined({
+          id: bid,
+          targetUserId: 'ALL',
+          title: payload.title,
+          message: payload.message,
+          type: 'broadcast',
+          senderName: 'Master Admin',
+          createdAtMs: Date.now(),
+          read: false,
+        })
+      ).catch(() => {});
+    }
+    const store = readServerlessStore();
+    store.activeBroadcast = payload;
     writeServerlessStore(store);
-    onNotify('info', 'အခန်းကို ပိတ်သိမ်းပြီးပါပြီ။');
+    broadcastLocalSync('BROADCAST');
+    await logAdminAction('BROADCAST', `${payload.title}: ${payload.message}`);
+    setBroadcastMessage('');
+    onNotify('success', 'ကစားသမားအားလုံးထံ Broadcast ကြေညာချက် ပေးပို့ပြီးပါပြီ!');
   };
 
-  const handleAddQuiz = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const opts = [newOpt0, newOpt1, newOpt2, newOpt3].map((s) => s.trim()).filter(Boolean);
-    if (!newQ.trim() || opts.length < 2) {
-      onNotify('error', 'မေးခွန်းနှင့် အဖြေရွေးချယ်စရာ အနည်းဆုံး ၂ ခု ထည့်သွင်းပါ။');
-      return;
+  const handleReportDecision = async (
+    rep: any,
+    decision: 'resolved' | 'dismissed' | 'warn' | 'ban'
+  ) => {
+    const target = users.find((u) => u.id === rep.targetUserId);
+    if (decision === 'warn' && target) {
+      await handleSendWarning(target, `Report Action: ${rep.reason}`);
+    } else if (decision === 'ban' && target) {
+      await handleUserStatus(target, 'banned');
     }
-    const id = `custom_quiz_${Date.now()}`;
-    const item = stripUndefined({
-      id,
-      category: newQCat,
-      question: newQ.trim(),
-      questionMy: newQ.trim(),
-      questionEn: newQ.trim(),
-      options: opts,
-      optionsMy: opts,
-      optionsEn: opts,
-      answerIndex: Math.min(newAnsIdx, opts.length - 1),
-    });
+
+    const finalStatus = decision === 'dismissed' ? 'dismissed' : 'resolved';
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'riddles', id), item).catch(() => {});
+      await setDoc(
+        doc(db, 'reports', rep.id),
+        { status: finalStatus, resolvedAtMs: Date.now() },
+        { merge: true }
+      ).catch(() => {});
+
+      if (rep.reporterId) {
+        const nid = `noti_rep_${Date.now()}`;
+        await setDoc(
+          doc(db, 'notifications', nid),
+          stripUndefined({
+            id: nid,
+            targetUserId: rep.reporterId,
+            title: 'Report စစ်ဆေးပြီးစီးကြောင်း အသိပေးချက်',
+            message: `${rep.targetName || 'Player'} အပေါ် တိုင်ကြားထားသော Report ကို Admin မှ စစ်ဆေးဆောင်ရွက်ပြီးပါပြီ (${decision.toUpperCase()})။`,
+            type: 'message',
+            senderName: 'Vanguard Moderation',
+            createdAtMs: Date.now(),
+            read: false,
+          })
+        ).catch(() => {});
+      }
     }
-    setNewQ('');
-    setNewOpt0('');
-    setNewOpt1('');
-    setNewOpt2('');
-    setNewOpt3('');
-    await logAdminAction('ADD_QUIZ', newQ.trim().slice(0, 40));
-    onNotify('success', 'ဉာဏ်စမ်းပဟေဠိ မေးခွန်းအသစ် ထည့်သွင်းပြီးပါပြီ!');
+    await logAdminAction('REPORT_ACTION', `${rep.id} -> ${decision}`);
+    onNotify('success', `Report အား ${decision.toUpperCase()} ဆောင်ရွက်ပြီးပါပြီ။`);
   };
 
-  const handleDeleteQuiz = async (id: string) => {
-    if (!id.startsWith('custom_')) return;
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'riddles', id)).catch(() => {});
-    }
-    onNotify('info', 'စိတ်ကြိုက်မေးခွန်း ဖျက်ပြီးပါပြီ။');
-  };
-
-  const handleSaveCms = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const cleanCms = stripUndefined(cmsDraft);
-    onLandingUpdated(cleanCms);
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'system', 'landing'), cleanCms, { merge: true }).catch(() => {});
-    }
-    await logAdminAction('UPDATE_CMS', 'Updated Landing & Game Branding');
-    onNotify('success', 'Branding နှင့် Website စာသားများ သိမ်းဆည်းပြီးပါပြီ!');
-  };
-
-  const handleExportBackup = () => {
-    const dump = {
-      exportedAt: new Date().toISOString(),
-      project: firebaseProjectId,
-      engineConfig,
-      users,
-      reports,
-      tournaments,
-      customRiddles,
-      notifications: notiHistory,
-      auditLogs,
-    };
-    const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `vanguard-arena-backup-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    onNotify('success', 'Database Backup JSON ဖိုင် Download ဆွဲပြီးပါပြီ!');
-  };
-
-  const filteredUsers = React.useMemo(() => {
+  const onlineCount = users.filter(
+    (u) => u.online && Date.now() - Number(u.lastSeenMs || 0) < 90000
+  ).length;
+  const pendingReportsCount = reports.filter((r) => r.status === 'pending').length;
+  const filteredUsers = users.filter((u) => {
     const q = userSearch.trim().toLowerCase();
-    return users.filter((u) => {
-      if (userFilter === 'live' && !isUserLiveNow(u)) return false;
-      if (userFilter === 'restricted' && u.status !== 'banned' && u.status !== 'suspended') return false;
-      if (!q) return true;
-      return (
-        String(u.displayName || '').toLowerCase().includes(q) ||
-        String(u.username || '').toLowerCase().includes(q) ||
-        String(u.gameId || '').toLowerCase().includes(q) ||
-        String(u.device || '').toLowerCase().includes(q)
-      );
-    });
-  }, [users, userSearch, userFilter, nowMs]);
-
-  const filteredReports = React.useMemo(() => {
-    return reports.filter((r) => {
-      const st = r.status || 'pending';
-      if (reportFilter === 'all') return true;
-      return st === reportFilter;
-    });
-  }, [reports, reportFilter]);
-
-  const filteredQuizzes = React.useMemo(() => {
-    const q = quizSearch.trim().toLowerCase();
-    return allQuizzes.filter((r) => {
-      if (quizCatFilter !== 'all' && r.category !== quizCatFilter) return false;
-      if (!q) return true;
-      return String(r.question || '').toLowerCase().includes(q);
-    });
-  }, [allQuizzes, quizSearch, quizCatFilter]);
-
-  const navMenu: Array<{
-    id: AdminSection;
-    label: string;
-    icon: React.ReactNode;
-    badge?: string | number;
-    urgent?: boolean;
-  }> = [
-    { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
-    { id: 'users', label: 'Users & Devices', icon: <Users className="w-4 h-4" />, badge: users.length },
-    {
-      id: 'reports',
-      label: 'User Reports',
-      icon: <Flag className="w-4 h-4" />,
-      badge: pendingReportsCount || undefined,
-      urgent: pendingReportsCount > 0,
-    },
-    { id: 'engine', label: 'Game Engine', icon: <Sliders className="w-4 h-4" /> },
-    { id: 'tournaments', label: 'Tournaments & Rooms', icon: <Trophy className="w-4 h-4" />, badge: rooms.length || undefined },
-    { id: 'quiz', label: 'ဉာဏ်စမ်းပဟေဠိ', icon: <BookOpen className="w-4 h-4" />, badge: allQuizzes.length },
-    { id: 'noti', label: 'Noti & Broadcast', icon: <Bell className="w-4 h-4" />, badge: notiHistory.length || undefined },
-    { id: 'cms', label: 'Branding CMS', icon: <Palette className="w-4 h-4" /> },
-  ];
-
-  const renderDeviceIcon = (type?: string) => {
-    if (type === 'Mobile') return <Smartphone className="w-3.5 h-3.5 text-sky-400" />;
-    if (type === 'Tablet') return <Tablet className="w-3.5 h-3.5 text-purple-400" />;
-    return <Monitor className="w-3.5 h-3.5 text-amber-400" />;
-  };
+    if (!q) return true;
+    return (
+      (u.displayName || '').toLowerCase().includes(q) ||
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.gameId || '').toLowerCase().includes(q)
+    );
+  });
+  const selectedUser = users.find((u) => u.id === selectedUserId) || null;
 
   return (
-    <div className="min-h-dvh-safe cyber-bg text-slate-100 flex flex-col">
-      {/* Executive Header */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/95 backdrop-blur-md">
-        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="vanguard-brand-box px-2.5 py-1 rounded-lg text-xs sm:text-sm font-extrabold text-amber-300 flex items-center gap-1.5 shrink-0">
-              <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>VANGUARD ADMIN</span>
-            </div>
-
-            <div
-              className={`hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold border ${
-                cloudStatus === 'connected'
-                  ? 'bg-emerald-500/10 border-emerald-500/35 text-emerald-300'
-                  : 'bg-rose-500/15 border-rose-500/40 text-rose-300'
-              }`}
-            >
-              {cloudStatus === 'connected' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-              <span>{cloudStatus === 'connected' ? `Cloud Live (${livePingMs}ms)` : 'Cloud Disconnected'}</span>
-            </div>
-
-            {engineConfig.hideAdminFromUsers && (
-              <span className="hidden lg:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-sky-500/15 border border-sky-400/35 text-[10px] font-bold text-sky-300">
-                <EyeOff className="w-3 h-3" /> ADMIN STEALTH
-              </span>
-            )}
-
-            {engineConfig.maintenanceMode && (
-              <span className="hidden sm:inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400 text-[11px] font-bold text-amber-200 animate-pulse">
-                <Wrench className="w-3 h-3" /> MAINTENANCE ON
-              </span>
-            )}
+    <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-4">
+      {/* Top Diagnostic & Navigation Bar */}
+      <div className="cyber-panel rounded-2xl p-4 border border-amber-500/35 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/50 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-amber-400" />
           </div>
+          <div>
+            <h2 className="text-base sm:text-lg font-display font-bold text-white flex items-center gap-2">
+              <span>Master Admin Command Center</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-400/40 text-[10px] font-mono text-amber-300">
+                {currentUser.username}
+              </span>
+            </h2>
+            <div className="text-xs flex items-center gap-2 mt-0.5">
+              {isFirebaseConfigured && !syncError ? (
+                <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                  <Activity className="w-3.5 h-3.5" /> Cloud Real-Time Sync Active
+                </span>
+              ) : (
+                <span className="text-rose-400 font-semibold flex items-center gap-1">
+                  <AlertTriangle className="w-3.5 h-3.5" /> {syncError || 'Local Storage Mode'}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
-            <LanguageSwitcher lang={lang} onChange={onChangeLang} />
+        <div className="flex items-center gap-2">
+          {onSwitchToLobby && (
             <button
               type="button"
               onClick={onSwitchToLobby}
-              className="h-9 px-3 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
+              className="px-3.5 h-9 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-xs font-bold text-white cursor-pointer"
             >
-              <Gamepad2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Game Lobby</span>
-              <span className="sm:hidden">Play</span>
+              Game Arena သို့ သွားမည်
             </button>
-            <button
-              type="button"
-              onClick={onLogout}
-              title="Sign Out"
-              className="w-9 h-9 rounded-xl bg-[#0d1322] border border-white/10 hover:bg-rose-500/20 text-rose-300 flex items-center justify-center cursor-pointer"
-            >
-              <LogOut className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      </header>
-
-      {/* Mobile Nav */}
-      <div className="lg:hidden sticky top-14 z-20 bg-[#090d16]/95 border-b border-white/10 px-3 py-2 overflow-x-auto no-scrollbar">
-        <div className="flex items-center gap-1.5 min-w-max">
-          {navMenu.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => setSection(item.id)}
-              className={`px-3 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all cursor-pointer ${
-                section === item.id
-                  ? 'cyber-gold-active text-amber-200'
-                  : 'bg-[#101728] text-slate-400 border border-white/5'
-              }`}
-            >
-              {item.icon}
-              <span>{item.label}</span>
-              {item.badge !== undefined && (
-                <span
-                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
-                    item.urgent ? 'bg-rose-500 text-white font-extrabold' : 'bg-white/10'
-                  }`}
-                >
-                  {item.badge}
-                </span>
-              )}
-            </button>
-          ))}
+          )}
         </div>
       </div>
 
-      {/* Main Layout */}
-      <div className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 py-4 grid lg:grid-cols-12 gap-5 items-start">
-        <aside className="hidden lg:flex lg:col-span-3 xl:col-span-2 flex-col gap-2 sticky top-[4.5rem]">
-          <div className="cyber-panel rounded-2xl p-2.5 space-y-1">
-            {navMenu.map((item) => {
-              const active = section === item.id;
+      {/* Section Navigation Pills */}
+      <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+        {(
+          [
+            { id: 'overview', label: 'Overview', icon: Activity },
+            { id: 'users', label: `Users (${users.length})`, icon: Users },
+            { id: 'tournaments', label: `Tournaments & Gifts (${tournaments.length})`, icon: Trophy },
+            { id: 'reports', label: 'Reports', icon: AlertTriangle, badge: pendingReportsCount },
+            { id: 'engine', label: 'Game Engine', icon: Sliders },
+            { id: 'broadcast', label: 'Noti & Broadcast', icon: Bell },
+            { id: 'logs', label: 'Audit Logs', icon: FileText },
+          ] as Array<{ id: AdminSection; label: string; icon: any; badge?: number }>
+        ).map((tab) => {
+          const Icon = tab.icon;
+          const active = section === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setSection(tab.id)}
+              className={`px-3.5 h-9 rounded-xl text-xs font-bold flex items-center gap-1.5 shrink-0 transition-all cursor-pointer border ${
+                active
+                  ? 'cyber-gold-active text-amber-200'
+                  : 'bg-[#0b101d] border-white/10 text-slate-300 hover:border-amber-400/35'
+              }`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              <span>{tab.label}</span>
+              {tab.badge && tab.badge > 0 ? (
+                <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-mono">
+                  {tab.badge}
+                </span>
+              ) : null}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* SECTION: OVERVIEW */}
+      {section === 'overview' && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="cyber-panel rounded-2xl p-4 border border-white/10">
+              <div className="text-xs text-slate-400">Total Players</div>
+              <div className="text-2xl font-mono font-extrabold text-white mt-1">{users.length}</div>
+              <div className="text-[11px] text-emerald-400 mt-1">● {onlineCount} Live Online</div>
+            </div>
+            <div className="cyber-panel rounded-2xl p-4 border border-white/10">
+              <div className="text-xs text-slate-400">Active Tournaments</div>
+              <div className="text-2xl font-mono font-extrabold text-amber-400 mt-1">
+                {tournaments.filter((t) => t.status !== 'completed').length}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Total: {tournaments.length}</div>
+            </div>
+            <div className="cyber-panel rounded-2xl p-4 border border-white/10">
+              <div className="text-xs text-slate-400">Active Rooms</div>
+              <div className="text-2xl font-mono font-extrabold text-sky-400 mt-1">{rooms.length}</div>
+              <div className="text-[11px] text-slate-400 mt-1">Real-time Firestore</div>
+            </div>
+            <div className="cyber-panel rounded-2xl p-4 border border-white/10">
+              <div className="text-xs text-slate-400">Pending Reports</div>
+              <div className="text-2xl font-mono font-extrabold text-rose-400 mt-1">
+                {pendingReportsCount}
+              </div>
+              <div className="text-[11px] text-slate-400 mt-1">Total: {reports.length}</div>
+            </div>
+          </div>
+
+          <div className="cyber-panel rounded-2xl p-4 border border-white/10 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Wrench className="w-4 h-4 text-amber-400" /> Global Maintenance Mode
+              </h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                ဖွင့်ထားပါက Admin မှလွဲ၍ ကစားသမားအားလုံး Maintenance Screen ကို မြင်ရပါမည်။
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => handleSaveSystemConfig(!maintenance, locks)}
+              className={`px-4 h-10 rounded-xl font-bold text-xs cursor-pointer ${
+                maintenance
+                  ? 'bg-rose-500 text-white'
+                  : 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-300'
+              }`}
+            >
+              {maintenance ? 'Maintenance: ON (ပိတ်မည်)' : 'Maintenance: OFF (ဖွင့်မည်)'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: USERS & DEVICES */}
+      {section === 'users' && (
+        <div className="grid lg:grid-cols-12 gap-4">
+          <div className="lg:col-span-7 cyber-panel rounded-2xl p-4 space-y-3 border border-white/10">
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-3" />
+              <input
+                type="text"
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                placeholder="ကစားသမားအမည် သို့မဟုတ် Game ID ရှာရန်..."
+                className="w-full h-10 pl-9 pr-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+              />
+            </div>
+
+            <div className="space-y-2 max-h-[60vh] overflow-y-auto pr-1">
+              {filteredUsers.map((u: any) => {
+                const isLive = u.online && Date.now() - Number(u.lastSeenMs || 0) < 90000;
+                const active = selectedUserId === u.id;
+                return (
+                  <button
+                    key={u.id}
+                    type="button"
+                    onClick={() => setSelectedUserId(u.id)}
+                    className={`w-full p-3 rounded-xl border text-left flex items-center justify-between gap-3 cursor-pointer transition-all ${
+                      active
+                        ? 'cyber-gold-active'
+                        : 'bg-[#070b14] border-white/10 hover:border-amber-400/35'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <AvatarWithFrame
+                        avatarUrl={u.avatarUrl}
+                        frameId={u.frameId}
+                        displayName={u.displayName}
+                        size="sm"
+                        status={isLive ? 'online' : 'offline'}
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-bold text-white truncate">{u.displayName}</span>
+                          <RankTierIcon tier={u.rank || 'silver'} className="w-4 h-4 shrink-0" />
+                          {u.status && u.status !== 'active' && (
+                            <span className="px-1.5 py-0.2 rounded bg-rose-500/25 text-rose-300 text-[9px] uppercase font-bold">
+                              {u.status}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-[10px] font-mono text-amber-300">
+                          {u.gameId} · {u.xp || 0} XP · {u.device || 'Web/Mobile'}
+                        </div>
+                      </div>
+                    </div>
+                    <span className="text-[10px] font-bold text-slate-400 shrink-0">Manage →</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="lg:col-span-5 cyber-panel rounded-2xl p-4 space-y-3 border border-white/10">
+            {!selectedUser ? (
+              <div className="h-full flex items-center justify-center text-xs text-slate-500 py-12">
+                ဘယ်ဘက်စာရင်းမှ ကစားသမားတစ်ဦးကို ရွေးချယ်ပါ။
+              </div>
+            ) : (
+              <div className="space-y-3.5">
+                <div className="flex items-center gap-3 pb-3 border-b border-white/10">
+                  <AvatarWithFrame
+                    avatarUrl={selectedUser.avatarUrl}
+                    frameId={selectedUser.frameId}
+                    displayName={selectedUser.displayName}
+                    size="md"
+                  />
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-white truncate">
+                      {selectedUser.displayName}
+                    </div>
+                    <div className="text-xs font-mono text-amber-400">
+                      {selectedUser.gameId} · {selectedUser.xp} XP ({selectedUser.rank || 'Silver'})
+                    </div>
+                  </div>
+                </div>
+
+                {/* XP Adjuster */}
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    value={xpDelta}
+                    onChange={(e) => setXpDelta(Number(e.target.value))}
+                    className="w-24 h-9 px-2.5 rounded-lg bg-[#070b14] border border-white/15 text-xs font-mono text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustXp(selectedUser, Math.abs(xpDelta))}
+                    className="flex-1 h-9 rounded-lg bg-emerald-500/20 border border-emerald-400/40 text-xs font-bold text-emerald-300 cursor-pointer"
+                  >
+                    +{Math.abs(xpDelta)} XP
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleAdjustXp(selectedUser, -Math.abs(xpDelta))}
+                    className="flex-1 h-9 rounded-lg bg-rose-500/20 border border-rose-400/40 text-xs font-bold text-rose-300 cursor-pointer"
+                  >
+                    -{Math.abs(xpDelta)} XP
+                  </button>
+                </div>
+
+                {/* Direct Noti */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={directMsgText}
+                    onChange={(e) => setDirectMsgText(e.target.value)}
+                    placeholder="Direct Notification စာသား..."
+                    className="flex-1 h-9 px-3 rounded-lg bg-[#070b14] border border-white/15 text-xs text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSendDirectNoti(selectedUser, directMsgText)}
+                    className="px-3 h-9 rounded-lg bg-sky-500 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                  >
+                    <Send className="w-3.5 h-3.5" /> Noti
+                  </button>
+                </div>
+
+                {/* Warning Sender */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={warnReason}
+                    onChange={(e) => setWarnReason(e.target.value)}
+                    placeholder="သတိပေးချက် အကြောင်းရင်း..."
+                    className="flex-1 h-9 px-3 rounded-lg bg-[#070b14] border border-white/15 text-xs text-white"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => handleSendWarning(selectedUser, warnReason)}
+                    className="px-3 h-9 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs cursor-pointer"
+                  >
+                    Warn
+                  </button>
+                </div>
+
+                {/* Moderation Buttons */}
+                <div className="grid grid-cols-3 gap-2 pt-2 border-t border-white/10">
+                  <button
+                    type="button"
+                    onClick={() => handleUserStatus(selectedUser, 'active')}
+                    className="h-9 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-bold cursor-pointer"
+                  >
+                    Active
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUserStatus(selectedUser, 'suspended')}
+                    className="h-9 rounded-lg bg-amber-500/20 text-amber-300 text-xs font-bold cursor-pointer"
+                  >
+                    Suspend
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleUserStatus(selectedUser, 'banned')}
+                    className="h-9 rounded-lg bg-rose-500/25 text-rose-300 text-xs font-bold flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Ban className="w-3.5 h-3.5" /> Ban
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SECTION: PROFESSIONAL TOURNAMENTS & WINNER GIFTS */}
+      {section === 'tournaments' && (
+        <AdminTournamentSection
+          tournaments={tournaments}
+          rooms={rooms}
+          users={users}
+          onCloseRoom={handleCloseRoom}
+          onLogAction={logAdminAction}
+          onNotify={onNotify}
+        />
+      )}
+
+      {/* SECTION: USER REPORTS CENTER */}
+      {section === 'reports' && (
+        <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-white/10">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-400" />
+            Player Reports Moderation ({reports.length})
+          </h3>
+          {reports.length === 0 ? (
+            <div className="text-xs text-slate-500 text-center py-8">တိုင်ကြားစာ Report မရှိသေးပါ။</div>
+          ) : (
+            <div className="space-y-2">
+              {reports.map((rep) => (
+                <div
+                  key={rep.id}
+                  className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 flex flex-wrap items-center justify-between gap-3"
+                >
+                  <div className="space-y-0.5">
+                    <div className="text-xs font-bold text-white">
+                      Target: <span className="text-rose-300">{rep.targetName || rep.targetUserId}</span>{' '}
+                      <span className="text-slate-400 font-normal">
+                        (by {rep.reporterName || rep.reporterId})
+                      </span>
+                    </div>
+                    <div className="text-xs text-slate-300">{rep.reason}</div>
+                    <div className="text-[10px] font-mono uppercase text-amber-400">
+                      Status: {rep.status || 'pending'}
+                    </div>
+                  </div>
+
+                  {rep.status === 'pending' && (
+                    <div className="flex flex-wrap gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => handleReportDecision(rep, 'warn')}
+                        className="px-2.5 h-8 rounded-lg bg-amber-500/20 text-amber-300 text-xs font-bold cursor-pointer"
+                      >
+                        Warn
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleReportDecision(rep, 'ban')}
+                        className="px-2.5 h-8 rounded-lg bg-rose-500/25 text-rose-300 text-xs font-bold cursor-pointer"
+                      >
+                        Ban
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleReportDecision(rep, 'resolved')}
+                        className="px-2.5 h-8 rounded-lg bg-emerald-500/20 text-emerald-300 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" /> Resolve
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleReportDecision(rep, 'dismissed')}
+                        className="px-2.5 h-8 rounded-lg bg-white/10 text-slate-300 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <XCircle className="w-3.5 h-3.5" /> Dismiss
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* SECTION: GAME ENGINE & FEATURE LOCKS */}
+      {section === 'engine' && (
+        <div className="cyber-panel rounded-2xl p-4 space-y-4 border border-white/10">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <Sliders className="w-4 h-4 text-amber-400" /> Feature & Game Locks
+          </h3>
+          <div className="grid sm:grid-cols-2 md:grid-cols-3 gap-2.5">
+            {[
+              { key: 'connect4', label: '4 in a Row (Connect 4)' },
+              { key: 'tictactoe', label: 'Tic-Tac-Toe' },
+              { key: 'rps', label: 'Rock Paper Scissors' },
+              { key: 'sakarhtar', label: 'Wise Owl Quiz' },
+              { key: 'tournaments', label: 'Tournament Join Lock' },
+              { key: 'chat', label: 'Global Social Chat Lock' },
+            ].map((item) => {
+              const isLocked = Boolean(locks[item.key]);
               return (
                 <button
-                  key={item.id}
+                  key={item.key}
                   type="button"
-                  onClick={() => setSection(item.id)}
-                  className={`w-full px-3 py-2.5 rounded-xl text-xs font-bold flex items-center justify-between gap-2 transition-all cursor-pointer ${
-                    active
-                      ? 'cyber-gold-active text-amber-200'
-                      : 'text-slate-400 hover:text-white hover:bg-white/5'
+                  onClick={() =>
+                    handleSaveSystemConfig(maintenance, { ...locks, [item.key]: !isLocked })
+                  }
+                  className={`p-3.5 rounded-xl border flex items-center justify-between text-xs font-bold cursor-pointer ${
+                    isLocked
+                      ? 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+                      : 'bg-[#070b14] border-white/10 text-emerald-300'
                   }`}
                 >
-                  <span className="flex items-center gap-2.5 truncate">
-                    {item.icon}
-                    <span className="truncate">{item.label}</span>
-                  </span>
-                  {item.badge !== undefined && (
-                    <span
-                      className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
-                        item.urgent ? 'bg-rose-500 text-white font-extrabold' : 'bg-black/40 text-amber-300'
-                      }`}
-                    >
-                      {item.badge}
-                    </span>
-                  )}
+                  <span>{item.label}</span>
+                  {isLocked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
                 </button>
               );
             })}
           </div>
+        </div>
+      )}
 
-          <div className="cyber-panel rounded-2xl p-3.5 space-y-3 border border-white/10">
-            <div className="flex items-center gap-2.5">
-              <AvatarWithFrame
-                avatarUrl={adminUser.avatarUrl}
-                frameId="legend"
-                displayName={adminUser.displayName}
-                size="sm"
-                status="online"
-              />
-              <div className="min-w-0">
-                <div className="text-xs font-bold text-white truncate">{adminUser.displayName}</div>
-                <div className="text-[10px] font-mono text-amber-400">ID: {adminUser.gameId}</div>
-              </div>
-            </div>
-            <button
-              type="button"
-              onClick={handleExportBackup}
-              className="w-full py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-[11px] font-semibold text-slate-200 flex items-center justify-center gap-1.5 cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5 text-amber-400" />
-              <span>Export JSON Backup</span>
-            </button>
-          </div>
-        </aside>
-
-        <section className="lg:col-span-9 xl:col-span-10 space-y-4 min-w-0">
-          {cloudStatus !== 'connected' && (
-            <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
-              <WifiOff className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>Firebase Cloud Error: {cloudErrText || 'Check firebase-applet-config.json'}</span>
-            </div>
-          )}
-
-          {/* SECTION 1: OVERVIEW */}
-          {section === 'overview' && (
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                {[
-                  { label: 'Total Players', val: users.length, accent: 'border-t-sky-400', sub: 'Registered' },
-                  { label: 'Live Devices', val: liveCount, accent: 'border-t-emerald-400', sub: 'Online Now' },
-                  { label: 'Pending Reports', val: pendingReportsCount, accent: 'border-t-rose-500', sub: 'Needs Review' },
-                  { label: 'Active Rooms', val: rooms.length, accent: 'border-t-amber-400', sub: 'Custom & PvP' },
-                  { label: 'Quiz Bank', val: allQuizzes.length, accent: 'border-t-yellow-400', sub: 'ဉာဏ်စမ်းပဟေဠိ' },
-                  { label: 'Restricted', val: bannedCount, accent: 'border-t-purple-400', sub: 'Ban / Suspend' },
-                ].map((kpi) => (
-                  <div
-                    key={kpi.label}
-                    className={`cyber-panel rounded-2xl p-3.5 border-t-2 ${kpi.accent} space-y-1`}
-                  >
-                    <div className="text-[11px] font-semibold text-slate-400">{kpi.label}</div>
-                    <div className="text-2xl font-display font-extrabold text-white tabular-nums">{kpi.val}</div>
-                    <div className="text-[10px] text-slate-500">{kpi.sub}</div>
-                  </div>
-                ))}
-              </div>
-
-              <div className="grid md:grid-cols-12 gap-4">
-                <div className="md:col-span-5 cyber-panel rounded-2xl p-4 space-y-3">
-                  <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                    <Power className="w-4 h-4" /> Quick Master Controls
-                  </h3>
-
-                  {/* Maintenance Mode Toggle */}
-                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-white">Global Maintenance Mode</div>
-                      <div className="text-[11px] text-slate-400">
-                        {engineConfig.maintenanceMode ? 'Player များ ယာယီပိတ်ထားသည်' : 'ဂိမ်း ပုံမှန်ဖွင့်ထားသည်'}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        persistEngineConfig(
-                          { ...engineConfig, maintenanceMode: !engineConfig.maintenanceMode },
-                          !engineConfig.maintenanceMode
-                            ? 'Maintenance Mode ဖွင့်လိုက်ပါပြီ!'
-                            : 'Maintenance Mode ပိတ်ပြီး ဂိမ်းပြန်ဖွင့်လိုက်ပါပြီ!'
-                        )
-                      }
-                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                        engineConfig.maintenanceMode
-                          ? 'bg-amber-500 text-slate-950'
-                          : 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-300'
-                      }`}
-                    >
-                      {engineConfig.maintenanceMode ? 'ON' : 'LIVE'}
-                    </button>
-                  </div>
-
-                  {/* Admin Stealth Visibility Toggle */}
-                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-3">
-                    <div>
-                      <div className="text-xs font-bold text-white flex items-center gap-1.5">
-                        {engineConfig.hideAdminFromUsers ? (
-                          <EyeOff className="w-3.5 h-3.5 text-sky-400" />
-                        ) : (
-                          <Eye className="w-3.5 h-3.5 text-amber-400" />
-                        )}
-                        <span>Hide Admin Account (Stealth)</span>
-                      </div>
-                      <div className="text-[11px] text-slate-400">
-                        {engineConfig.hideAdminFromUsers
-                          ? 'User များ Ranking / Social / Lobby တွင် Admin Acc မမြင်ရပါ'
-                          : 'User များ Admin Acc ကို မြင်တွေ့နိုင်သည်'}
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        persistEngineConfig(
-                          { ...engineConfig, hideAdminFromUsers: !engineConfig.hideAdminFromUsers },
-                          !engineConfig.hideAdminFromUsers
-                            ? 'Admin Account ကို User များမမြင်အောင် ဖျောက်ထားလိုက်ပါပြီ!'
-                            : 'Admin Account ကို User များမြင်နိုင်အောင် ပြန်ဖွင့်လိုက်ပါပြီ!'
-                        )
-                      }
-                      className={`px-3.5 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                        engineConfig.hideAdminFromUsers
-                          ? 'bg-sky-500 text-slate-950'
-                          : 'bg-white/10 border border-white/15 text-slate-300'
-                      }`}
-                    >
-                      {engineConfig.hideAdminFromUsers ? 'HIDDEN' : 'VISIBLE'}
-                    </button>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setSection('reports')}
-                      className="p-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/35 text-xs font-bold text-rose-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Flag className="w-4 h-4" /> Reports ({pendingReportsCount})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSection('noti')}
-                      className="p-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-xs font-bold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Megaphone className="w-4 h-4" /> Broadcast Noti
-                    </button>
-                  </div>
-
-                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 text-[11px] space-y-1 text-slate-400">
-                    <div className="flex justify-between">
-                      <span>Firebase Project:</span>
-                      <span className="font-mono text-emerald-300">{firebaseProjectId || 'Local Mode'}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Win / Draw / Loss XP:</span>
-                      <span className="font-mono text-amber-300">
-                        +{engineConfig.xpRules.winXp} / +{engineConfig.xpRules.drawXp} / {engineConfig.xpRules.lossXp}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="md:col-span-7 cyber-panel rounded-2xl p-4 space-y-3">
-                  <h3 className="text-sm font-bold text-white flex items-center justify-between">
-                    <span className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-amber-400" /> Recent Admin Audit Logs
-                    </span>
-                    <span className="text-[11px] text-slate-400 font-mono">Latest {auditLogs.length}</span>
-                  </h3>
-                  <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
-                    {auditLogs.length === 0 ? (
-                      <div className="text-xs text-slate-500 text-center py-8">No admin actions logged yet.</div>
-                    ) : (
-                      auditLogs.map((log) => (
-                        <div
-                          key={log.id}
-                          className="px-3 py-2 rounded-xl bg-[#070b13] border border-white/5 flex items-center justify-between gap-2 text-xs"
-                        >
-                          <div className="min-w-0 truncate">
-                            <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[10px] mr-2">
-                              {log.action}
-                            </span>
-                            <span className="text-slate-200">{log.detail}</span>
-                          </div>
-                          <span className="text-[10px] font-mono text-slate-500 shrink-0">
-                            {new Date(log.createdAtMs || Date.now()).toLocaleTimeString([], {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                            })}
-                          </span>
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 2: USERS & DEVICES */}
-          {section === 'users' && (
-            <div className="cyber-panel rounded-2xl p-4 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  {(['all', 'live', 'restricted'] as const).map((f) => (
-                    <button
-                      key={f}
-                      type="button"
-                      onClick={() => setUserFilter(f)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize cursor-pointer ${
-                        userFilter === f ? 'cyber-gold-active text-amber-200' : 'bg-[#070b13] text-slate-400 border border-white/10'
-                      }`}
-                    >
-                      {f === 'all' ? `All (${users.length})` : f === 'live' ? `🟢 Live (${liveCount})` : `🚫 Restricted (${bannedCount})`}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="relative w-full sm:w-64">
-                  <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    placeholder="အမည် / ID / Device ရှာရန်..."
-                    className="w-full h-9 pl-9 pr-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2.5 max-h-[68vh] overflow-y-auto pr-1">
-                {filteredUsers.map((u) => {
-                  const live = isUserLiveNow(u);
-                  return (
-                    <div
-                      key={u.id}
-                      className={`p-3 rounded-2xl bg-[#080d17] border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                        live ? 'border-emerald-500/35' : 'border-white/10'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <AvatarWithFrame
-                          avatarUrl={u.avatarUrl}
-                          frameId={u.frameId}
-                          displayName={u.displayName}
-                          size="md"
-                          status={live ? 'online' : 'offline'}
-                        />
-                        <div className="min-w-0 space-y-1">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            <span className="font-bold text-sm text-white">{u.displayName}</span>
-                            <span className="text-xs font-mono text-amber-400">({u.gameId})</span>
-                            {live ? (
-                              <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-[10px] font-bold text-emerald-300">
-                                ● LIVE
-                              </span>
-                            ) : (
-                              <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400">
-                                Offline
-                              </span>
-                            )}
-                            {u.status && u.status !== 'active' && (
-                              <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-[10px] font-bold text-rose-300 uppercase">
-                                {u.status}
-                              </span>
-                            )}
-                          </div>
-
-                          <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
-                              {renderDeviceIcon(u.deviceType)}
-                              <span>{u.device || 'Web Client'}</span>
-                            </span>
-                            {u.screen && <span className="font-mono text-slate-400">{u.screen}</span>}
-                            {u.currentActivity && live && (
-                              <span className="text-sky-300 font-semibold">• {u.currentActivity}</span>
-                            )}
-                          </div>
-
-                          <div className="text-[11px] font-mono text-slate-400">
-                            XP: <b className="text-amber-300">{u.xp || 0}</b> ({u.rank || 'Silver'}) · {u.wins || 0}W / {u.losses || 0}L / {u.draws || 0}D
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => openPlayerEditor(u)}
-                          className="px-3 py-1.5 rounded-lg cyber-gold-active text-[11px] font-bold text-amber-200 flex items-center gap-1 cursor-pointer"
-                        >
-                          <UserCog className="w-3.5 h-3.5" /> Manage
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setNotiTarget(u.id);
-                            setNotiType('message');
-                            setNotiTitle('Admin မှ တိုက်ရိုက်စာ');
-                            setSection('noti');
-                          }}
-                          className="px-2.5 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/30 text-[11px] font-bold text-sky-200 flex items-center gap-1 cursor-pointer"
-                        >
-                          <Bell className="w-3 h-3" /> Message
-                        </button>
-                        {u.role !== 'admin' && live && (
-                          <button
-                            type="button"
-                            onClick={() => handleForceKick(u)}
-                            className="px-2.5 py-1.5 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/30 text-[11px] font-bold text-rose-300 cursor-pointer"
-                          >
-                            Kick
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 3: USER REPORT MODERATION CENTER */}
-          {section === 'reports' && (
-            <div className="cyber-panel rounded-2xl p-4 space-y-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
-                  <Flag className="w-4 h-4 text-rose-400" />
-                  <span>User-to-User Report Review Center ({reports.length})</span>
-                </h2>
-                <div className="flex gap-1.5">
-                  {(['pending', 'resolved', 'dismissed', 'all'] as const).map((st) => (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => setReportFilter(st)}
-                      className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize cursor-pointer ${
-                        reportFilter === st
-                          ? 'cyber-gold-active text-amber-200'
-                          : 'bg-[#070b13] text-slate-400 border border-white/10'
-                      }`}
-                    >
-                      {st}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {filteredReports.length === 0 ? (
-                <div className="py-12 text-center space-y-2">
-                  <CheckCircle2 className="w-10 h-10 text-emerald-400/60 mx-auto" />
-                  <div className="text-xs text-slate-400">
-                    ဤအမျိုးအစားအောက်တွင် စစ်ဆေးရန် Report မရှိပါ။
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 max-h-[68vh] overflow-y-auto pr-1">
-                  {filteredReports.map((rep) => {
-                    const isPending = (rep.status || 'pending') === 'pending';
-                    return (
-                      <div
-                        key={rep.id}
-                        className={`p-4 rounded-2xl bg-[#070b13] border space-y-3 ${
-                          isPending ? 'border-rose-500/40' : 'border-white/10 opacity-85'
-                        }`}
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-2">
-                          <div className="space-y-1">
-                            <div className="flex flex-wrap items-center gap-2 text-xs">
-                              <span className="px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-400/35 text-rose-200 font-bold">
-                                {rep.categoryLabel || rep.category || 'Violation'}
-                              </span>
-                              <span
-                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                                  isPending
-                                    ? 'bg-amber-500/20 text-amber-300'
-                                    : rep.status === 'resolved'
-                                    ? 'bg-emerald-500/20 text-emerald-300'
-                                    : 'bg-slate-700 text-slate-300'
-                                }`}
-                              >
-                                {rep.status || 'pending'}
-                              </span>
-                              <span className="text-[11px] font-mono text-slate-400">
-                                {new Date(rep.createdAtMs || Date.now()).toLocaleString()}
-                              </span>
-                            </div>
-
-                            <div className="text-xs text-slate-300">
-                              တိုင်ကြားသူ: <b className="text-sky-300">{rep.reporterName}</b>{' '}
-                              <span className="font-mono text-[11px] text-slate-400">({rep.reporterGameId})</span>
-                              {'  →  '}
-                              တိုင်ကြားခံရသူ: <b className="text-rose-300">{rep.targetName}</b>{' '}
-                              <span className="font-mono text-[11px] text-slate-400">({rep.targetGameId})</span>
-                            </div>
-                          </div>
-
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteReport(rep.id)}
-                            className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 cursor-pointer"
-                            title="Delete Record"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-
-                        <div className="p-3 rounded-xl bg-[#101728] border border-white/10 text-xs text-slate-100 leading-relaxed">
-                          {rep.detail || rep.reason}
-                        </div>
-
-                        {rep.adminAction && (
-                          <div className="text-[11px] text-emerald-300 font-semibold">
-                            ✓ Action Taken: {rep.adminAction} {rep.adminNote ? `— "${rep.adminNote}"` : ''}
-                          </div>
-                        )}
-
-                        {isPending && (
-                          <div className="space-y-2 pt-1 border-t border-white/10">
-                            <input
-                              type="text"
-                              value={adminReportNotes[rep.id] || ''}
-                              onChange={(e) =>
-                                setAdminReportNotes((prev) => ({ ...prev, [rep.id]: e.target.value }))
-                              }
-                              placeholder="Admin မှတ်ချက် / Warning စာသား (Optional)..."
-                              className="w-full h-9 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                            />
-
-                            <div className="flex flex-wrap gap-1.5">
-                              <button
-                                type="button"
-                                onClick={() => handleResolveReport(rep, 'warn')}
-                                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-[11px] font-bold text-amber-200 cursor-pointer"
-                              >
-                                ⚠️ Warn & Resolve
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveReport(rep, 'suspend24')}
-                                className="px-3 py-1.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 border border-orange-400/40 text-[11px] font-bold text-orange-200 cursor-pointer"
-                              >
-                                ⏳ Suspend 24h
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveReport(rep, 'ban')}
-                                className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-[11px] font-bold text-rose-200 flex items-center gap-1 cursor-pointer"
-                              >
-                                <Ban className="w-3 h-3" /> Ban Account
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveReport(rep, 'resolve')}
-                                className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-[11px] font-bold text-emerald-300 cursor-pointer"
-                              >
-                                ✓ Mark Resolved
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleResolveReport(rep, 'dismiss')}
-                                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-slate-300 cursor-pointer"
-                              >
-                                ✕ Dismiss
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* SECTION 4: GAME ENGINE */}
-          {section === 'engine' && (
-            <div className="space-y-4">
-              {/* Stealth Mode & Maintenance Card */}
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/25">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        <Wrench className="w-4 h-4 text-amber-400" /> Global Maintenance Mode
-                      </h3>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        ဖွင့်ထားချိန်တွင် သာမန် Player များ ဂိမ်းဝင်မရပါ။
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEngineConfig((prev) => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))
-                      }
-                      className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                        engineConfig.maintenanceMode ? 'bg-amber-500 text-slate-950' : 'bg-white/10 text-slate-300'
-                      }`}
-                    >
-                      {engineConfig.maintenanceMode ? 'ENABLED' : 'DISABLED'}
-                    </button>
-                  </div>
-                  <input
-                    type="text"
-                    value={engineConfig.maintenanceMessage}
-                    onChange={(e) => setEngineConfig((prev) => ({ ...prev, maintenanceMessage: e.target.value }))}
-                    className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  />
-                </div>
-
-                <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-sky-500/25 flex flex-col justify-between">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                        {engineConfig.hideAdminFromUsers ? (
-                          <EyeOff className="w-4 h-4 text-sky-400" />
-                        ) : (
-                          <Eye className="w-4 h-4 text-amber-400" />
-                        )}
-                        Hide Admin Account (Stealth Mode)
-                      </h3>
-                      <p className="text-xs text-slate-400 mt-0.5">
-                        User များ၏ Ranking၊ Lobby နှင့် Social Search တွင် Admin Account ကို ဖျောက်/ဖော် ပြုလုပ်ရန်။
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setEngineConfig((prev) => ({
-                          ...prev,
-                          hideAdminFromUsers: !prev.hideAdminFromUsers,
-                        }))
-                      }
-                      className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                        engineConfig.hideAdminFromUsers ? 'bg-sky-500 text-slate-950' : 'bg-white/10 text-slate-300'
-                      }`}
-                    >
-                      {engineConfig.hideAdminFromUsers ? 'HIDDEN' : 'VISIBLE'}
-                    </button>
-                  </div>
-                  <div className="text-[11px] text-slate-400 bg-[#070b13] px-3 py-2 rounded-xl border border-white/10">
-                    {engineConfig.hideAdminFromUsers
-                      ? '🔒 လက်ရှိ: Admin Account ကို User များ လုံးဝမမြင်ရအောင် ဖျောက်ထားပါသည်။'
-                      : '👁️ လက်ရှိ: User များ Admin Account ကို မြင်တွေ့နိုင်ပါသည်။'}
-                  </div>
-                </div>
-              </div>
-
-              <div className="cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-amber-400" /> Feature & Game Locks
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-                  {[
-                    { id: 'connect4', label: '၄ လုံးတန်း (Connect 4)' },
-                    { id: 'tictactoe', label: 'Tic-Tac-Toe' },
-                    { id: 'rps', label: 'ကျောက်တုံး စက္ကူ ကတ်ကြေး' },
-                    { id: 'sakarhtar', label: 'ဉာဏ်စမ်းပဟေဠိ' },
-                    { id: 'matchmaking', label: 'Ranked Matchmaking' },
-                    { id: 'customRooms', label: 'Custom Rooms (1-8P)' },
-                    { id: 'tournaments', label: 'Tournaments' },
-                    { id: 'chat', label: 'In-Game Chat' },
-                  ].map((item) => {
-                    const locked = Boolean(engineConfig.featureLocks[item.id]);
-                    return (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() =>
-                          setEngineConfig((prev) => ({
-                            ...prev,
-                            featureLocks: { ...prev.featureLocks, [item.id]: !locked },
-                          }))
-                        }
-                        className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs font-bold cursor-pointer ${
-                          locked
-                            ? 'bg-rose-500/15 border-rose-500/40 text-rose-200'
-                            : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
-                        }`}
-                      >
-                        <span className="truncate">{item.label}</span>
-                        {locked ? <Lock className="w-4 h-4 shrink-0" /> : <Unlock className="w-4 h-4 shrink-0" />}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-amber-400" /> XP Economy & Matchmaking Tuning
-                </h3>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">အနိုင် XP (Win)</label>
-                    <input
-                      type="number"
-                      value={engineConfig.xpRules.winXp}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, winXp: Number(e.target.value) } }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-emerald-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">သရေ XP (Draw)</label>
-                    <input
-                      type="number"
-                      value={engineConfig.xpRules.drawXp}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, drawXp: Number(e.target.value) } }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-sky-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">အရှုံး XP (Loss)</label>
-                    <input
-                      type="number"
-                      value={engineConfig.xpRules.lossXp}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, lossXp: Number(e.target.value) } }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-rose-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">ဉာဏ်စမ်း တစ်ပွဲမေးခွန်း</label>
-                    <select
-                      value={engineConfig.xpRules.quizCountPerMatch}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          xpRules: { ...p.xpRules, quizCountPerMatch: Number(e.target.value) },
-                        }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                    >
-                      <option value={5}>5 Questions</option>
-                      <option value={10}>10 Questions</option>
-                      <option value={15}>15 Questions</option>
-                      <option value={20}>20 Questions</option>
-                    </select>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  disabled={savingConfig}
-                  onClick={() =>
-                    persistEngineConfig(engineConfig, 'Game Engine နှင့် Economy စည်းမျဉ်းများ အသက်သွင်းပြီးပါပြီ!')
-                  }
-                  className="px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-2 cursor-pointer"
-                >
-                  <Save className="w-4 h-4" /> Save & Apply Live
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 5: TOURNAMENTS & ROOMS */}
-          {section === 'tournaments' && (
-            <div className="grid md:grid-cols-12 gap-4">
-              <div className="md:col-span-7 cyber-panel rounded-2xl p-4 space-y-4">
-                <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <Trophy className="w-4 h-4" /> Knockout Tournament Manager
-                </h3>
-                <form onSubmit={handleCreateTournament} className="grid sm:grid-cols-12 gap-2">
-                  <input
-                    type="text"
-                    required
-                    value={tTitle}
-                    onChange={(e) => setTTitle(e.target.value)}
-                    placeholder="ပြိုင်ပွဲအမည်..."
-                    className="sm:col-span-5 h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  />
-                  <select
-                    value={tGame}
-                    onChange={(e) => setTGame(e.target.value)}
-                    className="sm:col-span-3 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  >
-                    <option value="connect4">Connect 4</option>
-                    <option value="tictactoe">Tic-Tac-Toe</option>
-                    <option value="rps">RPS</option>
-                    <option value="sakarhtar">ဉာဏ်စမ်းပဟေဠိ</option>
-                  </select>
-                  <select
-                    value={tBracket}
-                    onChange={(e) => setTBracket(Number(e.target.value) as 8 | 16 | 32)}
-                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  >
-                    <option value={8}>8P</option>
-                    <option value={16}>16P</option>
-                    <option value={32}>32P</option>
-                  </select>
-                  <input
-                    type="number"
-                    value={tPrizeXp}
-                    onChange={(e) => setTPrizeXp(Number(e.target.value))}
-                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-amber-300"
-                  />
-                  <button
-                    type="submit"
-                    className="sm:col-span-12 h-10 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-4 h-4" /> ပြိုင်ပွဲအသစ် ဖန်တီးမည်
-                  </button>
-                </form>
-
-                <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {tournaments.map((tr) => (
-                    <div
-                      key={tr.id}
-                      className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs"
-                    >
-                      <div>
-                        <div className="font-bold text-white">{tr.title}</div>
-                        <div className="text-[11px] text-slate-400 font-mono">
-                          {tr.gameType} · {(tr.participants || []).length}/{tr.bracketSize}P · +{tr.prizeXp} XP
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1.5">
-                        {(['open', 'ongoing', 'completed'] as const).map((st) => (
-                          <button
-                            key={st}
-                            type="button"
-                            onClick={() => handleTournamentStatus(tr.id, st)}
-                            className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase cursor-pointer ${
-                              tr.status === st ? 'bg-amber-500 text-slate-950' : 'bg-white/5 text-slate-400'
-                            }`}
-                          >
-                            {st}
-                          </button>
-                        ))}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTournament(tr.id)}
-                          className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300 cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="md:col-span-5 cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Swords className="w-4 h-4 text-sky-400" /> Live Active Rooms ({rooms.length})
-                </h3>
-                <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
-                  {rooms.length === 0 ? (
-                    <div className="text-xs text-slate-500 text-center py-8">လက်ရှိ ဖွင့်ထားသော Room မရှိပါ။</div>
-                  ) : (
-                    rooms.map((rm) => (
-                      <div
-                        key={rm.id}
-                        className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-2 text-xs"
-                      >
-                        <div className="min-w-0">
-                          <div className="font-mono font-bold text-amber-300">
-                            {rm.code} <span className="text-white font-sans">({rm.gameType})</span>
-                          </div>
-                          <div className="text-[11px] text-slate-400">
-                            Players: {(rm.players || []).length}/{rm.maxPlayers || 8} · {rm.status}
-                          </div>
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleCloseRoom(rm.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 text-[11px] font-bold text-rose-300 cursor-pointer"
-                        >
-                          Close
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 6: QUIZ BANK */}
-          {section === 'quiz' && (
-            <div className="cyber-panel rounded-2xl p-4 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4" /> ဉာဏ်စမ်းပဟေဠိ မေးခွန်းဘဏ် ({allQuizzes.length} ပုဒ်)
-                </h3>
-                <div className="flex gap-2">
-                  <select
-                    value={quizCatFilter}
-                    onChange={(e) => setQuizCatFilter(e.target.value as any)}
-                    className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  >
-                    <option value="all">All</option>
-                    <option value="riddle">စကားထာ</option>
-                    <option value="myanmar">မြန်မာ့ဗဟုသုတ</option>
-                    <option value="science">သိပ္ပံ</option>
-                    <option value="general">အထွေထွေ</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={quizSearch}
-                    onChange={(e) => setQuizSearch(e.target.value)}
-                    placeholder="ရှာရန်..."
-                    className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white w-40"
-                  />
-                </div>
-              </div>
-
-              <form onSubmit={handleAddQuiz} className="p-3.5 rounded-xl bg-[#070b13] border border-white/10 space-y-2.5">
-                <div className="grid sm:grid-cols-12 gap-2">
-                  <input
-                    type="text"
-                    value={newQ}
-                    onChange={(e) => setNewQ(e.target.value)}
-                    placeholder="မေးခွန်းအသစ် ရေးထည့်ပါ..."
-                    className="sm:col-span-9 h-10 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
-                  />
-                  <select
-                    value={newQCat}
-                    onChange={(e) => setNewQCat(e.target.value as any)}
-                    className="sm:col-span-3 h-10 px-2.5 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
-                  >
-                    <option value="riddle">စကားထာ</option>
-                    <option value="myanmar">မြန်မာ့ဗဟုသုတ</option>
-                    <option value="science">သိပ္ပံ</option>
-                    <option value="general">အထွေထွေ</option>
-                  </select>
-                </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                  <input value={newOpt0} onChange={(e) => setNewOpt0(e.target.value)} placeholder="အဖြေ (1)" className="h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white" />
-                  <input value={newOpt1} onChange={(e) => setNewOpt1(e.target.value)} placeholder="အဖြေ (2)" className="h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white" />
-                  <input value={newOpt2} onChange={(e) => setNewOpt2(e.target.value)} placeholder="အဖြေ (3)" className="h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white" />
-                  <input value={newOpt3} onChange={(e) => setNewOpt3(e.target.value)} placeholder="အဖြေ (4)" className="h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white" />
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <span>အဖြေမှန်:</span>
-                    {[0, 1, 2, 3].map((idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onClick={() => setNewAnsIdx(idx)}
-                        className={`w-8 h-8 rounded-lg font-bold cursor-pointer ${
-                          newAnsIdx === idx ? 'bg-emerald-500 text-slate-950' : 'bg-white/10 text-slate-300'
-                        }`}
-                      >
-                        {idx + 1}
-                      </button>
-                    ))}
-                  </div>
-                  <button
-                    type="submit"
-                    className="h-9 px-5 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> ထည့်မည်
-                  </button>
-                </div>
-              </form>
-
-              <div className="max-h-80 overflow-y-auto space-y-1.5 pr-1">
-                {filteredQuizzes.map((r, i) => (
-                  <div
-                    key={r.id || i}
-                    className="p-2.5 rounded-xl bg-[#070b13] border border-white/5 flex items-center justify-between gap-2 text-xs"
-                  >
-                    <div className="min-w-0 truncate">
-                      <span className="text-amber-400 font-mono mr-2">#{i + 1}</span>
-                      <span className="text-white">{r.question}</span>
-                      <span className="text-emerald-400 ml-2 font-semibold">✓ {r.options?.[r.answerIndex]}</span>
-                    </div>
-                    {String(r.id).startsWith('custom_') && (
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteQuiz(r.id)}
-                        className="text-rose-400 cursor-pointer shrink-0"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 7: NOTIFICATIONS */}
-          {section === 'noti' && (
-            <div className="grid md:grid-cols-2 gap-4">
-              <form onSubmit={handleSendNotification} className="cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <Megaphone className="w-4 h-4" /> Real-Time Notification & Broadcast
-                </h3>
-                <select
-                  value={notiTarget}
-                  onChange={(e) => setNotiTarget(e.target.value)}
-                  className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                >
-                  <option value="ALL">📢 User အားလုံးထံ (Broadcast to ALL)</option>
-                  {users
-                    .filter((u) => u.role !== 'admin')
-                    .map((u) => (
-                      <option key={u.id} value={u.id}>
-                        👤 {u.displayName} ({u.gameId}) {isUserLiveNow(u) ? '🟢 LIVE' : ''}
-                      </option>
-                    ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                  <select
-                    value={notiType}
-                    onChange={(e) => setNotiType(e.target.value as any)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  >
-                    <option value="broadcast">📢 ကြေညာချက်</option>
-                    <option value="message">💬 တိုက်ရိုက်စာ</option>
-                    <option value="warning">⚠️ သတိပေးချက်</option>
-                  </select>
-                  <input
-                    type="text"
-                    value={notiTitle}
-                    onChange={(e) => setNotiTitle(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                  />
-                </div>
-                <textarea
-                  rows={4}
-                  required
-                  value={notiMessage}
-                  onChange={(e) => setNotiMessage(e.target.value)}
-                  placeholder="User များထံ ချက်ချင်းပြသမည့် စာသား ရေးပါ..."
-                  className="w-full p-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
-                <button
-                  type="submit"
-                  disabled={sendingNoti}
-                  className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <Send className="w-4 h-4" /> Real-Time ချက်ချင်းပို့မည်
-                </button>
-              </form>
-
-              <div className="cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white">Sent History ({notiHistory.length})</h3>
-                <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
-                  {notiHistory.map((n) => (
-                    <div
-                      key={n.id}
-                      className="p-3 rounded-xl bg-[#070b13] border border-white/10 text-xs flex items-start justify-between gap-2"
-                    >
-                      <div className="space-y-1 min-w-0">
-                        <div className="font-bold text-amber-300">{n.title}</div>
-                        <p className="text-slate-200">{n.message}</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteNotification(n.id)}
-                        className="text-rose-400 cursor-pointer shrink-0"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 8: BRANDING CMS */}
-          {section === 'cms' && (
-            <form onSubmit={handleSaveCms} className="cyber-panel rounded-2xl p-4 space-y-4">
-              <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                <Palette className="w-4 h-4" /> Website Branding & Bilingual Text CMS
-              </h3>
-              <div className="grid md:grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  value={cmsDraft.heroTitleMy || ''}
-                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleMy: e.target.value })}
-                  placeholder="Hero Title (MY)"
-                  className="h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
-                <input
-                  type="text"
-                  value={cmsDraft.heroTitleEn || ''}
-                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleEn: e.target.value })}
-                  placeholder="Hero Title (EN)"
-                  className="h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
-                <textarea
-                  rows={2}
-                  value={cmsDraft.heroSubtitleMy || ''}
-                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleMy: e.target.value })}
-                  placeholder="Subtitle (MY)"
-                  className="p-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
-                <textarea
-                  rows={2}
-                  value={cmsDraft.heroSubtitleEn || ''}
-                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleEn: e.target.value })}
-                  placeholder="Subtitle (EN)"
-                  className="p-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
-                />
-              </div>
-              <button
-                type="submit"
-                className="px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-2 cursor-pointer"
-              >
-                <Save className="w-4 h-4" /> Save Branding Live
-              </button>
-            </form>
-          )}
-        </section>
-      </div>
-
-      {/* Player Editor Modal */}
-      <AnimatePresence>
-        {editingUser && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+      {/* SECTION: GLOBAL BROADCAST */}
+      {section === 'broadcast' && (
+        <form
+          onSubmit={handleSendBroadcast}
+          className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/25 max-w-xl"
+        >
+          <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+            <Radio className="w-4 h-4" /> Send Global Real-Time Broadcast
+          </h3>
+          <input
+            type="text"
+            value={broadcastTitle}
+            onChange={(e) => setBroadcastTitle(e.target.value)}
+            placeholder="ခေါင်းစဉ်..."
+            className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+          />
+          <textarea
+            rows={3}
+            required
+            value={broadcastMessage}
+            onChange={(e) => setBroadcastMessage(e.target.value)}
+            placeholder="ကစားသမားအားလုံးထံ အသိပေးလိုသော ကြေညာချက်..."
+            className="w-full p-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+          />
+          <button
+            type="submit"
+            className="w-full h-10 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
           >
-            <motion.div
-              initial={{ scale: 0.94, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="w-full max-w-lg rounded-2xl cyber-panel border border-amber-400/50 p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto"
-            >
-              <div className="flex items-center justify-between border-b border-white/10 pb-3">
-                <div className="flex items-center gap-2.5">
-                  <AvatarWithFrame avatarUrl={editingUser.avatarUrl} frameId={editDraft.frameId} displayName={editDraft.displayName} size="sm" />
-                  <div>
-                    <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                      <Edit3 className="w-3.5 h-3.5 text-amber-400" /> {editingUser.displayName}
-                    </h3>
-                    <div className="text-[11px] font-mono text-amber-400">{editingUser.gameId} · @{editingUser.username}</div>
+            <Send className="w-4 h-4" /> ကြေညာချက် ပေးပို့မည်
+          </button>
+        </form>
+      )}
+
+      {/* SECTION: AUDIT LOGS */}
+      {section === 'logs' && (
+        <div className="cyber-panel rounded-2xl p-4 space-y-2 border border-white/10">
+          <h3 className="text-sm font-bold text-white flex items-center gap-2">
+            <RefreshCw className="w-4 h-4 text-sky-400" /> Admin Action Audit Logs
+          </h3>
+          <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
+            {auditLogs.length === 0 ? (
+              <div className="text-xs text-slate-500 text-center py-6">မှတ်တမ်း မရှိသေးပါ။</div>
+            ) : (
+              auditLogs.map((log, i) => (
+                <div
+                  key={log.id || i}
+                  className="p-2.5 rounded-lg bg-[#070b14] border border-white/5 text-xs flex items-center justify-between gap-2"
+                >
+                  <div className="truncate">
+                    <span className="font-mono font-bold text-amber-400">[{log.action}]</span>{' '}
+                    <span className="text-slate-200">{log.detail}</span>
                   </div>
+                  <span className="text-[10px] font-mono text-slate-500 shrink-0">
+                    {log.createdAtMs ? new Date(log.createdAtMs).toLocaleTimeString() : ''}
+                  </span>
                 </div>
-                <button type="button" onClick={() => setEditingUser(null)} className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer">
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              {editingUser.recoveryPin && (
-                <div className="p-2.5 rounded-xl bg-[#070b13] border border-amber-400/25 flex items-center justify-between text-xs">
-                  <span className="text-slate-400 flex items-center gap-1.5"><KeyRound className="w-3.5 h-3.5 text-amber-400" /> Recovery PIN:</span>
-                  <span className="font-mono font-bold text-amber-300 tracking-widest">{editingUser.recoveryPin}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleSavePlayerEdit} className="space-y-3">
-                <div className="grid grid-cols-2 gap-2.5">
-                  <input type="text" value={editDraft.displayName} onChange={(e) => setEditDraft({ ...editDraft, displayName: e.target.value })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white" />
-                  <input type="number" value={editDraft.xp} onChange={(e) => setEditDraft({ ...editDraft, xp: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-amber-300" />
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  <input type="number" value={editDraft.wins} onChange={(e) => setEditDraft({ ...editDraft, wins: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-emerald-300" />
-                  <input type="number" value={editDraft.losses} onChange={(e) => setEditDraft({ ...editDraft, losses: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-rose-300" />
-                  <input type="number" value={editDraft.draws} onChange={(e) => setEditDraft({ ...editDraft, draws: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-sky-300" />
-                </div>
-                <div className="grid grid-cols-2 gap-2.5">
-                  <select value={editDraft.frameId} onChange={(e) => setEditDraft({ ...editDraft, frameId: e.target.value })} className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white">
-                    {SVG_FRAME_TEMPLATES.map((f) => (
-                      <option key={f.id} value={f.id}>{f.badgeIcon} {f.name}</option>
-                    ))}
-                  </select>
-                  <select value={editDraft.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })} className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white">
-                    <option value="active">🟢 Active</option>
-                    <option value="warned">⚠️ Warned</option>
-                    <option value="suspended">⏳ Suspended</option>
-                    <option value="banned">🚫 Banned</option>
-                  </select>
-                </div>
-                <input type="text" value={editDraft.newPassword} onChange={(e) => setEditDraft({ ...editDraft, newPassword: e.target.value })} placeholder="Reset Password (Optional, min 4 chars)" className="w-full h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white" />
-
-                {editingUser.role !== 'admin' && (
-                  <div className="grid grid-cols-4 gap-1.5">
-                    {[
-                      { label: '15m', m: 15 },
-                      { label: '1h', m: 60 },
-                      { label: '24h', m: 1440 },
-                      { label: '7d', m: 10080 },
-                    ].map((opt) => (
-                      <button key={opt.label} type="button" onClick={() => handleTimedSuspend(editingUser, opt.m)} className="py-1.5 rounded-lg bg-amber-500/15 text-[11px] font-bold text-amber-200 cursor-pointer">
-                        Suspend {opt.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
-                  {editingUser.role !== 'admin' ? (
-                    <button type="button" onClick={() => handleDeleteUser(editingUser)} className="px-3 py-2 rounded-xl bg-rose-500/15 text-xs font-bold text-rose-300 flex items-center gap-1 cursor-pointer">
-                      <Trash2 className="w-3.5 h-3.5" /> Delete
-                    </button>
-                  ) : (
-                    <span />
-                  )}
-                  <button type="submit" className="px-5 h-10 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer">
-                    <Save className="w-4 h-4" /> Save Changes
-                  </button>
-                </div>
-              </form>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
