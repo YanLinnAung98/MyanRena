@@ -1,22 +1,21 @@
 import React from 'react';
-import { AnimatePresence, motion } from 'motion/react';
+import { motion } from 'motion/react';
 import {
   Bot,
   ChevronLeft,
   ChevronRight,
   ChevronsRight,
   Crown,
-  DoorOpen,
   Lock,
   MessageSquare,
   Play,
-  Plus,
   Send,
   Shield,
   Swords,
   Users,
 } from 'lucide-react';
 import { GAME_LIST } from '../games/registry.ts';
+import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Difficulty, GameType, LandingContent, Language, TurnTimeLimit, UserProfile } from '../types.ts';
 import { GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
@@ -66,13 +65,20 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const [roomCodeInput, setRoomCodeInput] = React.useState('');
   const [lobbyChatInput, setLobbyChatInput] = React.useState('');
   const [lobbyMessages, setLobbyMessages] = React.useState<Array<{ id: number; sender: string; text: string }>>([
-    { id: 1, sender: 'Vanguard System', text: 'Welcome to Vanguard Cyber Arena!' },
+    { id: 1, sender: 'Vanguard System', text: 'Vanguard Cyber Arena မှ ကြိုဆိုပါတယ်!' },
   ]);
+
+  const getGameDisplayTitle = (game: any) => {
+    const norm = normalizeGameId(game.id);
+    if (norm === 'sakarhtar') return lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz';
+    return lang === 'my' ? game.nameMy : game.name;
+  };
 
   const activeGameMeta = GAME_LIST[selectedIndex] || GAME_LIST[0];
   const selectedGame = activeGameMeta.id;
+  const normSelected = normalizeGameId(selectedGame);
   const nextGameMeta = GAME_LIST[(selectedIndex + 1) % GAME_LIST.length];
-  const isLocked = Boolean(featureLocks?.[selectedGame]);
+  const isLocked = Boolean(featureLocks?.[selectedGame] || featureLocks?.[normSelected]);
 
   const stepGame = (dir: -1 | 1) => {
     setSelectedIndex((prev) => (prev + dir + GAME_LIST.length) % GAME_LIST.length);
@@ -81,7 +87,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
   const handleLaunch = () => {
     if (isLocked) return;
     if (selectedMode === 'bot') {
-      if (selectedGame === 'sakarhtar') {
+      if (normSelected === 'sakarhtar') {
         onStartSakarSolo();
       } else {
         onStartBot(selectedGame, difficulty, bestOf, 20);
@@ -92,7 +98,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
       if (roomCodeInput.trim()) {
         onJoinSakarRoom(roomCodeInput.trim());
       } else {
-        const maxP = selectedGame === 'sakarhtar' ? 8 : 2;
+        const maxP = normSelected === 'sakarhtar' ? 8 : 2;
         onCreateSakarRoom(`${currentUser.displayName}'s Room`, maxP, selectedGame);
       }
     }
@@ -112,11 +118,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
   return (
     <div className="h-[calc(100dvh-7.5rem)] lg:h-[calc(100dvh-4.5rem)] max-w-[1360px] mx-auto px-3 sm:px-6 py-2 lg:py-4 overflow-hidden">
-      {/* =================================================================
-          1. MOBILE GAME UI (1-Column Thumb-Friendly Carousel, Zero Scroll)
-      ================================================================== */}
+      {/* 1. MOBILE GAME UI (1-Column Thumb Carousel, Zero Scroll) */}
       <div className="lg:hidden h-full flex flex-col justify-between gap-2 overflow-hidden">
-        {/* Top Carousel Showcase + Peeking Next Card */}
         <div className="relative flex items-center gap-2.5 pt-0.5 shrink-0">
           <motion.div
             key={activeGameMeta.id}
@@ -134,8 +137,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           >
             <div className="h-32 sm:h-40 w-full rounded-xl overflow-hidden bg-[#070b14] relative">
               <img
-                src={GAME_ARTWORKS[activeGameMeta.id] || activeGameMeta.artwork}
-                alt={activeGameMeta.name}
+                src={GAME_ARTWORKS[normSelected] || activeGameMeta.artwork}
+                alt={getGameDisplayTitle(activeGameMeta)}
                 className="w-full h-full object-cover"
               />
               {isLocked && (
@@ -148,11 +151,10 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </span>
             </div>
             <div className="mt-2 text-center text-xs font-bold text-white truncate">
-              {lang === 'my' ? activeGameMeta.nameMy : activeGameMeta.name}
+              {getGameDisplayTitle(activeGameMeta)}
             </div>
           </motion.div>
 
-          {/* Peeking Next Card on Right Edge */}
           <button
             type="button"
             onClick={() => stepGame(1)}
@@ -160,25 +162,19 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           >
             <div className="h-32 sm:h-40 w-full rounded-xl overflow-hidden bg-[#070b14]">
               <img
-                src={GAME_ARTWORKS[nextGameMeta.id] || nextGameMeta.artwork}
-                alt={nextGameMeta.name}
+                src={GAME_ARTWORKS[normalizeGameId(nextGameMeta.id)] || nextGameMeta.artwork}
+                alt={getGameDisplayTitle(nextGameMeta)}
                 className="w-full h-full object-cover"
               />
             </div>
             <div className="mt-2 text-[11px] font-semibold text-slate-300 truncate">
-              {lang === 'my' ? nextGameMeta.nameMy : nextGameMeta.name}
+              {getGameDisplayTitle(nextGameMeta)}
             </div>
           </button>
         </div>
 
-        {/* Carousel Arrows & Dots (< • o • • >) */}
         <div className="flex items-center justify-center gap-3 shrink-0">
-          <button
-            type="button"
-            onClick={() => stepGame(-1)}
-            aria-label="Previous game"
-            className="p-1 text-slate-400 hover:text-amber-400 cursor-pointer"
-          >
+          <button type="button" onClick={() => stepGame(-1)} className="p-1 text-slate-400 hover:text-amber-400 cursor-pointer">
             <ChevronLeft className="w-4 h-4" />
           </button>
           <div className="flex items-center gap-1.5">
@@ -187,45 +183,35 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 key={g.id}
                 type="button"
                 onClick={() => setSelectedIndex(idx)}
-                aria-label={g.name}
                 className={`h-2 rounded-full transition-all cursor-pointer ${
                   idx === selectedIndex ? 'w-5 bg-amber-400 shadow-[0_0_8px_#fbbf24]' : 'w-2 bg-slate-600'
                 }`}
               />
             ))}
           </div>
-          <button
-            type="button"
-            onClick={() => stepGame(1)}
-            aria-label="Next game"
-            className="p-1 text-slate-400 hover:text-amber-400 cursor-pointer"
-          >
+          <button type="button" onClick={() => stepGame(1)} className="p-1 text-slate-400 hover:text-amber-400 cursor-pointer">
             <ChevronRight className="w-4 h-4" />
           </button>
         </div>
 
-        {/* Selected Game Title */}
         <div className="flex items-center justify-between px-1 shrink-0">
           <h2 className="text-base font-display font-bold text-white truncate">
-            {lang === 'my' ? activeGameMeta.nameMy : activeGameMeta.name}
+            {getGameDisplayTitle(activeGameMeta)}
           </h2>
           <span className="text-[11px] font-mono text-amber-400">{currentUser.xp} XP</span>
         </div>
 
-        {/* Stacked Thumb-Friendly Mode Buttons */}
         <div className="space-y-1.5 shrink-0">
           <motion.button
             whileTap={{ scale: 0.98 }}
             type="button"
             onClick={() => setSelectedMode('bot')}
             className={`w-full h-10 rounded-xl px-4 flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-              selectedMode === 'bot'
-                ? 'cyber-gold-active text-amber-200'
-                : 'cyber-panel text-slate-300 hover:text-white'
+              selectedMode === 'bot' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
             }`}
           >
             <Bot className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'Bot / Solo' : 'Bot / Solo'}</span>
+            <span>Bot / Solo</span>
           </motion.button>
 
           <motion.button
@@ -233,9 +219,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             type="button"
             onClick={() => setSelectedMode('matchmaking')}
             className={`w-full h-10 rounded-xl px-4 flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-              selectedMode === 'matchmaking'
-                ? 'cyber-gold-active text-amber-200'
-                : 'cyber-panel text-slate-300 hover:text-white'
+              selectedMode === 'matchmaking' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
             }`}
           >
             <Swords className="w-4 h-4 text-sky-400" />
@@ -247,9 +231,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             type="button"
             onClick={() => setSelectedMode('custom')}
             className={`w-full h-10 rounded-xl px-4 flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-              selectedMode === 'custom'
-                ? 'cyber-gold-active text-amber-200'
-                : 'cyber-panel text-slate-300 hover:text-white'
+              selectedMode === 'custom' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
             }`}
           >
             <Users className="w-4 h-4 text-emerald-400" />
@@ -257,7 +239,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           </motion.button>
         </div>
 
-        {/* Difficulty / Options Bar */}
         <div className="shrink-0">
           {selectedMode === 'bot' ? (
             <div className="grid grid-cols-3 gap-2">
@@ -267,9 +248,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   type="button"
                   onClick={() => setDifficulty(lvl)}
                   className={`h-9 rounded-xl text-xs font-bold capitalize transition-all cursor-pointer ${
-                    difficulty === lvl
-                      ? 'cyber-violet-active text-white'
-                      : 'cyber-panel text-slate-400 hover:text-white'
+                    difficulty === lvl ? 'cyber-violet-active text-white' : 'cyber-panel text-slate-400'
                   }`}
                 >
                   {lvl}
@@ -291,7 +270,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           )}
         </div>
 
-        {/* Massive Thumb-Access Golden Launch CTA */}
         <motion.button
           whileTap={{ scale: 0.97 }}
           type="button"
@@ -303,43 +281,31 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
           <span>
             {selectedMode === 'custom'
               ? roomCodeInput.trim()
-                ? lang === 'my'
-                  ? 'အခန်းထဲ ဝင်မည်'
-                  : 'Join Room'
-                : lang === 'my'
-                ? 'Room အသစ်ဖွင့်မည်'
-                : 'Create Room'
-              : lang === 'my'
-              ? 'ဂိမ်းစတင်ကစားမည်'
-              : 'Start Match'}
+                ? lang === 'my' ? 'အခန်းထဲ ဝင်မည်' : 'Join Room'
+                : lang === 'my' ? 'Room အသစ်ဖွင့်မည်' : 'Create Room'
+              : lang === 'my' ? 'ဂိမ်းစတင်ကစားမည်' : 'Start Match'}
           </span>
           <ChevronsRight className="w-5 h-5 opacity-80" />
         </motion.button>
       </div>
 
-      {/* =================================================================
-          2. PC WEB UI (Immersive Horizontal Layout + Friends & Chat Sidebar)
-      ================================================================== */}
+      {/* 2. PC WEB UI */}
       <div className="hidden lg:grid lg:grid-cols-12 gap-4 h-full overflow-hidden">
-        {/* Main Left/Center Arena Stage (9 Columns) */}
         <div className="lg:col-span-9 flex flex-col justify-between gap-3 h-full overflow-hidden">
-          {/* Top Player Hero Banner with Golden Shield Crest */}
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="cyber-panel rounded-2xl px-5 py-3.5 flex items-center justify-between gap-4 border border-amber-500/25 shrink-0"
           >
             <div className="flex items-center gap-4">
-              <div className="relative p-1 rounded-full bg-gradient-to-b from-amber-300 via-amber-500 to-amber-800 shadow-[0_0_20px_rgba(245,158,11,0.45)]">
-                <AvatarWithFrame
-                  avatarUrl={currentUser.avatarUrl}
-                  frameId={currentUser.frameId}
-                  frames={frames}
-                  displayName={currentUser.displayName}
-                  size="lg"
-                  status="online"
-                />
-              </div>
+              <AvatarWithFrame
+                avatarUrl={currentUser.avatarUrl}
+                frameId={currentUser.frameId}
+                frames={frames}
+                displayName={currentUser.displayName}
+                size="lg"
+                status="online"
+              />
               <div>
                 <div className="flex items-center gap-2">
                   <h2 className="text-xl font-display font-bold text-white">{currentUser.displayName}</h2>
@@ -358,25 +324,24 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </div>
             </div>
 
-            <div className="px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-400/30 text-xs font-bold text-emerald-300 flex items-center gap-2 shadow-[0_0_15px_rgba(16,185,129,0.2)]">
+            <div className="px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-400/30 text-xs font-bold text-emerald-300 flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
               <span>{displayPlayers.length} Online</span>
             </div>
           </motion.div>
 
-          {/* 4-Card Horizontal Game Grid */}
           <div className="grid grid-cols-4 gap-3.5 flex-1 min-h-0">
             {GAME_LIST.map((game, idx) => {
               const active = idx === selectedIndex;
-              const locked = Boolean(featureLocks?.[game.id]);
-              const title = lang === 'my' ? game.nameMy : game.name;
+              const normId = normalizeGameId(game.id);
+              const locked = Boolean(featureLocks?.[game.id] || featureLocks?.[normId]);
+              const title = getGameDisplayTitle(game);
               return (
                 <motion.button
                   key={game.id}
                   type="button"
                   whileHover={{ y: -4, scale: 1.015 }}
                   whileTap={{ scale: 0.98 }}
-                  transition={{ type: 'spring', stiffness: 380, damping: 26 }}
                   onClick={() => setSelectedIndex(idx)}
                   className={`rounded-2xl p-3 flex flex-col justify-between text-left transition-all cursor-pointer relative overflow-hidden ${
                     active ? 'cyber-gold-active' : 'cyber-panel hover:border-slate-500/50'
@@ -384,7 +349,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 >
                   <div className="flex-1 min-h-0 w-full rounded-xl overflow-hidden bg-[#070b14] relative">
                     <img
-                      src={GAME_ARTWORKS[game.id] || game.artwork}
+                      src={GAME_ARTWORKS[normId] || game.artwork}
                       alt={title}
                       className="w-full h-full object-cover"
                     />
@@ -404,24 +369,22 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             })}
           </div>
 
-          {/* Ultra-Wide High-Tech Glowing Cyber Control Console */}
           <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/20 shrink-0">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-display font-bold text-white">
-                {lang === 'my' ? activeGameMeta.nameMy : activeGameMeta.name}
+                {getGameDisplayTitle(activeGameMeta)}
               </h3>
               <span className="px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-xs font-bold text-amber-300">
                 {lang === 'my' ? 'နိုင် +75 XP' : 'Win +75 XP'}
               </span>
             </div>
 
-            {/* 3 Horizontal Mode Buttons */}
             <div className="grid grid-cols-3 gap-3">
               <button
                 type="button"
                 onClick={() => setSelectedMode('bot')}
-                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-                  selectedMode === 'bot' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300 hover:text-white'
+                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold cursor-pointer ${
+                  selectedMode === 'bot' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
                 }`}
               >
                 <Bot className="w-4 h-4 text-amber-400" />
@@ -431,10 +394,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedMode('matchmaking')}
-                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-                  selectedMode === 'matchmaking'
-                    ? 'cyber-gold-active text-amber-200'
-                    : 'cyber-panel text-slate-300 hover:text-white'
+                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold cursor-pointer ${
+                  selectedMode === 'matchmaking' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
                 }`}
               >
                 <Swords className="w-4 h-4 text-sky-400" />
@@ -444,10 +405,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               <button
                 type="button"
                 onClick={() => setSelectedMode('custom')}
-                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold transition-all cursor-pointer ${
-                  selectedMode === 'custom'
-                    ? 'cyber-gold-active text-amber-200'
-                    : 'cyber-panel text-slate-300 hover:text-white'
+                className={`h-11 rounded-xl flex items-center justify-center gap-2 text-xs font-bold cursor-pointer ${
+                  selectedMode === 'custom' ? 'cyber-gold-active text-amber-200' : 'cyber-panel text-slate-300'
                 }`}
               >
                 <Users className="w-4 h-4 text-emerald-400" />
@@ -455,7 +414,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </button>
             </div>
 
-            {/* 3 Horizontal Difficulty / Option Pills */}
             {selectedMode === 'bot' ? (
               <div className="grid grid-cols-3 gap-3">
                 {(['easy', 'medium', 'hard'] as Difficulty[]).map((lvl) => (
@@ -463,10 +421,8 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     key={lvl}
                     type="button"
                     onClick={() => setDifficulty(lvl)}
-                    className={`h-10 rounded-xl text-xs font-bold capitalize transition-all cursor-pointer ${
-                      difficulty === lvl
-                        ? 'cyber-violet-active text-white'
-                        : 'cyber-panel text-slate-400 hover:text-white'
+                    className={`h-10 rounded-xl text-xs font-bold capitalize cursor-pointer ${
+                      difficulty === lvl ? 'cyber-violet-active text-white' : 'cyber-panel text-slate-400'
                     }`}
                   >
                     {lvl}
@@ -481,7 +437,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 placeholder={
                   lang === 'my'
                     ? 'သူငယ်ချင်း Room Code (ဥပမာ MR-1234) ထည့်ပါ — အခန်းအသစ်ဖွင့်လိုပါက အလွတ်ထားပါ'
-                    : 'Enter Room Code to join — or leave blank to create a new room'
+                    : 'Enter Room Code to join — or leave blank to create'
                 }
                 className="w-full h-10 px-4 rounded-xl bg-[#070b14] border border-amber-400/40 text-xs text-white focus:outline-none"
               />
@@ -492,7 +448,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     ? 'မိမိ XP နှင့် အဆင့်တူ အွန်လိုင်းပြိုင်ဘက်ကို အလိုအလျောက် ရှာဖွေချိတ်ဆက်ပေးပါမည်။'
                     : 'Automatically matches you with a live player in your XP bracket.'}
                 </span>
-                {selectedGame === 'rps' && (
+                {normSelected === 'rps' && (
                   <div className="flex gap-1.5">
                     {([3, 5] as const).map((bo) => (
                       <button
@@ -511,7 +467,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               </div>
             )}
 
-            {/* Ultra-Wide Glowing Golden Launch Button */}
             <motion.button
               whileHover={{ scale: 1.008 }}
               whileTap={{ scale: 0.99 }}
@@ -524,22 +479,16 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
               <span>
                 {selectedMode === 'custom'
                   ? roomCodeInput.trim()
-                    ? lang === 'my'
-                      ? 'အခန်းထဲ ဝင်ရောက်မည်'
-                      : 'Join Custom Room'
-                    : lang === 'my'
-                    ? 'Room အသစ်ဖွင့်မည်'
-                    : 'Create Custom Room'
-                  : lang === 'my'
-                  ? 'ဂိမ်းစတင်ကစားမည်'
-                  : 'Launch Match'}
+                    ? lang === 'my' ? 'အခန်းထဲ ဝင်ရောက်မည်' : 'Join Custom Room'
+                    : lang === 'my' ? 'Room အသစ်ဖွင့်မည်' : 'Create Custom Room'
+                  : lang === 'my' ? 'ဂိမ်းစတင်ကစားမည်' : 'Launch Match'}
               </span>
               <ChevronsRight className="w-5 h-5" />
             </motion.button>
           </div>
         </div>
 
-        {/* Right Sidebar: Online Friends & Live Arena Chat (3 Columns) */}
+        {/* Right Sidebar: Online Friends & Live Arena Chat */}
         <aside className="lg:col-span-3 cyber-panel rounded-2xl p-3.5 flex flex-col justify-between gap-3 h-full overflow-hidden border border-white/10">
           <div className="flex items-center justify-between border-b border-white/10 pb-2.5 shrink-0">
             <span className="text-xs font-bold text-white flex items-center gap-1.5">
@@ -549,7 +498,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             <span className="text-[11px] font-mono text-emerald-400">{displayPlayers.length}</span>
           </div>
 
-          {/* Live Online Players List */}
           <div className="flex-1 min-h-0 overflow-y-auto space-y-2 pr-1">
             {displayPlayers.map((pl) => (
               <div
@@ -573,7 +521,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     <div className="text-xs font-bold text-amber-200 truncate">{pl.displayName}</div>
                     <div className="text-[10px] text-emerald-400 flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                      Online · {pl.xp} XP
+                      {(pl as any).deviceType || 'Online'} · {pl.xp} XP
                     </div>
                   </div>
                 </button>
@@ -592,7 +540,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
             ))}
           </div>
 
-          {/* Mini Global Lobby Chat */}
           <div className="border-t border-white/10 pt-2.5 space-y-2 shrink-0">
             <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">
               <MessageSquare className="w-3 h-3 text-amber-400" />
