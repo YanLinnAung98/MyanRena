@@ -89,6 +89,7 @@ type AdminSection =
   | 'cms';
 
 interface EngineConfigState {
+  hideAdminFromUsers: boolean;
   maintenanceMode: boolean;
   maintenanceMessage: string;
   featureLocks: Record<string, boolean>;
@@ -107,6 +108,7 @@ interface EngineConfigState {
 }
 
 const DEFAULT_ENGINE_CONFIG: EngineConfigState = {
+  hideAdminFromUsers: true,
   maintenanceMode: false,
   maintenanceMessage:
     'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။',
