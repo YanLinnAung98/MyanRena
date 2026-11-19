@@ -10,9 +10,9 @@ import {
   Database,
   Download,
   Edit3,
+  Flag,
   Gamepad2,
   KeyRound,
-  Layers,
   Lock,
   LogOut,
   Megaphone,
@@ -81,6 +81,7 @@ interface AdminPanelProps {
 type AdminSection =
   | 'overview'
   | 'users'
+  | 'reports'
   | 'engine'
   | 'tournaments'
   | 'quiz'
@@ -154,6 +155,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 }) => {
   const [section, setSection] = React.useState<AdminSection>('overview');
   const [users, setUsers] = React.useState<any[]>([]);
+  const [reports, setReports] = React.useState<any[]>([]);
   const [notiHistory, setNotiHistory] = React.useState<any[]>([]);
   const [tournaments, setTournaments] = React.useState<any[]>([]);
   const [rooms, setRooms] = React.useState<any[]>([]);
@@ -167,11 +169,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [cloudErrText, setCloudErrText] = React.useState<string>(firebaseInitError || '');
   const [nowMs, setNowMs] = React.useState(() => Date.now());
 
-  // User Filter & Editor Modal
+  // User Filter & Editor
   const [userSearch, setUserSearch] = React.useState('');
   const [userFilter, setUserFilter] = React.useState<'all' | 'live' | 'restricted'>('all');
   const [editingUser, setEditingUser] = React.useState<any | null>(null);
   const [editDraft, setEditDraft] = React.useState<any>({});
+
+  // Report Filter & Note
+  const [reportFilter, setReportFilter] = React.useState<'pending' | 'resolved' | 'dismissed' | 'all'>('pending');
+  const [adminReportNotes, setAdminReportNotes] = React.useState<Record<string, string>>({});
 
   // Notification Composer
   const [notiTarget, setNotiTarget] = React.useState<string>('ALL');
@@ -208,7 +214,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     return () => window.clearInterval(t);
   }, []);
 
-  // Audit Logger Helper
   const logAdminAction = React.useCallback(
     async (action: string, detail: string) => {
       const entry = {
@@ -226,7 +231,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     [adminUser.username]
   );
 
-  // Real-Time Firestore Subscriptions Across Entire Platform
+  // Real-Time Firestore Subscriptions
   React.useEffect(() => {
     const syncLocal = () => {
       const store = readServerlessStore();
@@ -281,6 +286,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         setCloudErrText(err.message);
       }
     );
+
+    const unsubReports = onSnapshot(collection(db, 'reports'), (snap) => {
+      const list: any[] = [];
+      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
+      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      setReports(list);
+    });
 
     const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
       const list: any[] = [];
@@ -341,6 +353,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       window.removeEventListener('storage', syncLocal);
       ch?.close();
       unsubUsers();
+      unsubReports();
       unsubNotis();
       unsubTourneys();
       unsubRooms();
@@ -354,9 +367,106 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const isUserLiveNow = (u: any) => Boolean(u.online && u.lastSeenMs && nowMs - Number(u.lastSeenMs) < 45000);
   const liveCount = users.filter(isUserLiveNow).length;
   const bannedCount = users.filter((u) => u.status === 'banned' || u.status === 'suspended').length;
+  const pendingReportsCount = reports.filter((r) => (r.status || 'pending') === 'pending').length;
   const allQuizzes = React.useMemo(() => [...customRiddles, ...QUIZ_BANK_100], [customRiddles]);
 
-  // Save Engine Config to Firestore
+  // Handle Report Resolution Actions (Warn / Suspend / Ban / Resolve / Dismiss)
+  const handleResolveReport = async (
+    rep: any,
+    outcome: 'warn' | 'suspend24' | 'ban' | 'resolve' | 'dismiss'
+  ) => {
+    const note = (adminReportNotes[rep.id] || '').trim();
+    const nextStatus = outcome === 'dismiss' ? 'dismissed' : 'resolved';
+    const actionText =
+      outcome === 'warn'
+        ? 'Warning ပေးပြီး'
+        : outcome === 'suspend24'
+        ? '၂၄ နာရီ ယာယီပိတ်ပြီး'
+        : outcome === 'ban'
+        ? 'အပြီးတိုင် Ban ပြီး'
+        : outcome === 'dismiss'
+        ? 'ပယ်ချပြီး (Dismissed)'
+        : 'စစ်ဆေးဖြေရှင်းပြီး';
+
+    try {
+      if (isFirebaseConfigured && db) {
+        // 1. Apply penalty to target user if applicable
+        if (outcome === 'warn') {
+          const nid = `warn_${Date.now()}`;
+          await setDoc(
+            doc(db, 'notifications', nid),
+            stripUndefined({
+              id: nid,
+              targetUserId: rep.targetUserId,
+              title: '⚠️ Official Admin Warning',
+              message:
+                note ||
+                `စည်းကမ်းချိုးဖောက်မှု (${rep.categoryLabel || rep.category}) ကြောင့် Admin မှ တရားဝင် သတိပေးအပ်ပါသည်။`,
+              type: 'warning',
+              senderName: 'Vanguard Admin',
+              createdAtMs: Date.now(),
+              read: false,
+            })
+          );
+          await setDoc(doc(db, 'users', rep.targetUserId), { status: 'warned' }, { merge: true }).catch(() => {});
+        } else if (outcome === 'suspend24') {
+          const untilIso = new Date(Date.now() + 24 * 60 * 60000).toISOString();
+          await setDoc(
+            doc(db, 'users', rep.targetUserId),
+            { status: 'suspended', suspendedUntil: untilIso },
+            { merge: true }
+          ).catch(() => {});
+        } else if (outcome === 'ban') {
+          await setDoc(doc(db, 'users', rep.targetUserId), { status: 'banned' }, { merge: true }).catch(() => {});
+        }
+
+        // 2. Update Report status
+        await setDoc(
+          doc(db, 'reports', rep.id),
+          stripUndefined({
+            status: nextStatus,
+            adminAction: actionText,
+            adminNote: note,
+            resolvedBy: adminUser.username,
+            resolvedAtMs: Date.now(),
+          }),
+          { merge: true }
+        );
+
+        // 3. Notify Reporter of outcome
+        if (rep.reporterId) {
+          const feedbackId = `repfb_${Date.now()}`;
+          await setDoc(
+            doc(db, 'notifications', feedbackId),
+            stripUndefined({
+              id: feedbackId,
+              targetUserId: rep.reporterId,
+              title: 'Report စစ်ဆေးမှု ရလဒ်',
+              message: `${rep.targetName} အား သင်တိုင်ကြားထားသော Report ကို Admin မှ စစ်ဆေးပြီး (${actionText}) ဖြစ်ပါသည်။`,
+              type: 'message',
+              senderName: 'Vanguard Admin',
+              createdAtMs: Date.now(),
+              read: false,
+            })
+          ).catch(() => {});
+        }
+      }
+
+      await logAdminAction('REPORT_ACTION', `${rep.targetName}: ${actionText}`);
+      onNotify('success', `Report ကို ${actionText} ဆောင်ရွက်ပြီးပါပြီ။`);
+    } catch (err: any) {
+      onNotify('error', err?.message || 'Report action failed');
+    }
+  };
+
+  const handleDeleteReport = async (repId: string) => {
+    if (isFirebaseConfigured && db) {
+      await deleteDoc(doc(db, 'reports', repId)).catch(() => {});
+    }
+    onNotify('info', 'Report မှတ်တမ်း ဖျက်ပြီးပါပြီ။');
+  };
+
+  // Save Engine Config
   const persistEngineConfig = async (nextCfg: EngineConfigState, toastLabel: string) => {
     setSavingConfig(true);
     try {
@@ -379,7 +489,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
-  // Player Edit Modal Handlers
+  // Player Edit Modal
   const openPlayerEditor = (u: any) => {
     setEditingUser(u);
     setEditDraft({
@@ -409,9 +519,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       status: editDraft.status,
     };
     if (editDraft.status === 'active') updates.suspendedUntil = null;
-    if (editDraft.newPassword.trim().length >= 4) {
-      updates.password = editDraft.newPassword.trim();
-    }
+    if (editDraft.newPassword.trim().length >= 4) updates.password = editDraft.newPassword.trim();
 
     try {
       const clean = stripUndefined(updates);
@@ -434,9 +542,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   const handleTimedSuspend = async (u: any, minutes: number) => {
     const untilIso = new Date(Date.now() + minutes * 60000).toISOString();
-    const updates = { status: 'suspended', suspendedUntil: untilIso };
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', u.id), updates, { merge: true }).catch(() => {});
+      await setDoc(doc(db, 'users', u.id), { status: 'suspended', suspendedUntil: untilIso }, { merge: true }).catch(() => {});
     }
     await logAdminAction('SUSPEND_PLAYER', `${u.displayName} suspended for ${minutes}m`);
     onNotify('info', `${u.displayName} ကို ${minutes} မိနစ် ယာယီပိတ်လိုက်ပါပြီ။`);
@@ -444,9 +551,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleForceKick = async (u: any) => {
-    const updates = { forceLogoutAt: Date.now(), online: false };
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', u.id), updates, { merge: true }).catch(() => {});
+      await setDoc(doc(db, 'users', u.id), { forceLogoutAt: Date.now(), online: false }, { merge: true }).catch(() => {});
     }
     await logAdminAction('KICK_PLAYER', `Force-disconnected ${u.displayName}`);
     onNotify('info', `${u.displayName} ကို ချက်ချင်း ထုတ်ပယ်လိုက်ပါပြီ။`);
@@ -467,7 +573,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setEditingUser(null);
   };
 
-  // Send Notification / Broadcast
   const handleSendNotification = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!notiMessage.trim()) return;
@@ -512,7 +617,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onNotify('info', 'Notification ဖျက်ပြီးပါပြီ။');
   };
 
-  // Tournament & Room Management
   const handleCreateTournament = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tTitle.trim()) return;
@@ -541,7 +645,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     if (isFirebaseConfigured && db) {
       await setDoc(doc(db, 'tournaments', tid), { status }, { merge: true }).catch(() => {});
     }
-    await logAdminAction('TOURNAMENT_STATUS', `${tid} -> ${status}`);
     onNotify('success', `ပြိုင်ပွဲအခြေအနေ ${status.toUpperCase()} သို့ ပြောင်းပြီးပါပြီ။`);
   };
 
@@ -559,11 +662,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     const store = readServerlessStore();
     store.rooms = (store.rooms || []).filter((r: any) => r.id !== roomId);
     writeServerlessStore(store);
-    await logAdminAction('CLOSE_ROOM', `Closed room ${roomId}`);
     onNotify('info', 'အခန်းကို ပိတ်သိမ်းပြီးပါပြီ။');
   };
 
-  // Quiz Management
   const handleAddQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
     const opts = [newOpt0, newOpt1, newOpt2, newOpt3].map((s) => s.trim()).filter(Boolean);
@@ -603,7 +704,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onNotify('info', 'စိတ်ကြိုက်မေးခွန်း ဖျက်ပြီးပါပြီ။');
   };
 
-  // Save Branding CMS
   const handleSaveCms = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanCms = stripUndefined(cmsDraft);
@@ -615,14 +715,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onNotify('success', 'Branding နှင့် Website စာသားများ သိမ်းဆည်းပြီးပါပြီ!');
   };
 
-  // Export JSON Backup
   const handleExportBackup = () => {
     const dump = {
       exportedAt: new Date().toISOString(),
       project: firebaseProjectId,
       engineConfig,
-      usersCount: users.length,
       users,
+      reports,
       tournaments,
       customRiddles,
       notifications: notiHistory,
@@ -653,6 +752,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, [users, userSearch, userFilter, nowMs]);
 
+  const filteredReports = React.useMemo(() => {
+    return reports.filter((r) => {
+      const st = r.status || 'pending';
+      if (reportFilter === 'all') return true;
+      return st === reportFilter;
+    });
+  }, [reports, reportFilter]);
+
   const filteredQuizzes = React.useMemo(() => {
     const q = quizSearch.trim().toLowerCase();
     return allQuizzes.filter((r) => {
@@ -662,9 +769,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     });
   }, [allQuizzes, quizSearch, quizCatFilter]);
 
-  const navMenu: Array<{ id: AdminSection; label: string; icon: React.ReactNode; badge?: string | number }> = [
+  const navMenu: Array<{
+    id: AdminSection;
+    label: string;
+    icon: React.ReactNode;
+    badge?: string | number;
+    urgent?: boolean;
+  }> = [
     { id: 'overview', label: 'Overview', icon: <Activity className="w-4 h-4" /> },
     { id: 'users', label: 'Users & Devices', icon: <Users className="w-4 h-4" />, badge: users.length },
+    {
+      id: 'reports',
+      label: 'User Reports',
+      icon: <Flag className="w-4 h-4" />,
+      badge: pendingReportsCount || undefined,
+      urgent: pendingReportsCount > 0,
+    },
     { id: 'engine', label: 'Game Engine', icon: <Sliders className="w-4 h-4" /> },
     { id: 'tournaments', label: 'Tournaments & Rooms', icon: <Trophy className="w-4 h-4" />, badge: rooms.length || undefined },
     { id: 'quiz', label: 'ဉာဏ်စမ်းပဟေဠိ', icon: <BookOpen className="w-4 h-4" />, badge: allQuizzes.length },
@@ -680,13 +800,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="min-h-dvh-safe cyber-bg text-slate-100 flex flex-col">
-      {/* Top Executive Header */}
-      <header className="sticky top-0 z-30 border-b border-amber-500/25 bg-[#080c15]/95 backdrop-blur-md">
+      {/* Executive Header */}
+      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/95 backdrop-blur-md">
         <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-3 min-w-0">
             <div className="vanguard-brand-box px-2.5 py-1 rounded-lg text-xs sm:text-sm font-extrabold text-amber-300 flex items-center gap-1.5 shrink-0">
               <ShieldAlert className="w-4 h-4 text-amber-400" />
-              <span>VANGUARD MASTER ADMIN</span>
+              <span>VANGUARD ADMIN</span>
             </div>
 
             <div
@@ -697,9 +817,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               }`}
             >
               {cloudStatus === 'connected' ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
-              <span>
-                {cloudStatus === 'connected' ? `Cloud Live (${livePingMs}ms)` : 'Cloud Disconnected'}
-              </span>
+              <span>{cloudStatus === 'connected' ? `Cloud Live (${livePingMs}ms)` : 'Cloud Disconnected'}</span>
             </div>
 
             {engineConfig.maintenanceMode && (
@@ -732,7 +850,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </header>
 
-      {/* Mobile Scrollable Horizontal Nav Bar */}
+      {/* Mobile Nav */}
       <div className="lg:hidden sticky top-14 z-20 bg-[#090d16]/95 border-b border-white/10 px-3 py-2 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1.5 min-w-max">
           {navMenu.map((item) => (
@@ -749,7 +867,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
               {item.icon}
               <span>{item.label}</span>
               {item.badge !== undefined && (
-                <span className="px-1.5 py-0.2 rounded-full bg-white/10 text-[10px] font-mono">
+                <span
+                  className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                    item.urgent ? 'bg-rose-500 text-white font-extrabold' : 'bg-white/10'
+                  }`}
+                >
                   {item.badge}
                 </span>
               )}
@@ -758,9 +880,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </div>
       </div>
 
-      {/* Main Split Shell (Desktop Left Sidebar + Right Content Workspace) */}
+      {/* Main Layout */}
       <div className="flex-1 max-w-[1440px] w-full mx-auto px-3 sm:px-6 py-4 grid lg:grid-cols-12 gap-5 items-start">
-        {/* Desktop Sidebar */}
         <aside className="hidden lg:flex lg:col-span-3 xl:col-span-2 flex-col gap-2 sticky top-[4.5rem]">
           <div className="cyber-panel rounded-2xl p-2.5 space-y-1">
             {navMenu.map((item) => {
@@ -781,7 +902,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     <span className="truncate">{item.label}</span>
                   </span>
                   {item.badge !== undefined && (
-                    <span className="px-1.5 py-0.5 rounded-md bg-black/40 text-[10px] font-mono text-amber-300">
+                    <span
+                      className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                        item.urgent ? 'bg-rose-500 text-white font-extrabold' : 'bg-black/40 text-amber-300'
+                      }`}
+                    >
                       {item.badge}
                     </span>
                   )}
@@ -790,7 +915,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             })}
           </div>
 
-          {/* Admin Profile & Quick Backup Card */}
           <div className="cyber-panel rounded-2xl p-3.5 space-y-3 border border-white/10">
             <div className="flex items-center gap-2.5">
               <AvatarWithFrame
@@ -816,32 +940,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           </div>
         </aside>
 
-        {/* Right Workspace Content */}
         <section className="lg:col-span-9 xl:col-span-10 space-y-4 min-w-0">
-          {/* Cloud Error Alert if any */}
           {cloudStatus !== 'connected' && (
             <div className="p-3 rounded-2xl bg-rose-500/15 border border-rose-500/40 text-xs text-rose-200 flex items-center gap-2">
               <WifiOff className="w-4 h-4 text-rose-400 shrink-0" />
-              <span>
-                Firebase Cloud ချိတ်ဆက်မှု စစ်ဆေးပါ — {cloudErrText || 'firebase-applet-config.json နှင့် Firestore Rules စစ်ဆေးပါ'}
-              </span>
+              <span>Firebase Cloud Error: {cloudErrText || 'Check firebase-applet-config.json'}</span>
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 1: EXECUTIVE OVERVIEW & TELEMETRY
-          ========================================================== */}
+          {/* SECTION 1: OVERVIEW */}
           {section === 'overview' && (
             <div className="space-y-4">
-              {/* KPI Grid */}
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                 {[
                   { label: 'Total Players', val: users.length, accent: 'border-t-sky-400', sub: 'Registered' },
                   { label: 'Live Devices', val: liveCount, accent: 'border-t-emerald-400', sub: 'Online Now' },
+                  { label: 'Pending Reports', val: pendingReportsCount, accent: 'border-t-rose-500', sub: 'Needs Review' },
                   { label: 'Active Rooms', val: rooms.length, accent: 'border-t-amber-400', sub: 'Custom & PvP' },
-                  { label: 'Tournaments', val: tournaments.length, accent: 'border-t-indigo-400', sub: 'Brackets' },
                   { label: 'Quiz Bank', val: allQuizzes.length, accent: 'border-t-yellow-400', sub: 'ဉာဏ်စမ်းပဟေဠိ' },
-                  { label: 'Restricted', val: bannedCount, accent: 'border-t-rose-400', sub: 'Ban / Suspend' },
+                  { label: 'Restricted', val: bannedCount, accent: 'border-t-purple-400', sub: 'Ban / Suspend' },
                 ].map((kpi) => (
                   <div
                     key={kpi.label}
@@ -854,15 +971,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 ))}
               </div>
 
-              {/* Quick Master Controls + Live Audit Log */}
               <div className="grid md:grid-cols-12 gap-4">
                 <div className="md:col-span-5 cyber-panel rounded-2xl p-4 space-y-3">
                   <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                    <Power className="w-4 h-4" />
-                    <span>Quick Master Controls</span>
+                    <Power className="w-4 h-4" /> Quick Master Controls
                   </h3>
 
-                  <div className="p-3 rounded-xl bg-[#070b14] border border-white/10 flex items-center justify-between gap-3">
+                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-3">
                     <div>
                       <div className="text-xs font-bold text-white">Global Maintenance Mode</div>
                       <div className="text-[11px] text-slate-400">
@@ -885,28 +1000,28 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           : 'bg-emerald-500/20 border border-emerald-400/40 text-emerald-300'
                       }`}
                     >
-                      {engineConfig.maintenanceMode ? 'ON (Click to Open)' : 'LIVE (Click to Lock)'}
+                      {engineConfig.maintenanceMode ? 'ON' : 'LIVE'}
                     </button>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => setSection('noti')}
-                      className="p-3 rounded-xl bg-amber-500/10 hover:bg-amber-500/20 border border-amber-400/30 text-xs font-bold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                      onClick={() => setSection('reports')}
+                      className="p-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-400/35 text-xs font-bold text-rose-200 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Megaphone className="w-4 h-4" /> Broadcast Noti
+                      <Flag className="w-4 h-4" /> Reports ({pendingReportsCount})
                     </button>
                     <button
                       type="button"
-                      onClick={handleExportBackup}
-                      className="p-3 rounded-xl bg-sky-500/10 hover:bg-sky-500/20 border border-sky-400/30 text-xs font-bold text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                      onClick={() => setSection('noti')}
+                      className="p-3 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-xs font-bold text-amber-200 flex items-center justify-center gap-1.5 cursor-pointer"
                     >
-                      <Database className="w-4 h-4" /> Backup JSON
+                      <Megaphone className="w-4 h-4" /> Broadcast Noti
                     </button>
                   </div>
 
-                  <div className="p-3 rounded-xl bg-[#070b14] border border-white/10 text-[11px] space-y-1 text-slate-400">
+                  <div className="p-3 rounded-xl bg-[#070b13] border border-white/10 text-[11px] space-y-1 text-slate-400">
                     <div className="flex justify-between">
                       <span>Firebase Project:</span>
                       <span className="font-mono text-emerald-300">{firebaseProjectId || 'Local Mode'}</span>
@@ -917,19 +1032,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         +{engineConfig.xpRules.winXp} / +{engineConfig.xpRules.drawXp} / {engineConfig.xpRules.lossXp}
                       </span>
                     </div>
-                    <div className="flex justify-between">
-                      <span>Quiz per Match:</span>
-                      <span className="font-mono text-sky-300">{engineConfig.xpRules.quizCountPerMatch} Questions</span>
-                    </div>
                   </div>
                 </div>
 
-                {/* Audit Logs Feed */}
                 <div className="md:col-span-7 cyber-panel rounded-2xl p-4 space-y-3">
                   <h3 className="text-sm font-bold text-white flex items-center justify-between">
                     <span className="flex items-center gap-2">
-                      <Clock className="w-4 h-4 text-amber-400" />
-                      Recent Admin Audit Logs
+                      <Clock className="w-4 h-4 text-amber-400" /> Recent Admin Audit Logs
                     </span>
                     <span className="text-[11px] text-slate-400 font-mono">Latest {auditLogs.length}</span>
                   </h3>
@@ -940,7 +1049,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       auditLogs.map((log) => (
                         <div
                           key={log.id}
-                          className="px-3 py-2 rounded-xl bg-[#070b14] border border-white/5 flex items-center justify-between gap-2 text-xs"
+                          className="px-3 py-2 rounded-xl bg-[#070b13] border border-white/5 flex items-center justify-between gap-2 text-xs"
                         >
                           <div className="min-w-0 truncate">
                             <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 font-mono text-[10px] mr-2">
@@ -963,9 +1072,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 2: USERS & LIVE DEVICES MANAGEMENT
-          ========================================================== */}
+          {/* SECTION 2: USERS & DEVICES */}
           {section === 'users' && (
             <div className="cyber-panel rounded-2xl p-4 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -976,7 +1083,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       type="button"
                       onClick={() => setUserFilter(f)}
                       className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize cursor-pointer ${
-                        userFilter === f ? 'cyber-gold-active text-amber-200' : 'bg-[#070b14] text-slate-400 border border-white/10'
+                        userFilter === f ? 'cyber-gold-active text-amber-200' : 'bg-[#070b13] text-slate-400 border border-white/10'
                       }`}
                     >
                       {f === 'all' ? `All (${users.length})` : f === 'live' ? `🟢 Live (${liveCount})` : `🚫 Restricted (${bannedCount})`}
@@ -991,7 +1098,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     value={userSearch}
                     onChange={(e) => setUserSearch(e.target.value)}
                     placeholder="အမည် / ID / Device ရှာရန်..."
-                    className="w-full h-9 pl-9 pr-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                    className="w-full h-9 pl-9 pr-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                   />
                 </div>
               </div>
@@ -1088,21 +1195,171 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 3: GAME ENGINE, ECONOMY & MAINTENANCE CONTROLS
-          ========================================================== */}
+          {/* SECTION 3: USER REPORT MODERATION CENTER */}
+          {section === 'reports' && (
+            <div className="cyber-panel rounded-2xl p-4 space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                  <Flag className="w-4 h-4 text-rose-400" />
+                  <span>User-to-User Report Review Center ({reports.length})</span>
+                </h2>
+                <div className="flex gap-1.5">
+                  {(['pending', 'resolved', 'dismissed', 'all'] as const).map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setReportFilter(st)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold capitalize cursor-pointer ${
+                        reportFilter === st
+                          ? 'cyber-gold-active text-amber-200'
+                          : 'bg-[#070b13] text-slate-400 border border-white/10'
+                      }`}
+                    >
+                      {st}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {filteredReports.length === 0 ? (
+                <div className="py-12 text-center space-y-2">
+                  <CheckCircle2 className="w-10 h-10 text-emerald-400/60 mx-auto" />
+                  <div className="text-xs text-slate-400">
+                    ဤအမျိုးအစားအောက်တွင် စစ်ဆေးရန် Report မရှိပါ။
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-3 max-h-[68vh] overflow-y-auto pr-1">
+                  {filteredReports.map((rep) => {
+                    const isPending = (rep.status || 'pending') === 'pending';
+                    return (
+                      <div
+                        key={rep.id}
+                        className={`p-4 rounded-2xl bg-[#070b13] border space-y-3 ${
+                          isPending ? 'border-rose-500/40' : 'border-white/10 opacity-85'
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2 text-xs">
+                              <span className="px-2 py-0.5 rounded-full bg-rose-500/20 border border-rose-400/35 text-rose-200 font-bold">
+                                {rep.categoryLabel || rep.category || 'Violation'}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                                  isPending
+                                    ? 'bg-amber-500/20 text-amber-300'
+                                    : rep.status === 'resolved'
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-slate-700 text-slate-300'
+                                }`}
+                              >
+                                {rep.status || 'pending'}
+                              </span>
+                              <span className="text-[11px] font-mono text-slate-400">
+                                {new Date(rep.createdAtMs || Date.now()).toLocaleString()}
+                              </span>
+                            </div>
+
+                            <div className="text-xs text-slate-300">
+                              တိုင်ကြားသူ: <b className="text-sky-300">{rep.reporterName}</b>{' '}
+                              <span className="font-mono text-[11px] text-slate-400">({rep.reporterGameId})</span>
+                              {'  →  '}
+                              တိုင်ကြားခံရသူ: <b className="text-rose-300">{rep.targetName}</b>{' '}
+                              <span className="font-mono text-[11px] text-slate-400">({rep.targetGameId})</span>
+                            </div>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteReport(rep.id)}
+                            className="p-1.5 rounded-lg bg-white/5 hover:bg-rose-500/20 text-slate-400 hover:text-rose-300 cursor-pointer"
+                            title="Delete Record"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        <div className="p-3 rounded-xl bg-[#101728] border border-white/10 text-xs text-slate-100 leading-relaxed">
+                          {rep.detail || rep.reason}
+                        </div>
+
+                        {rep.adminAction && (
+                          <div className="text-[11px] text-emerald-300 font-semibold">
+                            ✓ Action Taken: {rep.adminAction} {rep.adminNote ? `— "${rep.adminNote}"` : ''}
+                          </div>
+                        )}
+
+                        {isPending && (
+                          <div className="space-y-2 pt-1 border-t border-white/10">
+                            <input
+                              type="text"
+                              value={adminReportNotes[rep.id] || ''}
+                              onChange={(e) =>
+                                setAdminReportNotes((prev) => ({ ...prev, [rep.id]: e.target.value }))
+                              }
+                              placeholder="Admin မှတ်ချက် / Warning စာသား (Optional)..."
+                              className="w-full h-9 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                            />
+
+                            <div className="flex flex-wrap gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleResolveReport(rep, 'warn')}
+                                className="px-3 py-1.5 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-[11px] font-bold text-amber-200 cursor-pointer"
+                              >
+                                ⚠️ Warn & Resolve
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveReport(rep, 'suspend24')}
+                                className="px-3 py-1.5 rounded-lg bg-orange-500/20 hover:bg-orange-500/30 border border-orange-400/40 text-[11px] font-bold text-orange-200 cursor-pointer"
+                              >
+                                ⏳ Suspend 24h
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveReport(rep, 'ban')}
+                                className="px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/35 border border-rose-500/40 text-[11px] font-bold text-rose-200 flex items-center gap-1 cursor-pointer"
+                              >
+                                <Ban className="w-3 h-3" /> Ban Account
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveReport(rep, 'resolve')}
+                                className="px-3 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-[11px] font-bold text-emerald-300 cursor-pointer"
+                              >
+                                ✓ Mark Resolved
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleResolveReport(rep, 'dismiss')}
+                                className="px-3 py-1.5 rounded-lg bg-white/10 hover:bg-white/15 text-[11px] font-semibold text-slate-300 cursor-pointer"
+                              >
+                                ✕ Dismiss
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* SECTION 4: GAME ENGINE */}
           {section === 'engine' && (
             <div className="space-y-4">
-              {/* Maintenance Mode Card */}
               <div className="cyber-panel rounded-2xl p-4 space-y-3 border border-amber-500/25">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                      <Wrench className="w-4 h-4 text-amber-400" />
-                      Global Maintenance Mode (ဂိမ်းတစ်ခုလုံး ယာယီပိတ်/ဖွင့်)
+                      <Wrench className="w-4 h-4 text-amber-400" /> Global Maintenance Mode
                     </h3>
                     <p className="text-xs text-slate-400 mt-0.5">
-                      ဖွင့်ထားချိန်တွင် သာမန် Player များ ဂိမ်းဝင်မရတော့ဘဲ အောက်ပါ ကြေညာစာသားကိုသာ မြင်ရပါမည်။
+                      ဖွင့်ထားချိန်တွင် သာမန် Player များ ဂိမ်းဝင်မရတော့ဘဲ Maintenance Screen ကိုသာ မြင်ရပါမည်။
                     </p>
                   </div>
                   <button
@@ -1111,9 +1368,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       setEngineConfig((prev) => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))
                     }
                     className={`px-4 py-2 rounded-xl text-xs font-extrabold cursor-pointer shrink-0 ${
-                      engineConfig.maintenanceMode
-                        ? 'bg-amber-500 text-slate-950'
-                        : 'bg-white/10 text-slate-300'
+                      engineConfig.maintenanceMode ? 'bg-amber-500 text-slate-950' : 'bg-white/10 text-slate-300'
                     }`}
                   >
                     {engineConfig.maintenanceMode ? 'ENABLED' : 'DISABLED'}
@@ -1122,19 +1377,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <input
                   type="text"
                   value={engineConfig.maintenanceMessage}
-                  onChange={(e) =>
-                    setEngineConfig((prev) => ({ ...prev, maintenanceMessage: e.target.value }))
-                  }
-                  className="w-full h-10 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  placeholder="Maintenance Message..."
+                  onChange={(e) => setEngineConfig((prev) => ({ ...prev, maintenanceMessage: e.target.value }))}
+                  className="w-full h-10 px-3.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                 />
               </div>
 
-              {/* Feature & Game Locks */}
               <div className="cyber-panel rounded-2xl p-4 space-y-3">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Lock className="w-4 h-4 text-amber-400" />
-                  ဂိမ်းနှင့် စနစ်တစ်ခုချင်းစီ လော့ခ်ချ/ဖွင့် (Real-Time Feature Locks)
+                  <Lock className="w-4 h-4 text-amber-400" /> Feature & Game Locks
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
                   {[
@@ -1158,7 +1408,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                             featureLocks: { ...prev.featureLocks, [item.id]: !locked },
                           }))
                         }
-                        className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs font-bold cursor-pointer transition-all ${
+                        className={`p-3 rounded-xl border flex items-center justify-between gap-2 text-xs font-bold cursor-pointer ${
                           locked
                             ? 'bg-rose-500/15 border-rose-500/40 text-rose-200'
                             : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-200'
@@ -1172,11 +1422,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
               </div>
 
-              {/* XP Economy & Matchmaking Tuning */}
               <div className="cyber-panel rounded-2xl p-4 space-y-3">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Sliders className="w-4 h-4 text-amber-400" />
-                  XP Economy နှင့် Matchmaking ချိန်ညှိမှု
+                  <Sliders className="w-4 h-4 text-amber-400" /> XP Economy & Matchmaking Tuning
                 </h3>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div>
@@ -1185,12 +1433,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       type="number"
                       value={engineConfig.xpRules.winXp}
                       onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          xpRules: { ...p.xpRules, winXp: Number(e.target.value) },
-                        }))
+                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, winXp: Number(e.target.value) } }))
                       }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-emerald-300"
+                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-emerald-300"
                     />
                   </div>
                   <div>
@@ -1199,12 +1444,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       type="number"
                       value={engineConfig.xpRules.drawXp}
                       onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          xpRules: { ...p.xpRules, drawXp: Number(e.target.value) },
-                        }))
+                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, drawXp: Number(e.target.value) } }))
                       }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-sky-300"
+                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-sky-300"
                     />
                   </div>
                   <div>
@@ -1213,12 +1455,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                       type="number"
                       value={engineConfig.xpRules.lossXp}
                       onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          xpRules: { ...p.xpRules, lossXp: Number(e.target.value) },
-                        }))
+                        setEngineConfig((p) => ({ ...p, xpRules: { ...p.xpRules, lossXp: Number(e.target.value) } }))
                       }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-rose-300"
+                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-rose-300"
                     />
                   </div>
                   <div>
@@ -1231,51 +1470,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                           xpRules: { ...p.xpRules, quizCountPerMatch: Number(e.target.value) },
                         }))
                       }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                      className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                     >
                       <option value={5}>5 Questions</option>
                       <option value={10}>10 Questions</option>
                       <option value={15}>15 Questions</option>
                       <option value={20}>20 Questions</option>
                     </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Bot Fallback (Sec)</label>
-                    <input
-                      type="number"
-                      min={3}
-                      max={60}
-                      value={engineConfig.matchmakingSettings.botFallbackSec}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          matchmakingSettings: {
-                            ...p.matchmakingSettings,
-                            botFallbackSec: Number(e.target.value),
-                          },
-                        }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Turn Timer (Sec)</label>
-                    <input
-                      type="number"
-                      min={10}
-                      max={60}
-                      value={engineConfig.matchmakingSettings.defaultTurnTime}
-                      onChange={(e) =>
-                        setEngineConfig((p) => ({
-                          ...p,
-                          matchmakingSettings: {
-                            ...p.matchmakingSettings,
-                            defaultTurnTime: Number(e.target.value),
-                          },
-                        }))
-                      }
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-white"
-                    />
                   </div>
                 </div>
 
@@ -1285,39 +1486,34 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   onClick={() =>
                     persistEngineConfig(engineConfig, 'Game Engine နှင့် Economy စည်းမျဉ်းများ အသက်သွင်းပြီးပါပြီ!')
                   }
-                  className="w-full sm:w-auto px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
+                  className="px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-2 cursor-pointer"
                 >
-                  <Save className="w-4 h-4" />
-                  <span>{savingConfig ? 'Saving...' : 'Save & Apply Live to All Players'}</span>
+                  <Save className="w-4 h-4" /> Save & Apply Live
                 </button>
               </div>
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 4: TOURNAMENTS & LIVE ROOMS MONITOR
-          ========================================================== */}
+          {/* SECTION 5: TOURNAMENTS & ROOMS */}
           {section === 'tournaments' && (
             <div className="grid md:grid-cols-12 gap-4">
-              {/* Tournament Manager */}
               <div className="md:col-span-7 cyber-panel rounded-2xl p-4 space-y-4">
                 <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <Trophy className="w-4 h-4" /> Knockout Tournament Creator & Manager
+                  <Trophy className="w-4 h-4" /> Knockout Tournament Manager
                 </h3>
-
                 <form onSubmit={handleCreateTournament} className="grid sm:grid-cols-12 gap-2">
                   <input
                     type="text"
                     required
                     value={tTitle}
                     onChange={(e) => setTTitle(e.target.value)}
-                    placeholder="ပြိုင်ပွဲအမည် (ဥပမာ - MyanRena Grand Cup)"
-                    className="sm:col-span-5 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                    placeholder="ပြိုင်ပွဲအမည်..."
+                    className="sm:col-span-5 h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                   />
                   <select
                     value={tGame}
                     onChange={(e) => setTGame(e.target.value)}
-                    className="sm:col-span-3 h-10 px-2 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                    className="sm:col-span-3 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                   >
                     <option value="connect4">Connect 4</option>
                     <option value="tictactoe">Tic-Tac-Toe</option>
@@ -1327,7 +1523,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                   <select
                     value={tBracket}
                     onChange={(e) => setTBracket(Number(e.target.value) as 8 | 16 | 32)}
-                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                   >
                     <option value={8}>8P</option>
                     <option value={16}>16P</option>
@@ -1337,8 +1533,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     type="number"
                     value={tPrizeXp}
                     onChange={(e) => setTPrizeXp(Number(e.target.value))}
-                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-amber-300"
-                    title="Prize XP"
+                    className="sm:col-span-2 h-10 px-2 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-amber-300"
                   />
                   <button
                     type="submit"
@@ -1349,52 +1544,46 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </form>
 
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {tournaments.length === 0 ? (
-                    <div className="text-xs text-slate-500 text-center py-6">ပြိုင်ပွဲ ဖန်တီးထားခြင်း မရှိသေးပါ။</div>
-                  ) : (
-                    tournaments.map((tr) => (
-                      <div
-                        key={tr.id}
-                        className="p-3 rounded-xl bg-[#070b14] border border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs"
-                      >
-                        <div>
-                          <div className="font-bold text-white">{tr.title}</div>
-                          <div className="text-[11px] text-slate-400 font-mono">
-                            {tr.gameType} · {(tr.participants || []).length}/{tr.bracketSize} Players · Prize +{tr.prizeXp} XP
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          {(['open', 'ongoing', 'completed'] as const).map((st) => (
-                            <button
-                              key={st}
-                              type="button"
-                              onClick={() => handleTournamentStatus(tr.id, st)}
-                              className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase cursor-pointer ${
-                                tr.status === st ? 'bg-amber-500 text-slate-950' : 'bg-white/5 text-slate-400'
-                              }`}
-                            >
-                              {st}
-                            </button>
-                          ))}
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTournament(tr.id)}
-                            className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300 cursor-pointer"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
+                  {tournaments.map((tr) => (
+                    <div
+                      key={tr.id}
+                      className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex flex-wrap items-center justify-between gap-2 text-xs"
+                    >
+                      <div>
+                        <div className="font-bold text-white">{tr.title}</div>
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          {tr.gameType} · {(tr.participants || []).length}/{tr.bracketSize}P · +{tr.prizeXp} XP
                         </div>
                       </div>
-                    ))
-                  )}
+                      <div className="flex items-center gap-1.5">
+                        {(['open', 'ongoing', 'completed'] as const).map((st) => (
+                          <button
+                            key={st}
+                            type="button"
+                            onClick={() => handleTournamentStatus(tr.id, st)}
+                            className={`px-2 py-1 rounded-lg text-[10px] font-bold uppercase cursor-pointer ${
+                              tr.status === st ? 'bg-amber-500 text-slate-950' : 'bg-white/5 text-slate-400'
+                            }`}
+                          >
+                            {st}
+                          </button>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTournament(tr.id)}
+                          className="p-1.5 rounded-lg bg-rose-500/20 text-rose-300 cursor-pointer"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {/* Live Active Rooms Monitor */}
               <div className="md:col-span-5 cyber-panel rounded-2xl p-4 space-y-3">
                 <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Swords className="w-4 h-4 text-sky-400" />
-                  Live Active Rooms ({rooms.length})
+                  <Swords className="w-4 h-4 text-sky-400" /> Live Active Rooms ({rooms.length})
                 </h3>
                 <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
                   {rooms.length === 0 ? (
@@ -1403,20 +1592,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     rooms.map((rm) => (
                       <div
                         key={rm.id}
-                        className="p-3 rounded-xl bg-[#070b14] border border-white/10 flex items-center justify-between gap-2 text-xs"
+                        className="p-3 rounded-xl bg-[#070b13] border border-white/10 flex items-center justify-between gap-2 text-xs"
                       >
                         <div className="min-w-0">
                           <div className="font-mono font-bold text-amber-300">
                             {rm.code} <span className="text-white font-sans">({rm.gameType})</span>
                           </div>
                           <div className="text-[11px] text-slate-400">
-                            Players: {(rm.players || []).length}/{rm.maxPlayers || 8} · Status: {rm.status}
+                            Players: {(rm.players || []).length}/{rm.maxPlayers || 8} · {rm.status}
                           </div>
                         </div>
                         <button
                           type="button"
                           onClick={() => handleCloseRoom(rm.id)}
-                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-[11px] font-bold text-rose-300 cursor-pointer shrink-0"
+                          className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 text-[11px] font-bold text-rose-300 cursor-pointer"
                         >
                           Close
                         </button>
@@ -1428,23 +1617,20 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 5: ဉာဏ်စမ်းပဟေဠိ (100+ QUIZ BANK CMS)
-          ========================================================== */}
+          {/* SECTION 6: QUIZ BANK */}
           {section === 'quiz' && (
             <div className="cyber-panel rounded-2xl p-4 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
-                  <BookOpen className="w-4 h-4" />
-                  ဉာဏ်စမ်းပဟေဠိ မေးခွန်းဘဏ် (စုစုပေါင်း {allQuizzes.length} ပုဒ်)
+                  <BookOpen className="w-4 h-4" /> ဉာဏ်စမ်းပဟေဠိ မေးခွန်းဘဏ် ({allQuizzes.length} ပုဒ်)
                 </h3>
                 <div className="flex gap-2">
                   <select
                     value={quizCatFilter}
                     onChange={(e) => setQuizCatFilter(e.target.value as any)}
-                    className="h-9 px-2.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                    className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                   >
-                    <option value="all">All Categories</option>
+                    <option value="all">All</option>
                     <option value="riddle">စကားထာ</option>
                     <option value="myanmar">မြန်မာ့ဗဟုသုတ</option>
                     <option value="science">သိပ္ပံ</option>
@@ -1454,13 +1640,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     type="text"
                     value={quizSearch}
                     onChange={(e) => setQuizSearch(e.target.value)}
-                    placeholder="မေးခွန်း ရှာရန်..."
-                    className="h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white w-44"
+                    placeholder="ရှာရန်..."
+                    className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white w-40"
                   />
                 </div>
               </div>
 
-              <form onSubmit={handleAddQuiz} className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 space-y-2.5">
+              <form onSubmit={handleAddQuiz} className="p-3.5 rounded-xl bg-[#070b13] border border-white/10 space-y-2.5">
                 <div className="grid sm:grid-cols-12 gap-2">
                   <input
                     type="text"
@@ -1488,7 +1674,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div className="flex items-center gap-2 text-xs text-slate-300">
-                    <span>အဖြေမှန် နံပါတ်:</span>
+                    <span>အဖြေမှန်:</span>
                     {[0, 1, 2, 3].map((idx) => (
                       <button
                         key={idx}
@@ -1506,7 +1692,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     type="submit"
                     className="h-9 px-5 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Plus className="w-3.5 h-3.5" /> မေးခွန်းအသစ် ထည့်မည်
+                    <Plus className="w-3.5 h-3.5" /> ထည့်မည်
                   </button>
                 </div>
               </form>
@@ -1515,20 +1701,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 {filteredQuizzes.map((r, i) => (
                   <div
                     key={r.id || i}
-                    className="p-2.5 rounded-xl bg-[#070b14] border border-white/5 flex items-center justify-between gap-2 text-xs"
+                    className="p-2.5 rounded-xl bg-[#070b13] border border-white/5 flex items-center justify-between gap-2 text-xs"
                   >
                     <div className="min-w-0 truncate">
                       <span className="text-amber-400 font-mono mr-2">#{i + 1}</span>
                       <span className="text-white">{r.question}</span>
-                      <span className="text-emerald-400 ml-2 font-semibold">
-                        ✓ {r.options?.[r.answerIndex]}
-                      </span>
+                      <span className="text-emerald-400 ml-2 font-semibold">✓ {r.options?.[r.answerIndex]}</span>
                     </div>
                     {String(r.id).startsWith('custom_') && (
                       <button
                         type="button"
                         onClick={() => handleDeleteQuiz(r.id)}
-                        className="text-rose-400 hover:text-rose-300 cursor-pointer shrink-0"
+                        className="text-rose-400 cursor-pointer shrink-0"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1539,100 +1723,77 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 6: REAL-TIME NOTIFICATION & BROADCAST CENTER
-          ========================================================== */}
+          {/* SECTION 7: NOTIFICATIONS */}
           {section === 'noti' && (
             <div className="grid md:grid-cols-2 gap-4">
               <form onSubmit={handleSendNotification} className="cyber-panel rounded-2xl p-4 space-y-3">
                 <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
                   <Megaphone className="w-4 h-4" /> Real-Time Notification & Broadcast
                 </h3>
-
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">လက်ခံမည့်သူ</label>
-                  <select
-                    value={notiTarget}
-                    onChange={(e) => setNotiTarget(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  >
-                    <option value="ALL">📢 User အားလုံးထံ (Broadcast to ALL)</option>
-                    {users
-                      .filter((u) => u.role !== 'admin')
-                      .map((u) => (
-                        <option key={u.id} value={u.id}>
-                          👤 {u.displayName} ({u.gameId}) {isUserLiveNow(u) ? '🟢 LIVE' : ''}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-
+                <select
+                  value={notiTarget}
+                  onChange={(e) => setNotiTarget(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                >
+                  <option value="ALL">📢 User အားလုံးထံ (Broadcast to ALL)</option>
+                  {users
+                    .filter((u) => u.role !== 'admin')
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        👤 {u.displayName} ({u.gameId}) {isUserLiveNow(u) ? '🟢 LIVE' : ''}
+                      </option>
+                    ))}
+                </select>
                 <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">အမျိုးအစား</label>
-                    <select
-                      value={notiType}
-                      onChange={(e) => setNotiType(e.target.value as any)}
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                    >
-                      <option value="broadcast">📢 ကြေညာချက်</option>
-                      <option value="message">💬 တိုက်ရိုက်စာ</option>
-                      <option value="warning">⚠️ သတိပေးချက်</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-400 mb-1">ခေါင်းစဉ်</label>
-                    <input
-                      type="text"
-                      value={notiTitle}
-                      onChange={(e) => setNotiTitle(e.target.value)}
-                      className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                    />
-                  </div>
+                  <select
+                    value={notiType}
+                    onChange={(e) => setNotiType(e.target.value as any)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                  >
+                    <option value="broadcast">📢 ကြေညာချက်</option>
+                    <option value="message">💬 တိုက်ရိုက်စာ</option>
+                    <option value="warning">⚠️ သတိပေးချက်</option>
+                  </select>
+                  <input
+                    type="text"
+                    value={notiTitle}
+                    onChange={(e) => setNotiTitle(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                  />
                 </div>
-
                 <textarea
                   rows={4}
                   required
                   value={notiMessage}
                   onChange={(e) => setNotiMessage(e.target.value)}
                   placeholder="User များထံ ချက်ချင်းပြသမည့် စာသား ရေးပါ..."
-                  className="w-full p-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                  className="w-full p-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
                 />
-
                 <button
                   type="submit"
                   disabled={sendingNoti}
                   className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Send className="w-4 h-4" />
-                  <span>{sendingNoti ? 'ပေးပို့နေသည်...' : 'Real-Time ချက်ချင်းပို့မည်'}</span>
+                  <Send className="w-4 h-4" /> Real-Time ချက်ချင်းပို့မည်
                 </button>
               </form>
 
               <div className="cyber-panel rounded-2xl p-4 space-y-3">
-                <h3 className="text-sm font-bold text-white">
-                  Sent Notification History ({notiHistory.length})
-                </h3>
+                <h3 className="text-sm font-bold text-white">Sent History ({notiHistory.length})</h3>
                 <div className="space-y-2 max-h-80 overflow-y-auto pr-1">
                   {notiHistory.map((n) => (
                     <div
                       key={n.id}
-                      className="p-3 rounded-xl bg-[#070b14] border border-white/10 text-xs flex items-start justify-between gap-2"
+                      className="p-3 rounded-xl bg-[#070b13] border border-white/10 text-xs flex items-start justify-between gap-2"
                     >
                       <div className="space-y-1 min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span className="font-bold text-amber-300">{n.title}</span>
-                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-slate-300">
-                            {n.targetUserId === 'ALL' ? 'ALL' : n.targetUserId}
-                          </span>
-                        </div>
+                        <div className="font-bold text-amber-300">{n.title}</div>
                         <p className="text-slate-200">{n.message}</p>
                       </div>
                       <button
                         type="button"
                         onClick={() => handleDeleteNotification(n.id)}
-                        className="text-rose-400 hover:text-rose-300 cursor-pointer shrink-0"
+                        className="text-rose-400 cursor-pointer shrink-0"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -1643,54 +1804,42 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             </div>
           )}
 
-          {/* ==========================================================
-              SECTION 7: BRANDING & LANDING CMS
-          ========================================================== */}
+          {/* SECTION 8: BRANDING CMS */}
           {section === 'cms' && (
             <form onSubmit={handleSaveCms} className="cyber-panel rounded-2xl p-4 space-y-4">
               <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
                 <Palette className="w-4 h-4" /> Website Branding & Bilingual Text CMS
               </h3>
-
               <div className="grid md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Hero Title (မြန်မာ)</label>
-                  <input
-                    type="text"
-                    value={cmsDraft.heroTitleMy || ''}
-                    onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleMy: e.target.value })}
-                    className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Hero Title (English)</label>
-                  <input
-                    type="text"
-                    value={cmsDraft.heroTitleEn || ''}
-                    onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleEn: e.target.value })}
-                    className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Hero Subtitle (မြန်မာ)</label>
-                  <textarea
-                    rows={2}
-                    value={cmsDraft.heroSubtitleMy || ''}
-                    onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleMy: e.target.value })}
-                    className="w-full p-2.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-400 mb-1">Hero Subtitle (English)</label>
-                  <textarea
-                    rows={2}
-                    value={cmsDraft.heroSubtitleEn || ''}
-                    onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleEn: e.target.value })}
-                    className="w-full p-2.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  />
-                </div>
+                <input
+                  type="text"
+                  value={cmsDraft.heroTitleMy || ''}
+                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleMy: e.target.value })}
+                  placeholder="Hero Title (MY)"
+                  className="h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                />
+                <input
+                  type="text"
+                  value={cmsDraft.heroTitleEn || ''}
+                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroTitleEn: e.target.value })}
+                  placeholder="Hero Title (EN)"
+                  className="h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                />
+                <textarea
+                  rows={2}
+                  value={cmsDraft.heroSubtitleMy || ''}
+                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleMy: e.target.value })}
+                  placeholder="Subtitle (MY)"
+                  className="p-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                />
+                <textarea
+                  rows={2}
+                  value={cmsDraft.heroSubtitleEn || ''}
+                  onChange={(e) => setCmsDraft({ ...cmsDraft, heroSubtitleEn: e.target.value })}
+                  placeholder="Subtitle (EN)"
+                  className="p-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white"
+                />
               </div>
-
               <button
                 type="submit"
                 className="px-6 h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-2 cursor-pointer"
@@ -1702,9 +1851,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         </section>
       </div>
 
-      {/* ==========================================================
-          FULL PLAYER EDITOR & MODERATION MODAL
-      ========================================================== */}
+      {/* Player Editor Modal */}
       <AnimatePresence>
         {editingUser && (
           <motion.div
@@ -1720,178 +1867,75 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
             >
               <div className="flex items-center justify-between border-b border-white/10 pb-3">
                 <div className="flex items-center gap-2.5">
-                  <AvatarWithFrame
-                    avatarUrl={editingUser.avatarUrl}
-                    frameId={editDraft.frameId}
-                    displayName={editDraft.displayName}
-                    size="sm"
-                  />
+                  <AvatarWithFrame avatarUrl={editingUser.avatarUrl} frameId={editDraft.frameId} displayName={editDraft.displayName} size="sm" />
                   <div>
                     <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
-                      <Edit3 className="w-3.5 h-3.5 text-amber-400" />
-                      {editingUser.displayName}
+                      <Edit3 className="w-3.5 h-3.5 text-amber-400" /> {editingUser.displayName}
                     </h3>
-                    <div className="text-[11px] font-mono text-amber-400">
-                      {editingUser.gameId} · @{editingUser.username}
-                    </div>
+                    <div className="text-[11px] font-mono text-amber-400">{editingUser.gameId} · @{editingUser.username}</div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setEditingUser(null)}
-                  className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
-                >
+                <button type="button" onClick={() => setEditingUser(null)} className="w-8 h-8 rounded-lg bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer">
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
               {editingUser.recoveryPin && (
-                <div className="p-2.5 rounded-xl bg-[#070b14] border border-amber-400/25 flex items-center justify-between text-xs">
-                  <span className="text-slate-400 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-amber-400" /> Backup Recovery PIN:
-                  </span>
-                  <span className="font-mono font-bold text-amber-300 tracking-widest">
-                    {editingUser.recoveryPin}
-                  </span>
+                <div className="p-2.5 rounded-xl bg-[#070b13] border border-amber-400/25 flex items-center justify-between text-xs">
+                  <span className="text-slate-400 flex items-center gap-1.5"><KeyRound className="w-3.5 h-3.5 text-amber-400" /> Recovery PIN:</span>
+                  <span className="font-mono font-bold text-amber-300 tracking-widest">{editingUser.recoveryPin}</span>
                 </div>
               )}
 
               <form onSubmit={handleSavePlayerEdit} className="space-y-3">
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Display Name</label>
-                    <input
-                      type="text"
-                      value={editDraft.displayName}
-                      onChange={(e) => setEditDraft({ ...editDraft, displayName: e.target.value })}
-                      className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">XP (Auto Rank)</label>
-                    <input
-                      type="number"
-                      value={editDraft.xp}
-                      onChange={(e) => setEditDraft({ ...editDraft, xp: Number(e.target.value) })}
-                      className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-amber-300"
-                    />
-                  </div>
+                  <input type="text" value={editDraft.displayName} onChange={(e) => setEditDraft({ ...editDraft, displayName: e.target.value })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white" />
+                  <input type="number" value={editDraft.xp} onChange={(e) => setEditDraft({ ...editDraft, xp: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-amber-300" />
                 </div>
-
                 <div className="grid grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Wins</label>
-                    <input
-                      type="number"
-                      value={editDraft.wins}
-                      onChange={(e) => setEditDraft({ ...editDraft, wins: Number(e.target.value) })}
-                      className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-emerald-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Losses</label>
-                    <input
-                      type="number"
-                      value={editDraft.losses}
-                      onChange={(e) => setEditDraft({ ...editDraft, losses: Number(e.target.value) })}
-                      className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-rose-300"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Draws</label>
-                    <input
-                      type="number"
-                      value={editDraft.draws}
-                      onChange={(e) => setEditDraft({ ...editDraft, draws: Number(e.target.value) })}
-                      className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs font-mono text-sky-300"
-                    />
-                  </div>
+                  <input type="number" value={editDraft.wins} onChange={(e) => setEditDraft({ ...editDraft, wins: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-emerald-300" />
+                  <input type="number" value={editDraft.losses} onChange={(e) => setEditDraft({ ...editDraft, losses: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-rose-300" />
+                  <input type="number" value={editDraft.draws} onChange={(e) => setEditDraft({ ...editDraft, draws: Number(e.target.value) })} className="h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs font-mono text-sky-300" />
                 </div>
-
                 <div className="grid grid-cols-2 gap-2.5">
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Profile Frame</label>
-                    <select
-                      value={editDraft.frameId}
-                      onChange={(e) => setEditDraft({ ...editDraft, frameId: e.target.value })}
-                      className="w-full h-9 px-2.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                    >
-                      {SVG_FRAME_TEMPLATES.map((f) => (
-                        <option key={f.id} value={f.id}>
-                          {f.badgeIcon} {f.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-slate-400 mb-1">Account Status</label>
-                    <select
-                      value={editDraft.status}
-                      onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })}
-                      className="w-full h-9 px-2.5 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                    >
-                      <option value="active">🟢 Active</option>
-                      <option value="warned">⚠️ Warned</option>
-                      <option value="suspended">⏳ Suspended</option>
-                      <option value="banned">🚫 Banned</option>
-                    </select>
-                  </div>
+                  <select value={editDraft.frameId} onChange={(e) => setEditDraft({ ...editDraft, frameId: e.target.value })} className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white">
+                    {SVG_FRAME_TEMPLATES.map((f) => (
+                      <option key={f.id} value={f.id}>{f.badgeIcon} {f.name}</option>
+                    ))}
+                  </select>
+                  <select value={editDraft.status} onChange={(e) => setEditDraft({ ...editDraft, status: e.target.value })} className="h-9 px-2.5 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white">
+                    <option value="active">🟢 Active</option>
+                    <option value="warned">⚠️ Warned</option>
+                    <option value="suspended">⏳ Suspended</option>
+                    <option value="banned">🚫 Banned</option>
+                  </select>
                 </div>
+                <input type="text" value={editDraft.newPassword} onChange={(e) => setEditDraft({ ...editDraft, newPassword: e.target.value })} placeholder="Reset Password (Optional, min 4 chars)" className="w-full h-9 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white" />
 
-                <div>
-                  <label className="block text-[11px] text-slate-400 mb-1">
-                    Reset Password (Optional — leave blank to keep current)
-                  </label>
-                  <input
-                    type="text"
-                    value={editDraft.newPassword}
-                    onChange={(e) => setEditDraft({ ...editDraft, newPassword: e.target.value })}
-                    placeholder="စကားဝှက်အသစ် (အနည်းဆုံး ၄ လုံး)"
-                    className="w-full h-9 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
-                  />
-                </div>
-
-                {/* Timed Suspend Buttons */}
                 {editingUser.role !== 'admin' && (
-                  <div className="space-y-1.5 pt-1">
-                    <div className="text-[11px] text-slate-400">Timed Quick Suspend:</div>
-                    <div className="grid grid-cols-4 gap-1.5">
-                      {[
-                        { label: '15m', m: 15 },
-                        { label: '1h', m: 60 },
-                        { label: '24h', m: 1440 },
-                        { label: '7d', m: 10080 },
-                      ].map((opt) => (
-                        <button
-                          key={opt.label}
-                          type="button"
-                          onClick={() => handleTimedSuspend(editingUser, opt.m)}
-                          className="py-1.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/30 text-[11px] font-bold text-amber-200 cursor-pointer"
-                        >
-                          {opt.label}
-                        </button>
-                      ))}
-                    </div>
+                  <div className="grid grid-cols-4 gap-1.5">
+                    {[
+                      { label: '15m', m: 15 },
+                      { label: '1h', m: 60 },
+                      { label: '24h', m: 1440 },
+                      { label: '7d', m: 10080 },
+                    ].map((opt) => (
+                      <button key={opt.label} type="button" onClick={() => handleTimedSuspend(editingUser, opt.m)} className="py-1.5 rounded-lg bg-amber-500/15 text-[11px] font-bold text-amber-200 cursor-pointer">
+                        Suspend {opt.label}
+                      </button>
+                    ))}
                   </div>
                 )}
 
                 <div className="flex items-center justify-between gap-2 pt-2 border-t border-white/10">
                   {editingUser.role !== 'admin' ? (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteUser(editingUser)}
-                      className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/30 text-xs font-bold text-rose-300 flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" /> Delete Account
+                    <button type="button" onClick={() => handleDeleteUser(editingUser)} className="px-3 py-2 rounded-xl bg-rose-500/15 text-xs font-bold text-rose-300 flex items-center gap-1 cursor-pointer">
+                      <Trash2 className="w-3.5 h-3.5" /> Delete
                     </button>
                   ) : (
                     <span />
                   )}
-
-                  <button
-                    type="submit"
-                    className="px-5 h-10 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
-                  >
+                  <button type="submit" className="px-5 h-10 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer">
                     <Save className="w-4 h-4" /> Save Changes
                   </button>
                 </div>
