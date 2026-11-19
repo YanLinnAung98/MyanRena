@@ -1,57 +1,40 @@
 import React from 'react';
 import {
-  Activity,
-  AlertTriangle,
+  collection,
+  deleteDoc,
+  doc,
+  onSnapshot,
+  setDoc,
+  updateDoc,
+} from 'firebase/firestore';
+import {
   Ban,
+  Bell,
   BookOpen,
   CheckCircle2,
-  Clock,
-  Download,
-  Edit3,
-  FileWarning,
   Gamepad2,
-  ImagePlus,
-  LayoutTemplate,
   Lock,
   LogOut,
   Megaphone,
-  MessageSquare,
-  Play,
+  Monitor,
   Plus,
-  RefreshCw,
-  Search,
+  Send,
   ShieldAlert,
+  Smartphone,
+  Tablet,
   Trash2,
   Trophy,
   Unlock,
-  UserX,
+  Users,
   Wifi,
+  WifiOff,
 } from 'lucide-react';
-import { TRANSLATIONS } from '../i18n/translations.ts';
-import type {
-  Announcement,
-  FeatureLocks,
-  GameType,
-  LandingContent,
-  Language,
-  MatchmakingSettings,
-  PlayerReport,
-  ProfileFrame,
-  SakarRiddle,
-  Tournament,
-  TurnTimeLimit,
-  UserProfile,
-} from '../types.ts';
-import { downloadSampleFrameTemplate } from '../utils/frameTemplate.ts';
+import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
+import { db, firebaseInitError, firebaseProjectId, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
+import { broadcastLocalSync, readServerlessStore, SYNC_CHANNEL_NAME, writeServerlessStore } from '../lib/serverlessApi.ts';
+import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { LanguageSwitcher } from './LanguageSwitcher.tsx';
-
-interface AdminUserRow extends UserProfile {
-  isOnline: boolean;
-  deviceCount: number;
-  pingMs: number;
-  inMatch: boolean;
-}
 
 interface AdminPanelProps {
   token: string;
@@ -61,1934 +44,664 @@ interface AdminPanelProps {
   onChangeLang: (lang: Language) => void;
   onSwitchToLobby: () => void;
   landingContent: LandingContent;
-  onLandingUpdated: (next: LandingContent) => void;
+  onLandingUpdated: (content: LandingContent) => void;
   onLogout: () => void;
-  onNotify: (level: 'info' | 'error' | 'success', msg: string) => void;
+  onNotify: (level: string, message: string) => void;
 }
 
-function defaultLocalDatetimeValue(): string {
-  const d = new Date(Date.now() + 15 * 60_000);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
+type AdminTab = 'users' | 'noti' | 'quiz' | 'controls';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
-  token,
-  adminUser,
   livePingMs,
   lang,
   onChangeLang,
   onSwitchToLobby,
-  landingContent,
-  onLandingUpdated,
   onLogout,
   onNotify,
 }) => {
-  const t = TRANSLATIONS[lang];
-  const [activeTab, setActiveTab] = React.useState<
-    'telemetry' | 'users' | 'reports' | 'locks' | 'tournaments' | 'frames' | 'cms' | 'riddles'
-  >('telemetry');
-  const [telemetry, setTelemetry] = React.useState({
-    totalUsers: 0,
-    onlineUsers: 0,
-    activeDevices: 0,
-    activeMatches: 0,
-    queueSize: 0,
-    pendingReports: 0,
-    serverUptimeSec: 0,
-    memoryMb: 0,
-    serverStatus: 'healthy',
-  });
-  const [users, setUsers] = React.useState<AdminUserRow[]>([]);
-  const [reports, setReports] = React.useState<PlayerReport[]>([]);
-  const [selectedReportId, setSelectedReportId] = React.useState<string | null>(null);
-  const [reportAdminNotes, setReportAdminNotes] = React.useState('');
-  const [suspendHours, setSuspendHours] = React.useState<1 | 6 | 24 | 72 | 168>(1);
-  const [frames, setFrames] = React.useState<ProfileFrame[]>([]);
-  const [locks, setLocks] = React.useState<FeatureLocks>({
-    connect4: false,
-    ttt: false,
-    rps: false,
-    sakar_htar: false,
-    matchmaking: false,
-    chat: false,
-    tournaments: false,
-  });
-  const [tournaments, setTournaments] = React.useState<Tournament[]>([]);
-  const [announcements, setAnnouncements] = React.useState<Announcement[]>([]);
-  const [riddles, setRiddles] = React.useState<SakarRiddle[]>([]);
-  const [userSearch, setUserSearch] = React.useState('');
+  const [tab, setTab] = React.useState<AdminTab>('users');
+  const [users, setUsers] = React.useState<any[]>([]);
+  const [notiHistory, setNotiHistory] = React.useState<any[]>([]);
+  const [riddles, setRiddles] = React.useState<any[]>(QUIZ_BANK_100);
+  const [featureLocks, setFeatureLocks] = React.useState<Record<string, boolean>>({});
+  const [cloudStatus, setCloudStatus] = React.useState<'connected' | 'error' | 'offline'>(
+    isFirebaseConfigured ? 'connected' : 'offline'
+  );
+  const [cloudErrText, setCloudErrText] = React.useState<string>(firebaseInitError || '');
+  const [nowMs, setNowMs] = React.useState(() => Date.now());
 
-  // Broadcast form
-  const [broadcastTitle, setBroadcastTitle] = React.useState('');
-  const [broadcastMsg, setBroadcastMsg] = React.useState('');
-  const [broadcastTarget, setBroadcastTarget] = React.useState('');
+  // Notification Form
+  const [notiTarget, setNotiTarget] = React.useState<string>('ALL');
+  const [notiType, setNotiType] = React.useState<'broadcast' | 'message' | 'warning'>('broadcast');
+  const [notiTitle, setNotiTitle] = React.useState<string>('Admin ကြေညာချက်');
+  const [notiMessage, setNotiMessage] = React.useState<string>('');
+  const [sendingNoti, setSendingNoti] = React.useState<boolean>(false);
 
-  // Advanced Tournament form
-  const [tourTitle, setTourTitle] = React.useState('');
-  const [tourGames, setTourGames] = React.useState<GameType[]>(['connect4']);
-  const [tourMaxPlayers, setTourMaxPlayers] = React.useState<4 | 8 | 16 | 32 | 64>(8);
-  const [tourRoundsPerMatch, setTourRoundsPerMatch] = React.useState<1 | 3 | 5>(1);
-  const [tourTurnLimit, setTourTurnLimit] = React.useState<TurnTimeLimit>(20);
-  const [tourStartMode, setTourStartMode] = React.useState<'auto' | 'manual'>('auto');
-  const [tourStartLocal, setTourStartLocal] = React.useState<string>(defaultLocalDatetimeValue);
-  const [tourOpenNow, setTourOpenNow] = React.useState(true);
+  // Add Quiz Form
+  const [newQ, setNewQ] = React.useState('');
+  const [newOpts, setNewOpts] = React.useState('');
+  const [newAnsIdx, setNewAnsIdx] = React.useState(0);
 
-  // Frame CRUD state
-  const [frameName, setFrameName] = React.useState('');
-  const [frameDesc, setFrameDesc] = React.useState('');
-  const [frameTier, setFrameTier] = React.useState('All');
-  const [frameDataUrl, setFrameDataUrl] = React.useState('');
-  const [editingFrame, setEditingFrame] = React.useState<ProfileFrame | null>(null);
-
-  // Landing CMS state
-  const [cmsDraft, setCmsDraft] = React.useState<LandingContent>(landingContent);
-  const [cmsSaving, setCmsSaving] = React.useState(false);
-
-  // Matchmaking & Bot Backfill Rules state
-  const [mmSettings, setMmSettings] = React.useState<MatchmakingSettings>({
-    maxSearchSeconds: 25,
-    botFillDelaySeconds: 8,
-    autoBotFillDefault: true,
-  });
-  const [mmSaving, setMmSaving] = React.useState(false);
-  const mmInitRef = React.useRef(false);
-
-  // Sakar-Htar Riddle Bank CRUD state
-  const [riddleSearch, setRiddleSearch] = React.useState('');
-  const [editingRiddleId, setEditingRiddleId] = React.useState<string | null>(null);
-  const [riddleQMy, setRiddleQMy] = React.useState('');
-  const [riddleHintEn, setRiddleHintEn] = React.useState('');
-  const [riddleOpts, setRiddleOpts] = React.useState<[string, string, string, string]>(['', '', '', '']);
-  const [riddleCorrectIdx, setRiddleCorrectIdx] = React.useState<0 | 1 | 2 | 3>(0);
-  const [riddleExpMy, setRiddleExpMy] = React.useState('');
-  const [riddleExpEn, setRiddleExpEn] = React.useState('');
-  const [riddleSaving, setRiddleSaving] = React.useState(false);
-
+  // Update "Live Now" indicator every 5 seconds
   React.useEffect(() => {
-    setCmsDraft(landingContent);
-  }, [landingContent]);
+    const t = window.setInterval(() => setNowMs(Date.now()), 5000);
+    return () => window.clearInterval(t);
+  }, []);
 
-  const loadOverview = React.useCallback(async () => {
-    try {
-      const res = await fetch('/api/admin/overview', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      setTelemetry(data.telemetry);
-      setUsers(data.users || []);
-      setReports(data.reports || []);
-      setFrames(data.frames || []);
-      setLocks(data.featureLocks);
-      setTournaments(data.tournaments || []);
-      setAnnouncements(data.announcements || []);
-      if (Array.isArray(data.riddles)) setRiddles(data.riddles);
-      if (data.landingContent) {
-        onLandingUpdated(data.landingContent);
-      }
-      if (data.matchmakingSettings && !mmInitRef.current) {
-        setMmSettings(data.matchmakingSettings);
-        mmInitRef.current = true;
-      }
-    } catch {
-      // silent
-    }
-  }, [token, onLandingUpdated]);
-
+  // Direct Real-Time Firestore Subscription (No REST Polling Delay!)
   React.useEffect(() => {
-    loadOverview();
-    const id = setInterval(loadOverview, 5000);
-    return () => clearInterval(id);
-  }, [loadOverview]);
-
-  const handleModerateUser = async (
-    userId: string,
-    action: 'warn' | 'kick' | 'suspend' | 'unsuspend' | 'ban' | 'unban',
-    durationHours?: number,
-    reason?: string
-  ) => {
-    const res = await fetch(`/api/admin/users/${userId}/moderate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action, durationHours, reason }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      onNotify('error', data.error || 'Moderation action failed.');
-    } else {
-      onNotify('success', data.actionTaken || 'Moderation applied.');
-      loadOverview();
-    }
-  };
-
-  const handleReportAction = async (
-    reportId: string,
-    action: 'warn' | 'kick' | 'suspend' | 'ban' | 'dismiss',
-    durationHours?: number
-  ) => {
-    const res = await fetch(`/api/admin/reports/${reportId}/action`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ action, durationHours, adminNotes: reportAdminNotes.trim() }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      onNotify('error', data.error || 'Could not resolve report.');
-    } else {
-      setReports(data.reports || []);
-      setReportAdminNotes('');
-      onNotify('success', 'Moderation tribunal verdict applied.');
-      loadOverview();
-    }
-  };
-
-  const handleLockToggle = async (key: keyof FeatureLocks) => {
-    const next = !locks[key];
-    const res = await fetch('/api/admin/locks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ key, locked: next }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setLocks(data.featureLocks);
-      onNotify('success', `${key} ${next ? 'locked' : 'unlocked'}.`);
-    }
-  };
-
-  const handleSaveMatchmakingSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setMmSaving(true);
-    try {
-      const res = await fetch('/api/admin/matchmaking', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(mmSettings),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify('error', data.error || 'Could not save matchmaking settings.');
-      } else if (data.matchmakingSettings) {
-        setMmSettings(data.matchmakingSettings);
-        onNotify('success', 'Matchmaking queue settings saved & broadcast live.');
-      }
-    } finally {
-      setMmSaving(false);
-    }
-  };
-
-  const handleBroadcast = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!broadcastTitle.trim() || !broadcastMsg.trim()) return;
-    const res = await fetch('/api/admin/broadcast', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: broadcastTitle.trim(),
-        message: broadcastMsg.trim(),
-        targetUserId: broadcastTarget || null,
-      }),
-    });
-    if (res.ok) {
-      setBroadcastTitle('');
-      setBroadcastMsg('');
-      setBroadcastTarget('');
-      onNotify('success', 'Notification broadcast sent.');
-      loadOverview();
-    }
-  };
-
-  const toggleTourGame = (g: GameType) => {
-    setTourGames((prev) => {
-      if (prev.includes(g)) {
-        return prev.length === 1 ? prev : prev.filter((x) => x !== g);
-      }
-      return [...prev, g];
-    });
-  };
-
-  const handleCreateTournament = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!tourTitle.trim() || tourGames.length === 0) return;
-    const startIso = tourStartLocal ? new Date(tourStartLocal).toISOString() : new Date(Date.now() + 900_000).toISOString();
-    const res = await fetch('/api/admin/tournaments', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        title: tourTitle.trim(),
-        gameType: tourGames[0],
-        includedGames: tourGames,
-        maxPlayers: tourMaxPlayers,
-        roundsPerMatch: tourRoundsPerMatch,
-        turnTimeLimit: tourTurnLimit,
-        startMode: tourStartMode,
-        startTime: startIso,
-        openRegistration: tourOpenNow,
-      }),
-    });
-    const data = await res.json();
-    if (res.ok) {
-      setTourTitle('');
-      onNotify('success', 'Tournament event created.');
-      loadOverview();
-    } else {
-      onNotify('error', data.error || 'Could not create tournament.');
-    }
-  };
-
-  const handleStartTournament = async (id: string) => {
-    const res = await fetch(`/api/admin/tournaments/${id}/start`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (!res.ok) onNotify('error', data.error || 'Could not generate bracket.');
-    else {
-      onNotify('success', 'Knockout bracket generated and launched.');
-      loadOverview();
-    }
-  };
-
-  const handleTournamentStatus = async (id: string, status: Tournament['status']) => {
-    await fetch(`/api/admin/tournaments/${id}/status`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ status }),
-    });
-    loadOverview();
-  };
-
-  const handleDeleteTournament = async (id: string) => {
-    await fetch(`/api/admin/tournaments/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    loadOverview();
-  };
-
-  const handleFrameFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setFrameDataUrl(String(reader.result || ''));
-    reader.readAsDataURL(file);
-  };
-
-  const handleSaveFrame = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (editingFrame) {
-      const res = await fetch(`/api/admin/frames/${editingFrame.id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          name: frameName.trim(),
-          description: frameDesc.trim(),
-          unlockTier: frameTier,
-          isActive: editingFrame.isActive,
-        }),
-      });
-      if (res.ok) {
-        setEditingFrame(null);
-        setFrameName('');
-        setFrameDesc('');
-        setFrameTier('All');
-        onNotify('success', 'Frame updated.');
-        loadOverview();
-      }
-      return;
-    }
-
-    if (!frameName.trim() || !frameDataUrl) {
-      onNotify('error', 'Provide a frame name and upload a PNG image.');
-      return;
-    }
-
-    const res = await fetch('/api/admin/frames', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({
-        name: frameName.trim(),
-        description: frameDesc.trim(),
-        unlockTier: frameTier,
-        imageDataUrl: frameDataUrl,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      onNotify('error', data.error || 'Failed to add frame.');
-    } else {
-      setFrameName('');
-      setFrameDesc('');
-      setFrameDataUrl('');
-      onNotify('success', 'Custom frame published.');
-      loadOverview();
-    }
-  };
-
-  const handleDeleteFrame = async (id: string) => {
-    await fetch(`/api/admin/frames/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    onNotify('info', 'Frame deleted.');
-    loadOverview();
-  };
-
-  const handleCmsImageUpload = (
-    target: 'hero' | GameType,
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 3 * 1024 * 1024) {
-      onNotify('error', 'Image must be under 3 MB.');
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      if (target === 'hero') {
-        setCmsDraft((prev) => ({ ...prev, heroBannerUrl: dataUrl }));
-      } else {
-        setCmsDraft((prev) => ({
-          ...prev,
-          games: {
-            ...prev.games,
-            [target]: { ...prev.games[target], bannerUrl: dataUrl },
-          },
-        }));
-      }
+    const syncLocal = () => {
+      const store = readServerlessStore();
+      setUsers(Object.values(store.users).sort((a: any, b: any) => (b.lastSeenMs || 0) - (a.lastSeenMs || 0)));
+      setNotiHistory(
+        (store.notifications || []).sort((a: any, b: any) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
+      );
+      setFeatureLocks(store.featureLocks || {});
     };
-    reader.readAsDataURL(file);
+
+    syncLocal();
+    let ch: BroadcastChannel | null = null;
+    try {
+      if (typeof BroadcastChannel !== 'undefined') {
+        ch = new BroadcastChannel(SYNC_CHANNEL_NAME);
+        ch.onmessage = () => syncLocal();
+      }
+    } catch {}
+    window.addEventListener('storage', syncLocal);
+
+    if (!isFirebaseConfigured || !db) {
+      setCloudStatus('offline');
+      return () => {
+        window.removeEventListener('storage', syncLocal);
+        ch?.close();
+      };
+    }
+
+    const unsubUsers = onSnapshot(
+      collection(db, 'users'),
+      (snap) => {
+        setCloudStatus('connected');
+        setCloudErrText('');
+        const list: any[] = [];
+        const store = readServerlessStore();
+        snap.forEach((d) => {
+          const u = d.data();
+          if (u?.id) {
+            list.push(u);
+            store.users[u.id] = u;
+          }
+        });
+        list.sort((a, b) => (b.lastSeenMs || 0) - (a.lastSeenMs || 0));
+        writeServerlessStore(store);
+        setUsers(list);
+      },
+      (err) => {
+        setCloudStatus('error');
+        setCloudErrText(err.message);
+      }
+    );
+
+    const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
+      const list: any[] = [];
+      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
+      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      setNotiHistory(list);
+    });
+
+    const unsubRiddles = onSnapshot(collection(db, 'riddles'), (snap) => {
+      const custom: any[] = [];
+      snap.forEach((d) => custom.push({ ...d.data(), id: d.id }));
+      setRiddles([...custom, ...QUIZ_BANK_100]);
+    });
+
+    const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
+      if (snap.exists()) {
+        const cfg = snap.data() as any;
+        if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
+      }
+    });
+
+    return () => {
+      window.removeEventListener('storage', syncLocal);
+      ch?.close();
+      unsubUsers();
+      unsubNotis();
+      unsubRiddles();
+      unsubConfig();
+    };
+  }, []);
+
+  const isUserLiveNow = (u: any) => {
+    if (!u.online) return false;
+    if (!u.lastSeenMs) return false;
+    return nowMs - Number(u.lastSeenMs) < 45000;
   };
 
-  const handleSaveCms = async (e: React.FormEvent) => {
+  const liveOnlineCount = users.filter(isUserLiveNow).length;
+
+  const handleSendNotification = async (e: React.FormEvent) => {
     e.preventDefault();
-    setCmsSaving(true);
+    if (!notiMessage.trim()) return;
+    setSendingNoti(true);
     try {
-      const res = await fetch('/api/admin/landing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(cmsDraft),
+      const id = `noti_${Date.now()}_${Math.floor(Math.random() * 999)}`;
+      const payload = stripUndefined({
+        id,
+        targetUserId: notiTarget,
+        title: notiTitle.trim() || 'Admin Notification',
+        message: notiMessage.trim(),
+        type: notiTarget === 'ALL' ? 'broadcast' : notiType,
+        senderName: 'Yan Linn Aung (Admin)',
+        createdAtMs: Date.now(),
+        read: false,
       });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify('error', data.error || 'Failed to publish landing content.');
-      } else if (data.landingContent) {
-        onLandingUpdated(data.landingContent);
-        setCmsDraft(data.landingContent);
-        onNotify('success', 'Landing page content published live.');
+
+      const store = readServerlessStore();
+      store.notifications = [payload, ...(store.notifications || [])];
+      writeServerlessStore(store);
+      broadcastLocalSync('NOTI_SENT');
+
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'notifications', id), payload);
       }
+
+      setNotiMessage('');
+      onNotify(
+        'success',
+        notiTarget === 'ALL'
+          ? 'User အားလုံးထံ Real-Time Noti ပေးပို့ပြီးပါပြီ!'
+          : 'ရွေးချယ်ထားသော User ထံ Real-Time Noti ပေးပို့ပြီးပါပြီ!'
+      );
+    } catch (err: any) {
+      onNotify('error', `Noti ပို့ရာတွင် Error တက်ပါသည်: ${err?.message || 'Unknown'}`);
     } finally {
-      setCmsSaving(false);
+      setSendingNoti(false);
     }
   };
 
-  const resetRiddleForm = () => {
-    setEditingRiddleId(null);
-    setRiddleQMy('');
-    setRiddleHintEn('');
-    setRiddleOpts(['', '', '', '']);
-    setRiddleCorrectIdx(0);
-    setRiddleExpMy('');
-    setRiddleExpEn('');
+  const handleModerate = async (
+    targetUser: any,
+    updates: Record<string, any>,
+    toastMsg: string
+  ) => {
+    try {
+      const clean = stripUndefined(updates);
+      const store = readServerlessStore();
+      if (store.users[targetUser.id]) {
+        store.users[targetUser.id] = { ...store.users[targetUser.id], ...clean };
+        writeServerlessStore(store);
+      }
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'users', targetUser.id), clean, { merge: true });
+      }
+      broadcastLocalSync('USER_MODERATED');
+      onNotify('success', toastMsg);
+    } catch (err: any) {
+      onNotify('error', err?.message || 'Moderation failed');
+    }
   };
 
-  const handleEditRiddle = (r: SakarRiddle) => {
-    setEditingRiddleId(r.id);
-    setRiddleQMy(r.questionMy);
-    setRiddleHintEn(r.hintEn || '');
-    setRiddleOpts([r.options[0], r.options[1], r.options[2], r.options[3]]);
-    setRiddleCorrectIdx(r.correctIndex);
-    setRiddleExpMy(r.explanationMy || '');
-    setRiddleExpEn(r.explanationEn || '');
+  const handleToggleLock = async (gameId: string) => {
+    const nextLocks = { ...featureLocks, [gameId]: !featureLocks[gameId] };
+    setFeatureLocks(nextLocks);
+    const store = readServerlessStore();
+    store.featureLocks = nextLocks;
+    writeServerlessStore(store);
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'system', 'config'), { featureLocks: nextLocks }, { merge: true }).catch(() => {});
+    }
+    onNotify('info', `${gameId.toUpperCase()} lock updated.`);
   };
 
-  const handleSaveRiddle = async (e: React.FormEvent) => {
+  const handleAddQuiz = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanOpts = riddleOpts.map((o) => o.trim());
-    if (!riddleQMy.trim() || cleanOpts.some((o) => !o)) {
-      onNotify('error', 'Enter the Burmese riddle question and all 4 options.');
+    const opts = newOpts.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!newQ.trim() || opts.length < 2) {
+      onNotify('error', 'မေးခွန်းနှင့် ရွေးချယ်စရာ အနည်းဆုံး ၂ ခု (ကော်မာခံ၍) ထည့်ပါ။');
       return;
     }
-    setRiddleSaving(true);
-    try {
-      const url = editingRiddleId ? `/api/admin/riddles/${editingRiddleId}` : '/api/admin/riddles';
-      const method = editingRiddleId ? 'PUT' : 'POST';
-      const res = await fetch(url, {
-        method,
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          questionMy: riddleQMy.trim(),
-          hintEn: riddleHintEn.trim(),
-          options: cleanOpts,
-          correctIndex: riddleCorrectIdx,
-          explanationMy: riddleExpMy.trim(),
-          explanationEn: riddleExpEn.trim(),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        onNotify('error', data.error || 'Could not save riddle.');
-      } else {
-        if (Array.isArray(data.riddles)) setRiddles(data.riddles);
-        onNotify('success', editingRiddleId ? 'Riddle updated.' : 'New riddle added to bank.');
-        resetRiddleForm();
-      }
-    } finally {
-      setRiddleSaving(false);
-    }
-  };
-
-  const handleDeleteRiddle = async (id: string) => {
-    const res = await fetch(`/api/admin/riddles/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
+    const id = `custom_quiz_${Date.now()}`;
+    const item = stripUndefined({
+      id,
+      category: 'general',
+      question: newQ.trim(),
+      questionMy: newQ.trim(),
+      questionEn: newQ.trim(),
+      options: opts,
+      optionsMy: opts,
+      optionsEn: opts,
+      answerIndex: Math.min(newAnsIdx, opts.length - 1),
     });
-    const data = await res.json();
-    if (!res.ok) {
-      onNotify('error', data.error || 'Could not delete riddle.');
-    } else {
-      if (Array.isArray(data.riddles)) setRiddles(data.riddles);
-      if (editingRiddleId === id) resetRiddleForm();
-      onNotify('info', 'Riddle removed.');
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'riddles', id), item).catch(() => {});
     }
+    setNewQ('');
+    setNewOpts('');
+    onNotify('success', 'ဉာဏ်စမ်းပဟေဠိ မေးခွန်းအသစ် ထည့်သွင်းပြီးပါပြီ!');
   };
 
-  const filteredRiddles = riddles.filter((r) => {
-    if (!riddleSearch.trim()) return true;
-    const q = riddleSearch.toLowerCase();
-    return (
-      r.questionMy.toLowerCase().includes(q) ||
-      (r.hintEn || '').toLowerCase().includes(q) ||
-      r.options.some((opt) => opt.toLowerCase().includes(q))
-    );
-  });
+  const handleDeleteCustomQuiz = async (id: string) => {
+    if (!id.startsWith('custom_')) return;
+    if (isFirebaseConfigured && db) {
+      await deleteDoc(doc(db, 'riddles', id)).catch(() => {});
+    }
+    onNotify('info', 'မေးခွန်း ဖျက်ပြီးပါပြီ။');
+  };
 
-  const filteredUsers = users.filter((u) => {
-    if (!userSearch.trim()) return true;
-    const q = userSearch.toLowerCase();
-    return (
-      u.displayName.toLowerCase().includes(q) ||
-      u.username.toLowerCase().includes(q) ||
-      u.gameId.toLowerCase().includes(q)
-    );
-  });
-
-  const lockEntries: { key: keyof FeatureLocks; label: string; desc: string }[] = [
-    { key: 'connect4', label: '4 in a Row', desc: 'Disable new matches or bot play for Connect 4' },
-    { key: 'ttt', label: 'Tic-Tac-Toe', desc: 'Disable Tic-Tac-Toe across lobby and challenges' },
-    { key: 'rps', label: 'Rock, Paper, Scissors', desc: 'Place RPS into maintenance mode' },
-    { key: 'sakar_htar', label: 'Sakar-Htar (စကားထာ)', desc: 'Disable Sakar-Htar Solo, Quick Match, and Custom Rooms' },
-    { key: 'matchmaking', label: 'Random Matchmaking', desc: 'Lock ranked matchmaking queues' },
-    { key: 'chat', label: 'Global & Match Chat', desc: 'Mute in-match chat, room chat, stickers, and DMs' },
-    { key: 'tournaments', label: 'Tournament System', desc: 'Lock tournament tab into Coming Soon mode' },
-  ];
+  const renderDeviceIcon = (type?: string) => {
+    if (type === 'Mobile') return <Smartphone className="w-3.5 h-3.5 text-sky-400" />;
+    if (type === 'Tablet') return <Tablet className="w-3.5 h-3.5 text-purple-400" />;
+    return <Monitor className="w-3.5 h-3.5 text-amber-400" />;
+  };
 
   return (
-    <div className="min-h-dvh-safe bg-[#0A0D14] text-slate-100 flex flex-col">
-      {/* Admin Top Bar */}
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#0E131F]/95 backdrop-blur-md">
-        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2 sm:gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-            <ShieldAlert className="w-5 h-5 text-amber-400 shrink-0" />
-            <span className="text-sm sm:text-lg font-display font-bold text-white truncate">
-              {t.admin.controlPanel}
+    <div className="min-h-dvh-safe cyber-bg text-slate-100 flex flex-col">
+      {/* Top Admin Header */}
+      <header className="sticky top-0 z-30 border-b border-amber-500/25 bg-[#080c15]/95 backdrop-blur-md">
+        <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="vanguard-brand-box px-2.5 py-1 rounded-lg text-xs sm:text-sm font-extrabold text-amber-300 flex items-center gap-1.5 shrink-0">
+              <ShieldAlert className="w-4 h-4 text-amber-400" />
+              <span>ADMIN CORE</span>
+            </div>
+            <span className="hidden md:inline text-xs font-mono text-emerald-400">
+              ● {liveOnlineCount} Live Devices / {users.length} Total Users
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 sm:gap-3 text-xs shrink-0">
+          <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+            <LanguageSwitcher lang={lang} onChange={onChangeLang} />
+            <div className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-[#0d1322] border border-emerald-500/25 text-emerald-300">
+              <Wifi className="w-3 h-3" /> {livePingMs}ms
+            </div>
             <button
               type="button"
               onClick={onSwitchToLobby}
-              className="min-h-[44px] px-2.5 sm:px-4 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="h-9 px-3 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1.5 cursor-pointer"
             >
-              <Gamepad2 className="w-4 h-4" />
-              <span className="hidden sm:inline">{t.nav.playGames}</span>
-              <span className="sm:hidden">{t.nav.lobby}</span>
-            </button>
-
-            <LanguageSwitcher lang={lang} onChange={onChangeLang} />
-
-            <span className="hidden xs:inline-flex sm:inline-flex items-center gap-1.5 font-mono text-emerald-400 tabular-nums px-2 py-1 rounded-lg bg-emerald-500/10 border border-emerald-500/20">
-              <Wifi className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">{t.admin.adminPing}:</span> {livePingMs}ms
-            </span>
-            <button
-              type="button"
-              onClick={loadOverview}
-              aria-label="Refresh telemetry"
-              className="min-h-[44px] min-w-[44px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 flex items-center justify-center cursor-pointer"
-            >
-              <RefreshCw className="w-4 h-4 text-slate-300" />
+              <Gamepad2 className="w-3.5 h-3.5" />
+              <span>Game Lobby</span>
             </button>
             <button
               type="button"
               onClick={onLogout}
-              aria-label={t.nav.signOut}
-              className="min-h-[44px] min-w-[44px] px-2.5 sm:px-3 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-rose-200 font-semibold flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap"
+              className="w-9 h-9 rounded-xl bg-[#0d1322] border border-white/10 hover:bg-rose-500/20 text-rose-300 flex items-center justify-center cursor-pointer"
             >
               <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">{t.nav.signOut}</span>
             </button>
           </div>
         </div>
       </header>
 
-      <div className="max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 sm:py-6 space-y-6 flex-1">
-        {/* Navigation Tabs */}
-        <div className="flex flex-wrap gap-1.5 sm:gap-2 p-1.5 rounded-2xl bg-[#121826] border border-white/10 max-w-full">
-          {(
-            [
-              ['telemetry', t.admin.tabTelemetry, 0],
-              ['users', t.admin.tabUsers, 0],
-              ['reports', t.admin.tabReports, telemetry.pendingReports || 0],
-              ['locks', t.admin.tabLocks, 0],
-              ['tournaments', t.admin.tabTournaments, 0],
-              ['frames', t.admin.tabFrames, 0],
-              ['cms', t.admin.tabCms, 0],
-              ['riddles', t.admin.tabRiddles, 0],
-            ] as const
-          ).map(([id, label, badge]) => (
+      <main className="flex-1 max-w-7xl w-full mx-auto px-3 sm:px-6 py-4 space-y-4">
+        {/* Cloud Firestore Live Diagnostic Banner */}
+        <div
+          className={`p-3 rounded-2xl border flex flex-wrap items-center justify-between gap-2 text-xs ${
+            cloudStatus === 'connected'
+              ? 'bg-emerald-500/10 border-emerald-500/35 text-emerald-200'
+              : 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {cloudStatus === 'connected' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <WifiOff className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>
+              {cloudStatus === 'connected'
+                ? `Cloud Real-Time Sync Active — Firebase Project: ${firebaseProjectId}`
+                : `Cloud Sync ချိတ်ဆက်မှု မအောင်မြင်သေးပါ: ${cloudErrText || 'firebase-applet-config.json နှင့် Firestore Rules ကို စစ်ဆေးပါ'}`}
+            </span>
+          </div>
+          <span className="font-mono text-[11px] opacity-80">
+            Users: {users.length} | Live: {liveOnlineCount}
+          </span>
+        </div>
+
+        {/* Admin Navigation Tabs */}
+        <div className="grid grid-cols-4 gap-2 p-1.5 rounded-2xl cyber-panel">
+          {[
+            { id: 'users', label: `👥 Users & Devices (${users.length})` },
+            { id: 'noti', label: '📢 Noti / စာပို့ရန်' },
+            { id: 'quiz', label: `🦉 ဉာဏ်စမ်း (${riddles.length})` },
+            { id: 'controls', label: '⚙️ Server Controls' },
+          ].map((item) => (
             <button
-              key={id}
+              key={item.id}
               type="button"
-              onClick={() => setActiveTab(id)}
-              className={`min-h-[44px] px-3 sm:px-4 rounded-xl text-xs font-semibold transition-colors cursor-pointer whitespace-nowrap flex items-center gap-2 ${
-                activeTab === id ? 'bg-amber-500 text-slate-950' : 'text-slate-400 hover:text-white'
+              onClick={() => setTab(item.id as AdminTab)}
+              className={`py-2.5 px-2 rounded-xl text-[11px] sm:text-xs font-bold transition-all cursor-pointer truncate ${
+                tab === item.id ? 'cyber-gold-active text-amber-200' : 'text-slate-400 hover:text-white'
               }`}
             >
-              <span>{label}</span>
-              {badge > 0 && (
-                <span
-                  className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${
-                    activeTab === id ? 'bg-slate-950 text-amber-300' : 'bg-rose-500 text-white'
-                  }`}
-                >
-                  {badge}
-                </span>
-              )}
+              {item.label}
             </button>
           ))}
         </div>
 
-        {/* Tab 1: Telemetry & Global Broadcaster */}
-        {activeTab === 'telemetry' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="p-5 rounded-2xl bg-[#121826] border border-white/10">
-                <div className="text-xs text-slate-400">Total Registered Users</div>
-                <div className="text-3xl font-display font-bold text-white mt-1 tabular-nums">
-                  {telemetry.totalUsers}
-                </div>
-              </div>
-              <div className="p-5 rounded-2xl bg-[#121826] border border-white/10">
-                <div className="text-xs text-slate-400">Live Online Users</div>
-                <div className="text-3xl font-display font-bold text-emerald-400 mt-1 tabular-nums">
-                  {telemetry.onlineUsers}
-                </div>
-              </div>
-              <div className="p-5 rounded-2xl bg-[#121826] border border-white/10">
-                <div className="text-xs text-slate-400">Active Connected Devices</div>
-                <div className="text-3xl font-display font-bold text-sky-400 mt-1 tabular-nums">
-                  {telemetry.activeDevices}
-                </div>
-              </div>
-              <div className="p-5 rounded-2xl bg-[#121826] border border-white/10">
-                <div className="text-xs text-slate-400">Server Health & Memory</div>
-                <div className="text-lg font-display font-bold text-amber-400 mt-2 flex items-center gap-2 tabular-nums">
-                  <Activity className="w-5 h-5" />
-                  <span>Nominal · {telemetry.memoryMb} MB</span>
-                </div>
-                <div className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
-                  Matches: {telemetry.activeMatches} · Uptime: {telemetry.serverUptimeSec}s
-                </div>
-              </div>
+        {/* TAB 1: REAL-TIME USERS & LIVE DEVICE MONITOR */}
+        {tab === 'users' && (
+          <div className="cyber-panel rounded-2xl p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="text-sm sm:text-base font-bold text-white flex items-center gap-2">
+                <Users className="w-4 h-4 text-amber-400" />
+                <span>Real-Time Login ဝင်ထားသော User များနှင့် Device စာရင်း</span>
+              </h2>
+              <span className="text-xs text-emerald-400 font-semibold">Auto-Syncing</span>
             </div>
 
-            {/* Global / Targeted Notification Broadcaster */}
-            <div className="grid lg:grid-cols-12 gap-6">
-              <form
-                onSubmit={handleBroadcast}
-                className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4"
-              >
-                <div className="flex items-center gap-2">
-                  <Megaphone className="w-5 h-5 text-amber-400" />
-                  <h2 className="text-lg font-display font-bold text-white">Notification Broadcaster</h2>
-                </div>
-                <div className="grid sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5">Title</label>
-                    <input
-                      type="text"
-                      required
-                      value={broadcastTitle}
-                      onChange={(e) => setBroadcastTitle(e.target.value)}
-                      placeholder="Maintenance Notice / Event Alert"
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1.5">Target Audience</label>
-                    <select
-                      value={broadcastTarget}
-                      onChange={(e) => setBroadcastTarget(e.target.value)}
-                      className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                    >
-                      <option value="">All Online Players (Global)</option>
-                      {users.map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.displayName} ({u.gameId})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1.5">Message</label>
-                  <textarea
-                    required
-                    rows={3}
-                    value={broadcastMsg}
-                    onChange={(e) => setBroadcastMsg(e.target.value)}
-                    placeholder="Enter instant real-time banner announcement..."
-                    className="w-full p-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  className="min-h-[44px] px-6 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm cursor-pointer"
-                >
-                  Send Real-Time Broadcast
-                </button>
-              </form>
+            <div className="space-y-2.5">
+              {users.map((u) => {
+                const live = isUserLiveNow(u);
+                const lastSeenLabel = u.lastSeenMs
+                  ? new Date(u.lastSeenMs).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                  : 'N/A';
 
-              <div className="lg:col-span-5 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
-                <h3 className="text-base font-display font-bold text-white">Recent Broadcasts</h3>
-                {announcements.length === 0 ? (
-                  <p className="text-xs text-slate-500">No announcements dispatched yet.</p>
-                ) : (
-                  <div className="space-y-2.5 max-h-64 overflow-y-auto">
-                    {announcements.map((a) => (
-                      <div key={a.id} className="p-3 rounded-xl bg-[#0A0D14] border border-white/10">
-                        <div className="text-xs font-semibold text-amber-300">{a.title}</div>
-                        <div className="text-xs text-slate-300 mt-0.5">{a.message}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2: User Moderation Directory */}
-        {activeTab === 'users' && (
-          <div className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h2 className="text-lg font-display font-bold text-white">{t.admin.userDirectory}</h2>
-                <p className="text-xs text-slate-400">
-                  Issue official warnings, timed play suspensions, kick live sessions, or ban accounts.
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <select
-                  value={suspendHours}
-                  onChange={(e) => setSuspendHours(Number(e.target.value) as 1 | 6 | 24 | 72 | 168)}
-                  className="h-11 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-amber-300 font-semibold"
-                  title="Timed suspension duration"
-                >
-                  <option value={1}>Suspend: 1 Hour</option>
-                  <option value={6}>Suspend: 6 Hours</option>
-                  <option value={24}>Suspend: 24 Hours</option>
-                  <option value={72}>Suspend: 3 Days</option>
-                  <option value={168}>Suspend: 7 Days</option>
-                </select>
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={userSearch}
-                    onChange={(e) => setUserSearch(e.target.value)}
-                    placeholder="Search user or #PLY..."
-                    className="h-11 pl-9 pr-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400 w-full sm:w-56"
-                  />
-                </div>
-              </div>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="border-b border-white/10 text-xs text-slate-400">
-                    <th className="py-3 px-3">Player</th>
-                    <th className="py-3 px-3">Session / Ping</th>
-                    <th className="py-3 px-3 text-right">W / L / D</th>
-                    <th className="py-3 px-3 text-right">RP</th>
-                    <th className="py-3 px-3 text-right">Moderation</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/10">
-                  {filteredUsers.map((u) => {
-                    const isSuspended = Boolean(u.suspendedUntil && Date.parse(u.suspendedUntil) > Date.now());
-                    return (
-                      <tr key={u.id} className="hover:bg-white/[0.03]">
-                        <td className="py-3 px-3">
-                          <div className="flex items-center gap-3">
-                            <AvatarWithFrame
-                              avatarUrl={u.avatarUrl}
-                              frameId={u.frameId}
-                              frames={frames}
-                              displayName={u.displayName}
-                              size="sm"
-                              status={u.isOnline ? (u.inMatch ? 'in_game' : 'online') : 'offline'}
-                            />
-                            <div>
-                              <div className="font-semibold text-white flex flex-wrap items-center gap-1.5">
-                                <span>{u.displayName}</span>
-                                {u.isBanned && (
-                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px]">
-                                    Banned
-                                  </span>
-                                )}
-                                {isSuspended && (
-                                  <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px]">
-                                    Suspended
-                                  </span>
-                                )}
-                                {u.warningCount > 0 && (
-                                  <span className="px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 text-[10px]">
-                                    {u.warningCount} Warn
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-xs font-mono text-slate-400">
-                                @{u.username} · {u.gameId}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-                        <td className="py-3 px-3 text-xs font-mono tabular-nums">
-                          {u.isOnline ? (
-                            <span className="text-emerald-400">
-                              Online · {u.deviceCount} device(s) · {u.pingMs}ms
-                            </span>
-                          ) : (
-                            <span className="text-slate-500">Offline</span>
-                          )}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-xs tabular-nums text-slate-300">
-                          {u.wins}/{u.losses}/{u.draws}
-                        </td>
-                        <td className="py-3 px-3 text-right font-mono text-xs font-bold text-amber-400 tabular-nums">
-                          {u.xp}
-                        </td>
-                        <td className="py-3 px-3 text-right">
-                          <div className="inline-flex flex-wrap items-center justify-end gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() =>
-                                handleModerateUser(
-                                  u.id,
-                                  'warn',
-                                  undefined,
-                                  'Official Fair Play warning from Arena Administration.'
-                                )
-                              }
-                              className="min-h-[34px] px-2.5 rounded-lg bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 text-xs font-medium flex items-center gap-1 cursor-pointer"
-                              title="Send Official Warning"
-                            >
-                              <AlertTriangle className="w-3.5 h-3.5" />
-                              <span>{t.admin.warn}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                isSuspended
-                                  ? handleModerateUser(u.id, 'unsuspend')
-                                  : handleModerateUser(u.id, 'suspend', suspendHours)
-                              }
-                              className="min-h-[34px] px-2.5 rounded-lg bg-orange-500/15 hover:bg-orange-500/25 text-orange-300 text-xs font-medium flex items-center gap-1 cursor-pointer"
-                            >
-                              <Clock className="w-3.5 h-3.5" />
-                              <span>{isSuspended ? 'Lift' : `${suspendHours}h`}</span>
-                            </button>
-                            <button
-                              type="button"
-                              disabled={!u.isOnline}
-                              onClick={() => handleModerateUser(u.id, 'kick')}
-                              className="min-h-[34px] px-2.5 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-35 text-xs font-medium text-slate-200 flex items-center gap-1 cursor-pointer"
-                            >
-                              <UserX className="w-3.5 h-3.5" />
-                              <span>{t.admin.kick}</span>
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleModerateUser(u.id, u.isBanned ? 'unban' : 'ban')}
-                              className={`min-h-[34px] px-2.5 rounded-lg text-xs font-medium flex items-center gap-1 cursor-pointer ${
-                                u.isBanned
-                                  ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300'
-                                  : 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300'
-                              }`}
-                            >
-                              {u.isBanned ? <CheckCircle2 className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                              <span>{u.isBanned ? t.admin.unban : t.admin.ban}</span>
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* Tab 2B: Reports & Match Logs Tribunal */}
-        {activeTab === 'reports' && (
-          <div className="grid lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-5 p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-3">
-              <div className="flex items-center justify-between">
-                <h2 className="text-base font-display font-bold text-white flex items-center gap-2">
-                  <FileWarning className="w-4 h-4 text-rose-400" />
-                  <span>{t.admin.tabReports} ({reports.length})</span>
-                </h2>
-              </div>
-
-              {reports.length === 0 ? (
-                <p className="text-xs text-slate-400 py-8 text-center">No player reports have been submitted.</p>
-              ) : (
-                <div className="space-y-2.5 max-h-[600px] overflow-y-auto pr-1">
-                  {reports.map((r) => {
-                    const active = selectedReportId === r.id;
-                    return (
-                      <button
-                        key={r.id}
-                        type="button"
-                        onClick={() => setSelectedReportId(r.id)}
-                        className={`w-full text-left p-3.5 rounded-xl border transition-colors cursor-pointer space-y-1.5 ${
-                          active
-                            ? 'bg-amber-500/10 border-amber-400/60'
-                            : 'bg-[#0A0D14] border-white/10 hover:border-white/25'
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-bold text-white truncate">
-                            {r.reportedName} <span className="text-slate-500 font-normal">vs</span> {r.reporterName}
-                          </span>
-                          <span
-                            className={`px-2 py-0.5 rounded text-[10px] font-semibold uppercase ${
-                              r.status === 'pending'
-                                ? 'bg-rose-500/20 text-rose-300'
-                                : 'bg-emerald-500/20 text-emerald-300'
-                            }`}
-                          >
-                            {r.status}
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-amber-300 font-mono">{r.category} · {r.gameType}</div>
-                        <div className="text-[11px] text-slate-400 flex items-center justify-between">
-                          <span>{new Date(r.createdAt).toLocaleString()}</span>
-                          {r.actionTaken && <span className="text-emerald-300">{r.actionTaken}</span>}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            <div className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-5">
-              {(() => {
-                const selected = reports.find((r) => r.id === selectedReportId) || reports[0];
-                if (!selected) {
-                  return (
-                    <div className="py-16 text-center text-xs text-slate-500">
-                      Select a report ticket on the left to review full chat transcripts, move logs, and apply tribunal rulings.
-                    </div>
-                  );
-                }
-                return (
-                  <>
-                    <div className="flex flex-wrap items-start justify-between gap-3 pb-4 border-b border-white/10">
-                      <div>
-                        <div className="text-xs font-mono text-rose-300 uppercase">{selected.category}</div>
-                        <h3 className="text-lg font-display font-bold text-white">
-                          Reported: {selected.reportedName}
-                        </h3>
-                        <p className="text-xs text-slate-400">
-                          Filed by {selected.reporterName} · Match {selected.matchId} ({selected.gameType})
-                        </p>
-                      </div>
-                      <span
-                        className={`px-2.5 py-1 rounded-lg text-xs font-semibold uppercase ${
-                          selected.status === 'pending'
-                            ? 'bg-rose-500/20 text-rose-300'
-                            : 'bg-emerald-500/20 text-emerald-300'
-                        }`}
-                      >
-                        {selected.actionTaken || selected.status}
-                      </span>
-                    </div>
-
-                    {selected.notes && (
-                      <div className="p-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-slate-200">
-                        <div className="text-[10px] uppercase text-slate-400 mb-1">Reporter Statement</div>
-                        {selected.notes}
-                      </div>
-                    )}
-
-                    {/* Snapshot 1: Match Chat & Sticker Transcript */}
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                        <MessageSquare className="w-3.5 h-3.5 text-sky-400" />
-                        <span>Match Chat & Sticker Transcript ({selected.chatTranscript.length})</span>
-                      </h4>
-                      <div className="max-h-44 overflow-y-auto rounded-xl bg-[#0A0D14] border border-white/10 p-3 space-y-1.5 text-xs">
-                        {selected.chatTranscript.length === 0 ? (
-                          <div className="text-slate-500 italic">No chat messages or stickers were sent during this match.</div>
-                        ) : (
-                          selected.chatTranscript.map((c) => (
-                            <div key={c.id} className="flex items-start gap-2">
-                              <span className="font-mono text-[10px] text-slate-500 shrink-0">
-                                {new Date(c.createdAt).toLocaleTimeString()}
-                              </span>
-                              <span className="font-semibold text-amber-300 shrink-0">{c.senderName}:</span>
-                              <span className="text-slate-200 break-words">{c.content}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Snapshot 2: Full Move History Log */}
-                    <div className="space-y-2">
-                      <h4 className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                        <Activity className="w-3.5 h-3.5 text-amber-400" />
-                        <span>Match Move History Log ({selected.moveHistory.length})</span>
-                      </h4>
-                      <div className="max-h-44 overflow-y-auto rounded-xl bg-[#0A0D14] border border-white/10 p-3 space-y-1 text-xs font-mono">
-                        {selected.moveHistory.length === 0 ? (
-                          <div className="text-slate-500 italic font-sans">No move logs recorded.</div>
-                        ) : (
-                          selected.moveHistory.map((m) => (
-                            <div key={m.step} className="flex items-center gap-2 text-[11px]">
-                              <span className="text-slate-500">#{m.step}</span>
-                              <span className="text-sky-300">{m.playerName}</span>
-                              <span className="text-slate-300">{m.summary}</span>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Graduated Disciplinary Actions */}
-                    <div className="pt-3 border-t border-white/10 space-y-3">
-                      <div className="grid sm:grid-cols-2 gap-3">
-                        <input
-                          type="text"
-                          value={reportAdminNotes}
-                          onChange={(e) => setReportAdminNotes(e.target.value)}
-                          placeholder="Optional warning/ruling message shown to player..."
-                          className="h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                        />
-                        <select
-                          value={suspendHours}
-                          onChange={(e) => setSuspendHours(Number(e.target.value) as 1 | 6 | 24 | 72 | 168)}
-                          className="h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-amber-300 font-semibold"
-                        >
-                          <option value={1}>Suspension: 1 Hour</option>
-                          <option value={6}>Suspension: 6 Hours</option>
-                          <option value={24}>Suspension: 24 Hours</option>
-                          <option value={72}>Suspension: 3 Days</option>
-                          <option value={168}>Suspension: 7 Days</option>
-                        </select>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleReportAction(selected.id, 'warn')}
-                          className="min-h-[38px] px-3.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/40 text-amber-200 text-xs font-semibold cursor-pointer"
-                        >
-                          1. Send Official Warning
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReportAction(selected.id, 'kick')}
-                          className="min-h-[38px] px-3.5 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-slate-100 text-xs font-semibold cursor-pointer"
-                        >
-                          2. Kick Player
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReportAction(selected.id, 'suspend', suspendHours)}
-                          className="min-h-[38px] px-3.5 rounded-xl bg-orange-500/20 hover:bg-orange-500/30 border border-orange-400/40 text-orange-200 text-xs font-semibold cursor-pointer"
-                        >
-                          3. Suspend ({suspendHours}h)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReportAction(selected.id, 'ban')}
-                          className="min-h-[38px] px-3.5 rounded-xl bg-rose-500/25 hover:bg-rose-500/35 border border-rose-400/40 text-rose-200 text-xs font-semibold cursor-pointer"
-                        >
-                          4. Permanent Ban
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleReportAction(selected.id, 'dismiss')}
-                          className="min-h-[38px] px-3.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-400 text-xs font-semibold cursor-pointer ml-auto"
-                        >
-                          Dismiss
-                        </button>
-                      </div>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 3: Feature, Matchmaking Rules & Game Locks */}
-        {activeTab === 'locks' && (
-          <div className="space-y-6">
-            {/* Smart Matchmaking & Burmese Bot Backfill Rules */}
-            <form
-              onSubmit={handleSaveMatchmakingSettings}
-              className="p-5 sm:p-6 rounded-2xl bg-[#121826] border border-amber-400/25 space-y-5"
-            >
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                <div>
-                  <h2 className="text-base sm:text-lg font-display font-bold text-white">
-                    {t.admin.matchmakingConfigTitle}
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
-                    {t.admin.matchmakingConfigDesc}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-3 gap-4 items-end">
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    {t.admin.maxSearchSecondsLabel} (10–90s)
-                  </label>
-                  <input
-                    type="number"
-                    min={10}
-                    max={90}
-                    value={mmSettings.maxSearchSeconds}
-                    onChange={(e) =>
-                      setMmSettings((prev) => ({
-                        ...prev,
-                        maxSearchSeconds: Math.max(10, Math.min(90, Number(e.target.value) || 25)),
-                      }))
-                    }
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm font-mono text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                    {t.admin.botFillDelayLabel} (3–30s)
-                  </label>
-                  <input
-                    type="number"
-                    min={3}
-                    max={30}
-                    value={mmSettings.botFillDelaySeconds}
-                    onChange={(e) =>
-                      setMmSettings((prev) => ({
-                        ...prev,
-                        botFillDelaySeconds: Math.max(3, Math.min(30, Number(e.target.value) || 8)),
-                      }))
-                    }
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm font-mono text-white focus:outline-none focus:border-amber-400"
-                  />
-                </div>
-
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={mmSettings.autoBotFillDefault}
-                  onClick={() =>
-                    setMmSettings((prev) => ({ ...prev, autoBotFillDefault: !prev.autoBotFillDefault }))
-                  }
-                  className="w-full min-h-[44px] px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 hover:border-white/25 flex items-center justify-between gap-2 text-left cursor-pointer"
-                >
-                  <span className="text-xs font-medium text-slate-200">{t.admin.autoBotFillDefaultLabel}</span>
-                  <span
-                    className={`w-10 h-5.5 rounded-full p-0.5 transition-colors shrink-0 flex items-center ${
-                      mmSettings.autoBotFillDefault ? 'bg-amber-500 justify-end' : 'bg-slate-700 justify-start'
-                    }`}
-                  >
-                    <span className="w-4 h-4 rounded-full bg-white" />
-                  </span>
-                </button>
-              </div>
-
-              <div className="flex justify-end">
-                <button
-                  type="submit"
-                  disabled={mmSaving}
-                  className="min-h-[44px] px-6 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-semibold text-xs sm:text-sm cursor-pointer"
-                >
-                  {mmSaving ? t.common.loading : t.admin.saveMatchmakingBtn}
-                </button>
-              </div>
-            </form>
-
-            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {lockEntries.map((item) => {
-                const isLocked = locks[item.key];
                 return (
                   <div
-                    key={item.key}
-                    className={`p-5 rounded-2xl border flex flex-col justify-between gap-4 ${
-                      isLocked ? 'bg-rose-500/10 border-rose-500/35' : 'bg-[#121826] border-white/10'
+                    key={u.id}
+                    className={`p-3 rounded-2xl bg-[#090d16] border flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                      live ? 'border-emerald-500/35' : 'border-white/10'
                     }`}
-                  >
-                    <div>
-                      <div className="flex items-center justify-between">
-                        <h3 className="text-base font-display font-bold text-white">{item.label}</h3>
-                        {isLocked ? (
-                          <Lock className="w-4 h-4 text-rose-400" />
-                        ) : (
-                          <Unlock className="w-4 h-4 text-emerald-400" />
-                        )}
-                      </div>
-                      <p className="text-xs text-slate-400 mt-1">{item.desc}</p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleLockToggle(item.key)}
-                      className={`min-h-[44px] rounded-xl text-xs font-semibold cursor-pointer transition-colors ${
-                        isLocked
-                          ? 'bg-emerald-500 hover:bg-emerald-400 text-slate-950'
-                          : 'bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/30 text-rose-200'
-                      }`}
-                    >
-                      {isLocked ? 'Unlock / Enable Live' : 'Lock / Maintenance Mode'}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 4: Tournament Manager (Scheduler, Multi-game, Auto/Manual, up to 64 Players) */}
-        {activeTab === 'tournaments' && (
-          <div className="grid lg:grid-cols-12 gap-6 items-start">
-            <form
-              onSubmit={handleCreateTournament}
-              className="lg:col-span-5 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4"
-            >
-              <div className="flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-amber-400" />
-                <h2 className="text-lg font-display font-bold text-white">Schedule Championship Event</h2>
-              </div>
-              <div>
-                <label className="block text-xs text-slate-300 mb-1">Event Title</label>
-                <input
-                  type="text"
-                  required
-                  value={tourTitle}
-                  onChange={(e) => setTourTitle(e.target.value)}
-                  placeholder="Weekend Championship Cup"
-                  className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-300 mb-1.5">Included Games (Multi-Game Pool)</label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {(
-                    [
-                      ['connect4', 'Connect 4'],
-                      ['ttt', 'Tic-Tac-Toe'],
-                      ['rps', 'RPS'],
-                      ['sakar_htar', 'စကားထာ'],
-                    ] as const
-                  ).map(([gid, label]) => {
-                    const checked = tourGames.includes(gid);
-                    return (
-                      <button
-                        key={gid}
-                        type="button"
-                        onClick={() => toggleTourGame(gid)}
-                        className={`min-h-[38px] px-2 rounded-xl border text-xs font-semibold cursor-pointer transition-colors ${
-                          checked
-                            ? 'bg-amber-500/15 border-amber-400 text-amber-300'
-                            : 'bg-[#0A0D14] border-white/10 text-slate-400 hover:text-white'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              <div className="grid grid-cols-3 gap-2.5">
-                <div>
-                  <label className="block text-[11px] text-slate-300 mb-1">Max Players</label>
-                  <select
-                    value={tourMaxPlayers}
-                    onChange={(e) => setTourMaxPlayers(Number(e.target.value) as 4 | 8 | 16 | 32 | 64)}
-                    className="w-full h-10 px-2.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  >
-                    <option value={4}>4 Players</option>
-                    <option value={8}>8 Players</option>
-                    <option value={16}>16 Players</option>
-                    <option value={32}>32 Players</option>
-                    <option value={64}>64 Players</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-300 mb-1">Rounds / Match</label>
-                  <select
-                    value={tourRoundsPerMatch}
-                    onChange={(e) => setTourRoundsPerMatch(Number(e.target.value) as 1 | 3 | 5)}
-                    className="w-full h-10 px-2.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  >
-                    <option value={1}>Best of 1</option>
-                    <option value={3}>Best of 3</option>
-                    <option value={5}>Best of 5</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-[11px] text-slate-300 mb-1">Turn Timer</label>
-                  <select
-                    value={tourTurnLimit}
-                    onChange={(e) => setTourTurnLimit(Number(e.target.value) as TurnTimeLimit)}
-                    className="w-full h-10 px-2.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  >
-                    <option value={10}>10s</option>
-                    <option value={15}>15s</option>
-                    <option value={20}>20s</option>
-                    <option value={30}>30s</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Start Date & Time</label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={tourStartLocal}
-                    onChange={(e) => setTourStartLocal(e.target.value)}
-                    className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Start Trigger Mode</label>
-                  <select
-                    value={tourStartMode}
-                    onChange={(e) => setTourStartMode(e.target.value as 'auto' | 'manual')}
-                    className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  >
-                    <option value="auto">Automatic Start (on countdown 0)</option>
-                    <option value="manual">Manual Start (Admin Trigger)</option>
-                  </select>
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={tourOpenNow}
-                  onChange={(e) => setTourOpenNow(e.target.checked)}
-                  className="rounded accent-amber-500"
-                />
-                <span>Open player registration immediately</span>
-              </label>
-              <button
-                type="submit"
-                className="w-full min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm cursor-pointer"
-              >
-                Create Scheduled Event
-              </button>
-            </form>
-
-            <div className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-              <h2 className="text-lg font-display font-bold text-white">Managed Events</h2>
-              {tournaments.length === 0 ? (
-                <p className="text-xs text-slate-400">No tournaments configured yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {tournaments.map((tour) => (
-                    <div
-                      key={tour.id}
-                      className="p-4 rounded-xl bg-[#0A0D14] border border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
-                    >
-                      <div className="space-y-1">
-                        <div className="text-sm font-bold text-white">{tour.title}</div>
-                        <div className="text-xs text-slate-400 font-mono tabular-nums">
-                          {(tour.includedGames || [tour.gameType]).join('+')} · Bo{tour.roundsPerMatch || 1} · {tour.turnTimeLimit || 20}s · {tour.startMode === 'auto' ? 'Auto-Start' : 'Manual'}
-                        </div>
-                        <div className="text-[11px] text-slate-500">
-                          {new Date(tour.startTime).toLocaleString()} · {tour.status} · {tour.participants.length}/{tour.maxPlayers} registered
-                        </div>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        {tour.status === 'draft' && (
-                          <button
-                            type="button"
-                            onClick={() => handleTournamentStatus(tour.id, 'registration')}
-                            className="min-h-[36px] px-3 rounded-lg bg-sky-500/20 text-sky-300 text-xs font-semibold cursor-pointer"
-                          >
-                            Open Registration
-                          </button>
-                        )}
-                        {tour.status === 'registration' && (
-                          <button
-                            type="button"
-                            onClick={() => handleStartTournament(tour.id)}
-                            className="min-h-[36px] px-3 rounded-lg bg-amber-500 text-slate-950 text-xs font-semibold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Play className="w-3.5 h-3.5" />
-                            <span>Start Event Now</span>
-                          </button>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTournament(tour.id)}
-                          aria-label="Delete tournament"
-                          className="min-h-[36px] min-w-[36px] rounded-lg bg-rose-500/15 text-rose-300 flex items-center justify-center cursor-pointer"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {/* Tab 5: Profile Frame Manager & 512x512 PNG Template Generator */}
-        {activeTab === 'frames' && (
-          <div className="grid lg:grid-cols-12 gap-6 items-start">
-            <div className="lg:col-span-5 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-display font-bold text-white">
-                    {editingFrame ? 'Edit Profile Frame' : 'Upload Profile Frame'}
-                  </h2>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    Design frames using our 512x512px transparent PNG template guide.
-                  </p>
-                </div>
-              </div>
-
-              <button
-                type="button"
-                onClick={downloadSampleFrameTemplate}
-                className="w-full min-h-[44px] px-4 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 border border-sky-400/40 text-sky-200 text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>Download Sample Frame Template (.png)</span>
-              </button>
-
-              <form onSubmit={handleSaveFrame} className="space-y-4 pt-2 border-t border-white/10">
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Frame Name</label>
-                  <input
-                    type="text"
-                    required
-                    value={frameName}
-                    onChange={(e) => setFrameName(e.target.value)}
-                    placeholder="e.g. Emerald Apex Ring"
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Description</label>
-                  <input
-                    type="text"
-                    value={frameDesc}
-                    onChange={(e) => setFrameDesc(e.target.value)}
-                    placeholder="Short decorative note"
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Unlock Tier Requirement</label>
-                  <select
-                    value={frameTier}
-                    onChange={(e) => setFrameTier(e.target.value)}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  >
-                    <option value="All">All Players (Unlocked)</option>
-                    <option value="Bronze">Bronze</option>
-                    <option value="Silver">Silver+</option>
-                    <option value="Gold">Gold+</option>
-                    <option value="Platinum">Platinum+</option>
-                    <option value="Diamond">Diamond+</option>
-                    <option value="Master">Master+</option>
-                    <option value="Grandmaster">Grandmaster+</option>
-                    <option value="Mythic">Mythic Only</option>
-                  </select>
-                </div>
-
-                {!editingFrame && (
-                  <div>
-                    <label className="block text-xs text-slate-300 mb-1">Upload Frame PNG (512x512)</label>
-                    <label className="min-h-[46px] px-4 rounded-xl bg-[#0A0D14] border border-dashed border-white/20 hover:border-amber-400/50 text-xs text-slate-300 flex items-center justify-center gap-2 cursor-pointer">
-                      <ImagePlus className="w-4 h-4 text-amber-400" />
-                      <span>{frameDataUrl ? 'PNG Loaded — Ready to Publish' : 'Choose Transparent PNG File'}</span>
-                      <input type="file" accept="image/png,image/webp,image/svg+xml" className="hidden" onChange={handleFrameFile} />
-                    </label>
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    className="flex-1 min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm cursor-pointer"
-                  >
-                    {editingFrame ? 'Save Frame Edits' : 'Publish Frame'}
-                  </button>
-                  {editingFrame && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingFrame(null);
-                        setFrameName('');
-                        setFrameDesc('');
-                        setFrameTier('All');
-                      }}
-                      className="min-h-[44px] px-4 rounded-xl bg-white/10 text-xs font-semibold text-white cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                  )}
-                </div>
-              </form>
-            </div>
-
-            <div className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-              <h2 className="text-lg font-display font-bold text-white">Active & Custom Frames ({frames.length})</h2>
-              <div className="grid sm:grid-cols-2 gap-3">
-                {frames.map((f) => (
-                  <div
-                    key={f.id}
-                    className="p-3.5 rounded-xl bg-[#0A0D14] border border-white/10 flex items-center justify-between gap-3"
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <AvatarWithFrame
-                        avatarUrl={adminUser.avatarUrl}
-                        frameId={f.id}
-                        frames={frames}
-                        displayName={f.name}
+                        avatarUrl={u.avatarUrl}
+                        frameId={u.frameId}
+                        displayName={u.displayName}
                         size="md"
+                        status={live ? 'online' : 'offline'}
                       />
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white truncate">{f.name}</div>
-                        <div className="text-xs text-slate-400 truncate">Tier: {f.unlockTier}</div>
+                      <div className="min-w-0 space-y-0.5">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-bold text-sm text-white">{u.displayName}</span>
+                          <span className="text-xs font-mono text-amber-400">({u.gameId})</span>
+                          {live ? (
+                            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-[10px] font-bold text-emerald-300">
+                              ● LIVE NOW
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-full bg-slate-800 text-[10px] text-slate-400">
+                              Offline ({lastSeenLabel})
+                            </span>
+                          )}
+                          {u.status && u.status !== 'active' && (
+                            <span className="px-2 py-0.5 rounded-full bg-rose-500/20 text-[10px] font-bold text-rose-300 uppercase">
+                              {u.status}
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Live Device Details */}
+                        <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-white/5 border border-white/10">
+                            {renderDeviceIcon(u.deviceType)}
+                            <span>{u.device || `${u.deviceType || 'Device'} (${u.os || 'OS'} • ${u.browser || 'Browser'})`}</span>
+                          </span>
+                          {u.screen && (
+                            <span className="text-slate-400 font-mono">Screen: {u.screen}</span>
+                          )}
+                          {u.currentActivity && live && (
+                            <span className="text-sky-300 font-semibold">• {u.currentActivity}</span>
+                          )}
+                        </div>
+
+                        <div className="text-[11px] text-slate-400 font-mono">
+                          XP: <b className="text-amber-300">{u.xp || 0}</b> ({u.rank || 'Silver'}) • {u.wins || 0}W / {u.losses || 0}L
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center gap-1.5 shrink-0">
+
+                    {/* Direct Moderation & Instant Noti Actions */}
+                    <div className="flex flex-wrap items-center gap-1.5 shrink-0">
                       <button
                         type="button"
                         onClick={() => {
-                          setEditingFrame(f);
-                          setFrameName(f.name);
-                          setFrameDesc(f.description);
-                          setFrameTier(f.unlockTier);
+                          setNotiTarget(u.id);
+                          setNotiType('message');
+                          setNotiTitle('Admin မှ တိုက်ရိုက်စာ');
+                          setTab('noti');
                         }}
-                        aria-label={`Edit ${f.name}`}
-                        className="min-h-[36px] min-w-[36px] rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 flex items-center justify-center cursor-pointer"
+                        className="px-2.5 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/35 text-[11px] font-bold text-sky-200 flex items-center gap-1 cursor-pointer"
                       >
-                        <Edit3 className="w-3.5 h-3.5" />
+                        <Bell className="w-3 h-3" /> Noti ပို့
                       </button>
-                      {f.id !== 'frame_none' && (
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteFrame(f.id)}
-                          aria-label={`Delete ${f.name}`}
-                          className="min-h-[36px] min-w-[36px] rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 flex items-center justify-center cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          handleModerate(u, { xp: (u.xp || 1000) + 100 }, `${u.displayName} ကို +100 XP ပေးပြီးပါပြီ`)
+                        }
+                        className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 text-[11px] font-bold text-emerald-300 cursor-pointer"
+                      >
+                        +100 XP
+                      </button>
+
+                      {u.role !== 'admin' && (
+                        <>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              handleModerate(
+                                u,
+                                { status: u.status === 'banned' ? 'active' : 'banned' },
+                                u.status === 'banned' ? 'Unban ပြီးပါပြီ' : 'Ban ပြီးပါပြီ'
+                              )
+                            }
+                            className="px-2.5 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-[11px] font-bold text-rose-300 flex items-center gap-1 cursor-pointer"
+                          >
+                            <Ban className="w-3 h-3" />
+                            {u.status === 'banned' ? 'Unban' : 'Ban'}
+                          </button>
+                        </>
                       )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        )}
-        {/* Tab 6: Landing CMS */}
-        {activeTab === 'cms' && (
-          <form onSubmit={handleSaveCms} className="space-y-6">
-            <div className="p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-5">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                <div className="flex items-start gap-3">
-                  <LayoutTemplate className="w-5 h-5 text-amber-400 mt-0.5 shrink-0" />
-                  <div>
-                    <h2 className="text-lg font-display font-bold text-white">{t.admin.cmsTitle}</h2>
-                    <p className="text-xs text-slate-400 mt-0.5">{t.admin.cmsDesc}</p>
-                  </div>
-                </div>
-                <button
-                  type="submit"
-                  disabled={cmsSaving}
-                  className="min-h-[44px] px-5 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-semibold text-sm cursor-pointer whitespace-nowrap"
-                >
-                  {cmsSaving ? t.profile.saving : t.admin.saveCms}
-                </button>
-              </div>
-
-              <div className="grid md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Hero Headline (English)</label>
-                  <input
-                    type="text"
-                    value={cmsDraft.heroTitleEn}
-                    onChange={(e) => setCmsDraft((p) => ({ ...p, heroTitleEn: e.target.value }))}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Hero Headline (မြန်မာ)</label>
-                  <input
-                    type="text"
-                    value={cmsDraft.heroTitleMy}
-                    onChange={(e) => setCmsDraft((p) => ({ ...p, heroTitleMy: e.target.value }))}
-                    className="w-full h-11 px-3.5 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Hero Subtitle (English)</label>
-                  <textarea
-                    rows={3}
-                    value={cmsDraft.heroSubtitleEn}
-                    onChange={(e) => setCmsDraft((p) => ({ ...p, heroSubtitleEn: e.target.value }))}
-                    className="w-full p-3 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Hero Subtitle (မြန်မာ)</label>
-                  <textarea
-                    rows={3}
-                    value={cmsDraft.heroSubtitleMy}
-                    onChange={(e) => setCmsDraft((p) => ({ ...p, heroSubtitleMy: e.target.value }))}
-                    className="w-full p-3 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col sm:flex-row sm:items-center gap-4 pt-2 border-t border-white/10">
-                <img
-                  src={cmsDraft.heroBannerUrl}
-                  alt="Hero Banner"
-                  className="w-40 h-24 rounded-xl object-cover border border-white/10 bg-[#0A0D14]"
-                />
-                <label className="min-h-[44px] px-4 rounded-xl bg-white/5 hover:bg-white/10 border border-dashed border-white/20 text-xs font-medium text-slate-200 flex items-center gap-2 cursor-pointer w-fit">
-                  <ImagePlus className="w-4 h-4 text-amber-400" />
-                  <span>Upload Hero Background Image</span>
-                  <input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    className="hidden"
-                    onChange={(e) => handleCmsImageUpload('hero', e)}
-                  />
-                </label>
-              </div>
-            </div>
-
-            <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-5">
-              {(['connect4', 'ttt', 'rps', 'sakar_htar'] as GameType[]).map((gt) => {
-                const g = cmsDraft.games[gt];
-                return (
-                  <div key={gt} className="p-5 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-                    <div className="aspect-[16/9] rounded-xl overflow-hidden bg-[#0A0D14] border border-white/10 relative">
-                      <img src={g.bannerUrl} alt={g.nameEn} className="w-full h-full object-cover" />
-                    </div>
-                    <label className="min-h-[40px] px-3 rounded-xl bg-white/5 hover:bg-white/10 border border-dashed border-white/20 text-xs text-slate-200 flex items-center justify-center gap-2 cursor-pointer">
-                      <ImagePlus className="w-4 h-4 text-amber-400" />
-                      <span>Upload {gt.toUpperCase()} Banner</span>
-                      <input
-                        type="file"
-                        accept="image/png,image/jpeg,image/webp"
-                        className="hidden"
-                        onChange={(e) => handleCmsImageUpload(gt, e)}
-                      />
-                    </label>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Title (EN)</label>
-                      <input
-                        type="text"
-                        value={g.nameEn}
-                        onChange={(e) =>
-                          setCmsDraft((p) => ({
-                            ...p,
-                            games: { ...p.games, [gt]: { ...p.games[gt], nameEn: e.target.value } },
-                          }))
-                        }
-                        className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Title (မြန်မာ)</label>
-                      <input
-                        type="text"
-                        value={g.nameMy}
-                        onChange={(e) =>
-                          setCmsDraft((p) => ({
-                            ...p,
-                            games: { ...p.games, [gt]: { ...p.games[gt], nameMy: e.target.value } },
-                          }))
-                        }
-                        className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Description (EN)</label>
-                      <textarea
-                        rows={2}
-                        value={g.taglineEn}
-                        onChange={(e) =>
-                          setCmsDraft((p) => ({
-                            ...p,
-                            games: { ...p.games, [gt]: { ...p.games[gt], taglineEn: e.target.value } },
-                          }))
-                        }
-                        className="w-full p-2.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] text-slate-400 mb-1">Description (မြန်မာ)</label>
-                      <textarea
-                        rows={2}
-                        value={g.taglineMy}
-                        onChange={(e) =>
-                          setCmsDraft((p) => ({
-                            ...p,
-                            games: { ...p.games, [gt]: { ...p.games[gt], taglineMy: e.target.value } },
-                          }))
-                        }
-                        className="w-full p-2.5 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                      />
                     </div>
                   </div>
                 );
               })}
             </div>
-          </form>
+          </div>
         )}
 
-        {/* Tab 7: Sakar-Htar Riddle Bank CRUD (စကားထာ) */}
-        {activeTab === 'riddles' && (
-          <div className="grid lg:grid-cols-12 gap-6 items-start">
-            <form
-              onSubmit={handleSaveRiddle}
-              className="lg:col-span-5 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <BookOpen className="w-5 h-5 text-amber-400" />
-                  <h2 className="text-lg font-display font-bold text-white">
-                    {editingRiddleId ? 'Edit Riddle' : 'Add New Riddle (စကားထာ)'}
-                  </h2>
-                </div>
-                {editingRiddleId && (
-                  <button
-                    type="button"
-                    onClick={resetRiddleForm}
-                    className="text-xs text-slate-400 hover:text-white cursor-pointer"
+        {/* TAB 2: REAL-TIME NOTIFICATION & BROADCAST CENTER */}
+        {tab === 'noti' && (
+          <div className="grid md:grid-cols-2 gap-4">
+            <form onSubmit={handleSendNotification} className="cyber-panel rounded-2xl p-4 space-y-3">
+              <h2 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                <Megaphone className="w-4 h-4" />
+                <span>User များထံ Real-Time Notification / စာပို့ရန်</span>
+              </h2>
+
+              <div>
+                <label className="block text-xs text-slate-400 mb-1">လက်ခံမည့်သူ ရွေးချယ်ရန်</label>
+                <select
+                  value={notiTarget}
+                  onChange={(e) => setNotiTarget(e.target.value)}
+                  className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                >
+                  <option value="ALL">📢 User အားလုံးထံ (Broadcast to All Players)</option>
+                  {users
+                    .filter((u) => u.role !== 'admin')
+                    .map((u) => (
+                      <option key={u.id} value={u.id}>
+                        👤 {u.displayName} ({u.gameId}) {isUserLiveNow(u) ? '🟢 LIVE' : ''}
+                      </option>
+                    ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">အမျိုးအစား</label>
+                  <select
+                    value={notiType}
+                    onChange={(e) => setNotiType(e.target.value as any)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
                   >
-                    Cancel Edit
-                  </button>
-                )}
+                    <option value="broadcast">📢 ကြေညာချက်</option>
+                    <option value="message">💬 တိုက်ရိုက်စာ</option>
+                    <option value="warning">⚠️ သတိပေးချက် (Warning)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-slate-400 mb-1">ခေါင်းစဉ် (Title)</label>
+                  <input
+                    type="text"
+                    value={notiTitle}
+                    onChange={(e) => setNotiTitle(e.target.value)}
+                    className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+                  />
+                </div>
               </div>
 
               <div>
-                <label className="block text-xs text-slate-300 mb-1">Riddle Question (Myanmar Unicode)</label>
+                <label className="block text-xs text-slate-400 mb-1">ပေးပို့မည့် စာသား</label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   required
-                  value={riddleQMy}
-                  onChange={(e) => setRiddleQMy(e.target.value)}
-                  placeholder="မြန်မာ့ရိုးရာ စကားထာ မေးခွန်း..."
-                  className="w-full p-3 rounded-xl bg-[#0A0D14] border border-white/10 text-sm text-white lang-my leading-relaxed"
+                  value={notiMessage}
+                  onChange={(e) => setNotiMessage(e.target.value)}
+                  placeholder="User များထံ ချက်ချင်းပြသမည့် Notification စာသား ရေးပါ..."
+                  className="w-full p-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs text-slate-300 mb-1">Optional English Hint / Translation</label>
-                <input
-                  type="text"
-                  value={riddleHintEn}
-                  onChange={(e) => setRiddleHintEn(e.target.value)}
-                  placeholder="Short poetic clue in English"
-                  className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                />
-              </div>
-
-              <div className="space-y-2">
-                <label className="block text-xs text-slate-300">4 Answer Options (A / B / C / D)</label>
-                {(['A', 'B', 'C', 'D'] as const).map((letter, idx) => (
-                  <div key={letter} className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setRiddleCorrectIdx(idx as 0 | 1 | 2 | 3)}
-                      title="Mark as Official Answer"
-                      className={`w-10 h-10 rounded-xl font-mono font-bold text-xs border shrink-0 cursor-pointer ${
-                        riddleCorrectIdx === idx
-                          ? 'bg-emerald-500 text-slate-950 border-emerald-300'
-                          : 'bg-[#0A0D14] text-slate-400 border-white/10 hover:text-white'
-                      }`}
-                    >
-                      {letter}
-                    </button>
-                    <input
-                      type="text"
-                      required
-                      value={riddleOpts[idx]}
-                      onChange={(e) => {
-                        const next: [string, string, string, string] = [...riddleOpts] as [
-                          string,
-                          string,
-                          string,
-                          string,
-                        ];
-                        next[idx] = e.target.value;
-                        setRiddleOpts(next);
-                      }}
-                      placeholder={`Option ${letter}`}
-                      className="flex-1 h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white lang-my"
-                    />
-                  </div>
-                ))}
-                <p className="text-[11px] text-emerald-300">
-                  Highlighted green letter ({['A', 'B', 'C', 'D'][riddleCorrectIdx]}) is the Official Answer (အဖြေမှန်).
-                </p>
-              </div>
-
-              <div className="grid sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Explanation (မြန်မာ)</label>
-                  <input
-                    type="text"
-                    value={riddleExpMy}
-                    onChange={(e) => setRiddleExpMy(e.target.value)}
-                    placeholder="အဖြေရှင်းလင်းချက်..."
-                    className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white lang-my"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs text-slate-300 mb-1">Explanation (English)</label>
-                  <input
-                    type="text"
-                    value={riddleExpEn}
-                    onChange={(e) => setRiddleExpEn(e.target.value)}
-                    placeholder="Short explanation in English"
-                    className="w-full h-10 px-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white"
-                  />
-                </div>
               </div>
 
               <button
                 type="submit"
-                disabled={riddleSaving}
-                className="w-full min-h-[44px] rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-60 text-slate-950 font-semibold text-sm flex items-center justify-center gap-2 cursor-pointer"
+                disabled={sendingNoti}
+                className="w-full h-11 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 cursor-pointer"
               >
-                <Plus className="w-4 h-4" />
-                <span>{editingRiddleId ? 'Save Riddle Changes' : 'Add Riddle to Bank'}</span>
+                <Send className="w-4 h-4" />
+                <span>{sendingNoti ? 'ပေးပို့နေသည်...' : 'Real-Time Notification ချက်ချင်းပို့မည်'}</span>
               </button>
             </form>
 
-            <div className="lg:col-span-7 p-6 rounded-2xl bg-[#121826] border border-white/10 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h2 className="text-lg font-display font-bold text-white">
-                    Sakar-Htar Riddle Bank ({riddles.length})
-                  </h2>
-                  <p className="text-xs text-slate-400">
-                    10 unique riddles are randomly drawn for every Solo, Quick, or Custom Room match.
-                  </p>
-                </div>
-                <div className="relative">
-                  <Search className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    value={riddleSearch}
-                    onChange={(e) => setRiddleSearch(e.target.value)}
-                    placeholder="Search riddles..."
-                    className="h-10 pl-9 pr-3 rounded-xl bg-[#0A0D14] border border-white/10 text-xs text-white w-full sm:w-56"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-3 max-h-[640px] overflow-y-auto pr-1">
-                {filteredRiddles.map((r, idx) => (
-                  <div
-                    key={r.id}
-                    className={`p-4 rounded-xl border space-y-2 ${
-                      editingRiddleId === r.id
-                        ? 'bg-amber-500/10 border-amber-400/60'
-                        : 'bg-[#0A0D14] border-white/10'
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0 space-y-1">
-                        <div className="text-sm font-semibold text-white lang-my leading-relaxed">
-                          <span className="font-mono text-amber-400 mr-2">#{idx + 1}</span>
-                          {r.questionMy}
-                        </div>
-                        {r.hintEn && <div className="text-xs text-slate-400 italic">“{r.hintEn}”</div>}
+            {/* Live Sent Notifications Log */}
+            <div className="cyber-panel rounded-2xl p-4 space-y-3">
+              <h3 className="text-sm font-bold text-white">ပေးပို့ပြီးသော Notification မှတ်တမ်း ({notiHistory.length})</h3>
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {notiHistory.length === 0 ? (
+                  <p className="text-xs text-slate-500 text-center py-8">Notification ပေးပို့ထားခြင်း မရှိသေးပါ။</p>
+                ) : (
+                  notiHistory.map((n) => (
+                    <div key={n.id} className="p-3 rounded-xl bg-[#090d16] border border-white/10 text-xs space-y-1">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-amber-300">{n.title}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {n.targetUserId === 'ALL' ? 'All Users' : n.targetUserId}
+                        </span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleEditRiddle(r)}
-                          aria-label="Edit riddle"
-                          className="min-h-[34px] min-w-[34px] rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 flex items-center justify-center cursor-pointer"
-                        >
-                          <Edit3 className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRiddle(r.id)}
-                          aria-label="Delete riddle"
-                          className="min-h-[34px] min-w-[34px] rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 flex items-center justify-center cursor-pointer"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                      <p className="text-slate-200">{n.message}</p>
                     </div>
-
-                    <div className="grid sm:grid-cols-2 gap-1.5 text-xs">
-                      {r.options.map((opt, oIdx) => (
-                        <div
-                          key={oIdx}
-                          className={`px-2.5 py-1.5 rounded-lg border lang-my ${
-                            oIdx === r.correctIndex
-                              ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200 font-semibold'
-                              : 'bg-[#121826] border-white/5 text-slate-300'
-                          }`}
-                        >
-                          <span className="font-mono mr-1.5 text-slate-400">{['A', 'B', 'C', 'D'][oIdx]}.</span>
-                          {opt}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           </div>
         )}
-      </div>
+
+        {/* TAB 3: 100+ QUIZ MANAGER */}
+        {tab === 'quiz' && (
+          <div className="cyber-panel rounded-2xl p-4 space-y-4">
+            <h2 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+              <BookOpen className="w-4 h-4" />
+              <span>ဉာဏ်စမ်းပဟေဠိ မေးခွန်းများ စီမံရန် (စုစုပေါင်း {riddles.length} ပုဒ်)</span>
+            </h2>
+
+            <form onSubmit={handleAddQuiz} className="grid sm:grid-cols-12 gap-2">
+              <input
+                type="text"
+                value={newQ}
+                onChange={(e) => setNewQ(e.target.value)}
+                placeholder="မေးခွန်းအသစ် ရေးပါ..."
+                className="sm:col-span-5 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+              />
+              <input
+                type="text"
+                value={newOpts}
+                onChange={(e) => setNewOpts(e.target.value)}
+                placeholder="ရွေးချယ်စရာ ၄ ခု (ကော်မာခံပါ)"
+                className="sm:col-span-4 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
+              />
+              <input
+                type="number"
+                min={0}
+                max={3}
+                value={newAnsIdx}
+                onChange={(e) => setNewAnsIdx(Number(e.target.value))}
+                className="sm:col-span-1 h-10 px-2 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white text-center"
+                title="အဖြေမှန် Index (0-3)"
+              />
+              <button
+                type="submit"
+                className="sm:col-span-2 h-10 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center justify-center gap-1 cursor-pointer"
+              >
+                <Plus className="w-3.5 h-3.5" /> ထည့်မည်
+              </button>
+            </form>
+
+            <div className="max-h-72 overflow-y-auto space-y-1.5 pr-1">
+              {riddles.map((r, i) => (
+                <div
+                  key={r.id || i}
+                  className="p-2.5 rounded-xl bg-[#090d16] border border-white/10 flex items-center justify-between gap-2 text-xs"
+                >
+                  <div className="truncate">
+                    <span className="text-amber-400 font-mono mr-2">#{i + 1}</span>
+                    <span className="text-white">{r.question}</span>
+                    <span className="text-emerald-400 ml-2">({r.options?.[r.answerIndex]})</span>
+                  </div>
+                  {String(r.id).startsWith('custom_') && (
+                    <button
+                      type="button"
+                      onClick={() => handleDeleteCustomQuiz(r.id)}
+                      className="text-rose-400 hover:text-rose-300 cursor-pointer shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* TAB 4: SERVER FEATURE LOCKS */}
+        {tab === 'controls' && (
+          <div className="cyber-panel rounded-2xl p-4 space-y-3">
+            <h2 className="text-sm font-bold text-white flex items-center gap-2">
+              <Trophy className="w-4 h-4 text-amber-400" />
+              <span>ဂိမ်းများ လော့ခ်ချ/ဖွင့် ထိန်းချုပ်မှု (Real-Time Feature Locks)</span>
+            </h2>
+            <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { id: 'connect4', label: '၄ လုံးတန်း (Connect 4)' },
+                { id: 'tictactoe', label: 'Tic-Tac-Toe' },
+                { id: 'rps', label: 'ကျောက်တုံး စက္ကူ ကတ်ကြေး' },
+                { id: 'sakarhtar', label: 'ဉာဏ်စမ်းပဟေဠိ' },
+              ].map((g) => {
+                const locked = Boolean(featureLocks[g.id]);
+                return (
+                  <button
+                    key={g.id}
+                    type="button"
+                    onClick={() => handleToggleLock(g.id)}
+                    className={`p-4 rounded-2xl border flex items-center justify-between text-xs font-bold cursor-pointer ${
+                      locked
+                        ? 'bg-rose-500/15 border-rose-500/40 text-rose-200'
+                        : 'bg-emerald-500/10 border-emerald-500/35 text-emerald-200'
+                    }`}
+                  >
+                    <span>{g.label}</span>
+                    {locked ? <Lock className="w-4 h-4" /> : <Unlock className="w-4 h-4" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </main>
     </div>
   );
 };
