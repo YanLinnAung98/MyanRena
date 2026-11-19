@@ -10,7 +10,7 @@ import {
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
-import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
+import { getShuffledQuizSet, QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { db, firebaseInitError, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
@@ -36,7 +36,7 @@ import type {
 
 export interface ArenaNotification {
   id: string;
-  targetUserId: string; // 'ALL' or specific user.id
+  targetUserId: string;
   title: string;
   message: string;
   type: 'broadcast' | 'message' | 'warning';
@@ -128,8 +128,21 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
   const [notifications, setNotifications] = useState<ArenaNotification[]>([]);
   const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
+
+  // Live Admin-Controlled System State
+  const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState<string>(
+    'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။'
+  );
   const [featureLocks, setFeatureLocks] = useState<Record<string, boolean>>({});
-  const [matchmakingSettings, setMatchmakingSettings] = useState<any>({ maxWaitSec: 30, xpRange: 400 });
+  const [xpRules, setXpRules] = useState({ winXp: 75, drawXp: 25, lossXp: -20, quizCountPerMatch: 10 });
+  const [matchmakingSettings, setMatchmakingSettings] = useState<any>({
+    maxWaitSec: 30,
+    botFallbackSec: 8,
+    xpRange: 400,
+    defaultTurnTime: 20,
+  });
+
   const [onlinePlayers, setOnlinePlayers] = useState<UserProfile[]>([]);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [tournaments, setTournaments] = useState<any[]>([]);
@@ -151,6 +164,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const queueRoomIdRef = useRef<string | null>(null);
   const xpAwardedMatchRef = useRef<string | null>(null);
   const alertedNotiIdsRef = useRef<Set<string>>(new Set());
+  const sessionStartedAtRef = useRef<number>(Date.now());
+  const xpRulesRef = useRef(xpRules);
+  xpRulesRef.current = xpRules;
 
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
@@ -189,6 +205,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const setAdminSocketMode = useCallback((_mode: 'admin' | 'lobby') => {}, []);
 
+  // Uses live Admin-configured XP rules!
   const applyXpDelta = useCallback(
     async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
       if (matchId && xpAwardedMatchRef.current === matchId) return;
@@ -197,7 +214,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       const player = resolveCurrentPlayer();
       if (!player) return;
 
-      const delta = outcome === 'win' ? 75 : outcome === 'draw' ? 25 : -20;
+      const rules = xpRulesRef.current;
+      const delta =
+        outcome === 'win' ? rules.winXp : outcome === 'draw' ? rules.drawXp : rules.lossXp;
       const nextXp = Math.max(0, (player.xp || 1000) + delta);
       const nextRank =
         nextXp >= 2500
@@ -224,15 +243,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       onUserUpdate(updated);
 
       if (isFirebaseConfigured && db && updated.id) {
-        await setDoc(doc(db, 'users', updated.id), updated, { merge: true }).catch((e) =>
-          console.error('XP Sync Error:', e)
-        );
+        await setDoc(doc(db, 'users', updated.id), updated, { merge: true }).catch(() => {});
       }
     },
     [resolveCurrentPlayer, onUserUpdate]
   );
 
-  // 1. REAL-TIME DEVICE PRESENCE HEARTBEAT (Every 15s + Immediately on Login/Activity)
+  // 1. Live Device Heartbeat
   useEffect(() => {
     if (!token) return;
     const me = resolveCurrentPlayer();
@@ -266,7 +283,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           setConnectionState('connected');
         } catch (err: any) {
           setCloudError(err?.message || 'Firestore Write Error');
-          console.error('Heartbeat Firestore Error:', err);
         }
       }
     };
@@ -277,9 +293,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       pushHeartbeat(true);
     }, 15000);
 
-    const handleBeforeUnload = () => {
-      pushHeartbeat(false);
-    };
+    const handleBeforeUnload = () => pushHeartbeat(false);
     window.addEventListener('beforeunload', handleBeforeUnload);
 
     return () => {
@@ -288,7 +302,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     };
   }, [token, activeMatch?.id, currentRoom?.id, resolveCurrentPlayer]);
 
-  // 2. REAL-TIME USERS, RANKING & ADMIN NOTIFICATIONS LISTENER
+  // 2. Real-Time Platform Subscriptions (Users, Config, Landing, Custom Quizzes, Notifications, Tournaments)
   useEffect(() => {
     if (!token) return;
     const myId = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '').replace(/^local_/, '');
@@ -305,7 +319,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
       setNotifications(mine);
 
-      // Trigger real-time popup + banner + sound for unread notifications on Player side
       if (token !== 'admin-token') {
         const latestBroadcast = mine.find((n) => n.type === 'broadcast' && !n.read);
         if (latestBroadcast) {
@@ -341,7 +354,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
     syncLocalFallback();
 
-    // Listen for same-browser tab updates via BroadcastChannel & storage event
     let channel: BroadcastChannel | null = null;
     try {
       if (typeof BroadcastChannel !== 'undefined') {
@@ -358,7 +370,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       };
     }
 
-    // Firestore Real-Time Users -> Powers BOTH Ranking & Admin Device Monitor
     const unsubUsers = onSnapshot(
       collection(db, 'users'),
       (snap) => {
@@ -382,50 +393,65 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         if (token !== 'admin-token') {
           const me = list.find((u) => u.id === myId) as any;
           if (me) {
-            if (me.status === 'banned' || me.status === 'suspended') {
-              onKicked('သင့်အကောင့်ကို Admin မှ ပိတ်သိမ်းထားပါသည်။');
+            const kickedByAdmin =
+              me.forceLogoutAt && Number(me.forceLogoutAt) > sessionStartedAtRef.current;
+            if (me.status === 'banned') {
+              onKicked('သင့်အကောင့်ကို Admin မှ အပြီးပိတ်သိမ်း (Ban) ထားပါသည်။');
+            } else if (me.status === 'suspended') {
+              const until = me.suspendedUntil ? Date.parse(me.suspendedUntil) : 0;
+              if (!until || until > Date.now()) {
+                onKicked('သင့်အကောင့်ကို Admin မှ ယာယီပိတ်ထား (Suspended) ပါသည်။');
+              } else {
+                onUserUpdate({ ...me, status: 'active', role: 'player', isAdmin: false });
+              }
+            } else if (kickedByAdmin) {
+              onKicked('Admin မှ သင့် Session ကို ချက်ချင်းထုတ်ပယ် (Kick) လိုက်ပါသည်။');
             } else {
               onUserUpdate({ ...me, role: 'player', isAdmin: false });
             }
           }
         }
       },
-      (err) => {
-        setCloudError(err.message);
-        console.error('Firestore users listener error:', err);
-      }
+      (err) => setCloudError(err.message)
     );
 
-    // Firestore Real-Time Notifications (Broadcasts + Direct Admin Messages + Warnings)
-    const unsubNotis = onSnapshot(
-      collection(db, 'notifications'),
-      (snap) => {
-        const list: ArenaNotification[] = [];
-        snap.forEach((d) => {
-          list.push({ ...(d.data() as ArenaNotification), id: d.id });
-        });
-        const store = readServerlessStore();
-        store.notifications = list;
-        writeServerlessStore(store);
-        processNotifications(list);
-      },
-      (err) => {
-        console.error('Firestore notifications listener error:', err);
-      }
-    );
+    const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
+      const list: ArenaNotification[] = [];
+      snap.forEach((d) => list.push({ ...(d.data() as ArenaNotification), id: d.id }));
+      const store = readServerlessStore();
+      store.notifications = list;
+      writeServerlessStore(store);
+      processNotifications(list);
+    });
 
-    // Firestore Live Feature Locks & Config
     const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const cfg = snap.data() as any;
+        setMaintenanceMode(Boolean(cfg.maintenanceMode));
+        if (cfg.maintenanceMessage) setMaintenanceMessage(cfg.maintenanceMessage);
         if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
-        if (cfg.matchmakingSettings) setMatchmakingSettings(cfg.matchmakingSettings);
+        if (cfg.xpRules) setXpRules((prev) => ({ ...prev, ...cfg.xpRules }));
+        if (cfg.matchmakingSettings) setMatchmakingSettings((prev: any) => ({ ...prev, ...cfg.matchmakingSettings }));
       }
+    });
+
+    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
+      if (snap.exists()) {
+        setLandingContent(getPatchedLandingContent(snap.data() as LandingContent));
+      }
+    });
+
+    const unsubRiddles = onSnapshot(collection(db, 'riddles'), (snap) => {
+      const custom: any[] = [];
+      snap.forEach((d) => custom.push({ ...d.data(), id: d.id }));
+      const store = readServerlessStore();
+      store.riddles = [...custom, ...QUIZ_BANK_100];
+      writeServerlessStore(store);
     });
 
     const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
       const list: any[] = [];
-      snap.forEach((d) => list.push(d.data()));
+      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
       setTournaments(list);
     });
 
@@ -444,6 +470,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       unsubUsers();
       unsubNotis();
       unsubConfig();
+      unsubLanding();
+      unsubRiddles();
       unsubTourneys();
       unsubRooms();
     };
@@ -499,9 +527,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     return () => unsubMatch();
   }, [activeMatch?.id, activeMatch?.isRealtimePvp, resolveCurrentPlayer, applyXpDelta]);
 
-  // 5. Matchmaking Queue
+  // 5. Matchmaking Queue (Respects Admin botFallbackSec)
   const joinQueue = useCallback(
     async (rawGameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
+      if (featureLocks.matchmaking) {
+        pushToast('error', 'Matchmaking ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
+        return;
+      }
       const gameType = normalizeGameId(rawGameType);
       const player = resolveCurrentPlayer();
       if (!player) return;
@@ -566,11 +598,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           });
           await setDoc(doc(db, 'rooms', ticketId), ticketRoom);
           setCurrentRoom(ticketRoom);
-        } catch (err) {
-          console.error('Matchmaking error:', err);
-        }
+        } catch {}
       }
 
+      const fallbackMs = Math.max(3000, (Number(matchmakingSettings.botFallbackSec) || 8) * 1000);
       queueTimerRef.current = window.setTimeout(async () => {
         if (queueRoomIdRef.current && isFirebaseConfigured && db) {
           await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
@@ -580,19 +611,22 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         setQueuedGame(null);
         setQueueStatus(null);
         setMatchChat([]);
-        setActiveMatch(
-          buildPlayableMatch([player], {
-            gameType,
-            mode: 'bot',
-            difficulty: 'medium',
-            bestOf,
-            turnTimeLimit,
-            isRealtimePvp: false,
-          })
-        );
-      }, 6000);
+        const match = buildPlayableMatch([player], {
+          gameType,
+          mode: 'bot',
+          difficulty: 'medium',
+          bestOf,
+          turnTimeLimit,
+          isRealtimePvp: false,
+        });
+        if (gameType === 'sakarhtar') {
+          const store = readServerlessStore();
+          match.riddles = getShuffledQuizSet(xpRulesRef.current.quizCountPerMatch || 10, store.riddles);
+        }
+        setActiveMatch(match);
+      }, fallbackMs);
     },
-    [resolveCurrentPlayer, pushToast]
+    [featureLocks.matchmaking, matchmakingSettings.botFallbackSec, resolveCurrentPlayer, pushToast]
   );
 
   const leaveQueue = useCallback(async () => {
@@ -621,10 +655,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setCurrentRoom(null);
     setQueueStatus(null);
     setQueuedGame(null);
-    setActiveMatch(buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' }));
+    const match = buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' });
+    const store = readServerlessStore();
+    match.riddles = getShuffledQuizSet(xpRulesRef.current.quizCountPerMatch || 10, store.riddles);
+    setActiveMatch(match);
   }, [resolveCurrentPlayer]);
 
-  // 6. Move Handler for All 4 Games
+  // 6. Unified Move Handler
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
@@ -881,7 +918,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const sendMatchChat = useCallback(
     async (text: string) => {
-      if (!text.trim() || !activeMatch) return;
+      if (featureLocks.chat || !text.trim() || !activeMatch) return;
       const me = resolveCurrentPlayer();
       const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
       setMatchChat((prev) => [...prev, msg]);
@@ -889,12 +926,12 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
     },
-    [activeMatch, resolveCurrentPlayer]
+    [featureLocks.chat, activeMatch, resolveCurrentPlayer]
   );
 
   const sendRoomChat = useCallback(
     async (text: string) => {
-      if (!text.trim() || !currentRoom) return;
+      if (featureLocks.chat || !text.trim() || !currentRoom) return;
       const me = resolveCurrentPlayer();
       const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
       setRoomChat((prev) => [...prev, msg]);
@@ -902,7 +939,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         await updateDoc(doc(db, 'rooms', currentRoom.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
     },
-    [currentRoom, resolveCurrentPlayer]
+    [featureLocks.chat, currentRoom, resolveCurrentPlayer]
   );
 
   const sendChallenge = useCallback(
@@ -932,6 +969,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     notifications,
     unreadNotiCount,
     markAllNotificationsRead,
+    maintenanceMode,
+    maintenanceMessage,
+    xpRules,
     frames,
     featureLocks,
     matchmakingSettings,
