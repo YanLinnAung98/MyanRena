@@ -8,9 +8,11 @@ import {
   updateDoc,
 } from 'firebase/firestore';
 import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
+import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { db, isFirebaseConfigured } from './firebase.ts';
 
-export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v3';
+export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v4';
+export const ACTIVE_USER_KEY = 'vanguard_active_user_v4';
 
 export const DEFAULT_SAKAR_RIDDLES = [
   {
@@ -65,6 +67,41 @@ export const DEFAULT_SAKAR_RIDDLES = [
   },
 ];
 
+export function getPatchedLandingContent(base = DEFAULT_LANDING_CONTENT) {
+  const games = { ...(base.games || {}) } as any;
+  (['connect4', 'tictactoe', 'rps', 'sakarhtar'] as const).forEach((gid) => {
+    games[gid] = {
+      ...(games[gid] || {}),
+      bannerUrl: GAME_ARTWORKS[gid],
+    };
+  });
+  return {
+    ...base,
+    heroBannerUrl: GAME_ARTWORKS.heroBanner,
+    games,
+  };
+}
+
+export function saveActiveSessionUser(user: any) {
+  try {
+    localStorage.setItem(ACTIVE_USER_KEY, JSON.stringify(user));
+    const store = readServerlessStore();
+    if (user?.id) {
+      store.users[user.id] = user;
+      writeServerlessStore(store);
+    }
+  } catch {}
+}
+
+export function readActiveSessionUser(): any | null {
+  try {
+    const raw = localStorage.getItem(ACTIVE_USER_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function readServerlessStore() {
   const defaultStore = {
     users: {
@@ -82,7 +119,7 @@ export function readServerlessStore() {
         draws: 1,
         frameId: 'legend',
         status: 'active',
-        avatarUrl: 'https://ui-avatars.com/api/?name=Yan+Linn+Aung&background=F59E0B&color=0A0D14&bold=true',
+        avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
         friends: [],
         blocked: [],
         createdAt: new Date().toISOString(),
@@ -103,7 +140,7 @@ export function readServerlessStore() {
         createdAt: new Date().toISOString(),
       },
     ],
-    landingContent: DEFAULT_LANDING_CONTENT,
+    landingContent: getPatchedLandingContent(DEFAULT_LANDING_CONTENT),
     featureLocks: {
       connect4: false,
       tictactoe: false,
@@ -131,6 +168,7 @@ export function readServerlessStore() {
         ...defaultStore,
         ...parsed,
         riddles: parsed.riddles?.length ? parsed.riddles : defaultStore.riddles,
+        landingContent: getPatchedLandingContent(parsed.landingContent || DEFAULT_LANDING_CONTENT),
         featureLocks: { ...defaultStore.featureLocks, ...(parsed.featureLocks || {}) },
         matchmakingSettings: { ...defaultStore.matchmakingSettings, ...(parsed.matchmakingSettings || {}) },
       };
@@ -169,7 +207,7 @@ export function buildPlayableMatch(
     xp: user?.xp || 1000,
     rank: 'Gold',
     frameId: 'gold',
-    avatarUrl: 'https://ui-avatars.com/api/?name=Aegis+Bot&background=6366F1&color=fff',
+    avatarUrl: createAvatarSvg('AI', '#4f46e5', '#ffffff'),
     isBot: true,
   };
 
@@ -177,25 +215,6 @@ export function buildPlayableMatch(
   const c4Board = Array.from({ length: 6 }, () => Array(7).fill(null));
   const riddles = store.riddles?.length ? store.riddles : DEFAULT_SAKAR_RIDDLES;
   const deadline = new Date(Date.now() + turnTimeLimit * 1000).toISOString();
-
-  const statePayload = {
-    board: gameType === 'tictactoe' ? tttBoard : gameType === 'connect4' ? c4Board : null,
-    grid: gameType === 'connect4' ? c4Board : tttBoard,
-    cells: tttBoard,
-    turnUserId: user.id,
-    turnDeadline: deadline,
-    round: 1,
-    bestOf,
-    choices: {} as Record<string, string | null>,
-    lastRound: null as any,
-    riddles,
-    currentIndex: 0,
-    currentRiddle: riddles[0],
-    scores: { [user.id]: 0, aegis_bot: 0 },
-    answers: {} as Record<string, number>,
-    winnerId: null as string | null,
-    isDraw: false,
-  };
 
   return {
     id: `match_${Date.now()}`,
@@ -207,15 +226,15 @@ export function buildPlayableMatch(
     turnDeadline: deadline,
     status: 'active',
     players: [user, botPlayer],
-    player1: user,
-    player2: botPlayer,
     turnUserId: user.id,
-    currentTurn: user.id,
     scores: { [user.id]: 0, aegis_bot: 0 },
     round: 1,
-    board: statePayload.board,
-    state: statePayload,
-    winnerId: null,
+    tttBoard,
+    c4Board,
+    rpsLastRound: null as { playerChoice: string; botChoice: string; winner: 'player' | 'bot' | 'draw' } | null,
+    riddles,
+    riddleIndex: 0,
+    winnerId: null as string | null,
     isDraw: false,
     createdAt: new Date().toISOString(),
   };
@@ -226,6 +245,28 @@ function jsonResponse(data: any, status = 200): Response {
     status,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+// Global broken-image auto-repair so no broken image icons ever appear on GitHub Pages
+if (typeof window !== 'undefined' && !(window as any).__vanguardImgGuard) {
+  (window as any).__vanguardImgGuard = true;
+  window.addEventListener(
+    'error',
+    (ev: Event) => {
+      const target = ev.target as HTMLImageElement | null;
+      if (target && target.tagName === 'IMG' && !target.dataset.repaired) {
+        target.dataset.repaired = '1';
+        const alt = (target.alt || '').toLowerCase();
+        if (alt.includes('connect') || alt.includes('4')) target.src = GAME_ARTWORKS.connect4;
+        else if (alt.includes('tic')) target.src = GAME_ARTWORKS.tictactoe;
+        else if (alt.includes('rock') || alt.includes('rps')) target.src = GAME_ARTWORKS.rps;
+        else if (alt.includes('sakar') || alt.includes('riddle')) target.src = GAME_ARTWORKS.sakarhtar;
+        else if (alt.includes('stage') || alt.includes('banner')) target.src = GAME_ARTWORKS.heroBanner;
+        else target.src = createAvatarSvg(target.alt || 'P');
+      }
+    },
+    true
+  );
 }
 
 if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
@@ -252,53 +293,73 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     }
 
     const store = readServerlessStore();
-    const adminFallback = store.users.admin_yanlinnaung || Object.values(store.users)[0];
-    const currentUser =
-      token === 'admin-token'
-        ? adminFallback
-        : Object.values(store.users).find((u: any) => token.includes(u.id)) || adminFallback;
+    const activeSaved = readActiveSessionUser();
+
+    // Strictly resolve user by token — NEVER fallback a regular user to admin_yanlinnaung
+    let currentUser: any = null;
+    if (token === 'admin-token') {
+      currentUser = store.users.admin_yanlinnaung;
+    } else if (token) {
+      const uid = token.replace(/^token_/, '').replace(/^local_/, '');
+      currentUser =
+        store.users[uid] ||
+        (activeSaved && activeSaved.id === uid ? activeSaved : null) ||
+        Object.values(store.users).find((u: any) => u.id !== 'admin_yanlinnaung' && token.includes(u.id)) ||
+        activeSaved;
+      if (currentUser && currentUser.id !== 'admin_yanlinnaung') {
+        currentUser.role = 'player';
+        currentUser.isAdmin = false;
+      }
+    }
 
     if (path === '/api/bootstrap') {
       return jsonResponse({
         onlineCount: Math.max(1, Object.keys(store.users).length),
-        landingContent: store.landingContent || DEFAULT_LANDING_CONTENT,
+        landingContent: getPatchedLandingContent(store.landingContent),
       });
     }
 
     if (path === '/api/auth/me') {
       if (!token) return jsonResponse({ error: 'Unauthorized' }, 401);
-      if (token === 'admin-token') return jsonResponse({ user: adminFallback });
+      if (token === 'admin-token') return jsonResponse({ user: store.users.admin_yanlinnaung });
       if (isFirebaseConfigured && db) {
         const uid = token.replace(/^token_/, '');
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
-        if (snap && snap.exists()) return jsonResponse({ user: snap.data() });
+        if (snap && snap.exists()) {
+          const uData = { ...snap.data(), role: 'player', isAdmin: false };
+          saveActiveSessionUser(uData);
+          return jsonResponse({ user: uData });
+        }
       }
-      return jsonResponse({ user: currentUser });
+      if (currentUser) return jsonResponse({ user: currentUser });
+      return jsonResponse({ error: 'Session expired' }, 401);
     }
 
     if (path === '/api/auth/logout') {
+      localStorage.removeItem(ACTIVE_USER_KEY);
       return jsonResponse({ ok: true });
     }
 
     if (path === '/api/matches/bot' && method === 'POST') {
-      return jsonResponse({ match: buildPlayableMatch(currentUser, body) });
+      return jsonResponse({ match: buildPlayableMatch(currentUser || activeSaved, body) });
     }
 
     if (path === '/api/sakar/solo' && method === 'POST') {
       return jsonResponse({
-        match: buildPlayableMatch(currentUser, { gameType: 'sakarhtar', mode: 'solo', difficulty: 'medium' }),
+        match: buildPlayableMatch(currentUser || activeSaved, { gameType: 'sakarhtar', mode: 'solo', difficulty: 'medium' }),
       });
     }
 
     if (path === '/api/sakar/rooms' && method === 'POST') {
+      const host = currentUser || activeSaved;
       const code = 'MR-' + Math.floor(1000 + Math.random() * 9000);
       const room = {
         id: `room_${Date.now()}`,
         code,
-        title: body.title || `${currentUser.displayName}'s Room`,
-        hostId: currentUser.id,
+        title: body.title || `${host.displayName}'s Room`,
+        hostId: host.id,
         maxPlayers: Math.min(8, Math.max(2, Number(body.maxPlayers) || 8)),
-        players: [currentUser],
+        players: [host],
         status: 'waiting',
       };
       store.rooms.push(room);
@@ -310,6 +371,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     }
 
     if (path === '/api/sakar/rooms/join' && method === 'POST') {
+      const player = currentUser || activeSaved;
       const codeOrId = String(body.roomId || '').trim().toUpperCase();
       let room = store.rooms.find(
         (r: any) => r.id.toUpperCase() === codeOrId || r.code.toUpperCase() === codeOrId
@@ -324,8 +386,8 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         });
       }
       if (!room) return jsonResponse({ error: 'Room not found.' }, 404);
-      if (!room.players.some((p: any) => p.id === currentUser.id)) {
-        room.players.push(currentUser);
+      if (!room.players.some((p: any) => p.id === player.id)) {
+        room.players.push(player);
         writeServerlessStore(store);
       }
       return jsonResponse({ room });
@@ -340,7 +402,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
 
     if (path.match(/^\/api\/sakar\/rooms\/[^/]+\/start$/) && method === 'POST') {
       return jsonResponse({
-        match: buildPlayableMatch(currentUser, { gameType: 'sakarhtar', mode: 'custom' }),
+        match: buildPlayableMatch(currentUser || activeSaved, { gameType: 'sakarhtar', mode: 'custom' }),
       });
     }
 
@@ -361,7 +423,7 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
         friends: [],
         incomingRequests: [],
         outgoingRequests: [],
-        blocked: currentUser.blocked || [],
+        blocked: currentUser?.blocked || [],
         conversations: [],
       });
     }
@@ -372,10 +434,12 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     }
 
     if (path.startsWith('/api/profile') && ['PATCH', 'POST', 'PUT'].includes(method)) {
-      Object.assign(currentUser, body);
-      writeServerlessStore(store);
-      if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
+      if (currentUser) {
+        Object.assign(currentUser, body);
+        saveActiveSessionUser(currentUser);
+        if (isFirebaseConfigured && db) {
+          await setDoc(doc(db, 'users', currentUser.id), currentUser, { merge: true }).catch(() => {});
+        }
       }
       return jsonResponse({ user: currentUser });
     }
@@ -408,12 +472,12 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
       }
 
       if (path.includes('landing') && ['PUT', 'POST', 'PATCH'].includes(method)) {
-        store.landingContent = body;
+        store.landingContent = getPatchedLandingContent(body);
         writeServerlessStore(store);
         if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'system', 'landing'), body, { merge: true }).catch(() => {});
+          await setDoc(doc(db, 'system', 'landing'), store.landingContent, { merge: true }).catch(() => {});
         }
-        return jsonResponse({ ok: true, landingContent: body });
+        return jsonResponse({ ok: true, landingContent: store.landingContent });
       }
 
       if ((path.includes('announce') || path.includes('broadcast')) && method === 'POST') {
