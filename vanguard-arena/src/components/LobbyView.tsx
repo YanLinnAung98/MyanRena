@@ -1,34 +1,22 @@
 import React from 'react';
-import {
-  Award,
-  Check,
-  ChevronRight,
-  Copy,
-  Lock,
-  Sparkles,
-  Swords,
-  Users,
-} from 'lucide-react';
+import { ChevronRight, Lock, Sparkles, Swords } from 'lucide-react';
 import type { GameType, LandingContent, Language, Tournament, UserProfile } from '../types.ts';
-import { resolveBannerImage } from '../utils/gameArtworks.ts';
-import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameStage3D, TiltCard3D } from './Game3DVisuals.tsx';
-import { GameBadgeIcon, RankTierIcon } from './PremiumIcons.tsx';
+import { GameBadgeIcon } from './PremiumIcons.tsx';
 import { TournamentBillboard } from './TournamentBillboard.tsx';
 
 interface LobbyViewProps {
   lang: Language;
   landingContent?: LandingContent;
-  user: UserProfile;
+  currentUserId?: string;
   frames: any[];
   featureLocks: Record<string, boolean>;
   tournaments: Tournament[];
-  onlinePlayers: UserProfile[];
+  allUsers: UserProfile[];
   onSelectGame: (gameType: GameType) => void;
   onInspectPlayer: (userId: string) => void;
   onOpenTournaments: () => void;
-  onOpenProfile: () => void;
-  onNotify: (level: string, message: string) => void;
+  onEnterTournamentMatch?: (tournament: Tournament, matchupId?: string) => void;
 }
 
 const FULL_GAME_CARDS: Array<{
@@ -85,106 +73,34 @@ const FULL_GAME_CARDS: Array<{
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   lang,
-  user,
+  currentUserId,
   frames,
   featureLocks,
   tournaments,
-  onlinePlayers,
+  allUsers,
   onSelectGame,
   onInspectPlayer,
   onOpenTournaments,
-  onOpenProfile,
-  onNotify,
+  onEnterTournamentMatch,
 }) => {
-  const [copiedId, setCopiedId] = React.useState(false);
-
-  const safePlayers = Array.isArray(onlinePlayers) ? onlinePlayers : [];
   const safeTourneys = Array.isArray(tournaments) ? tournaments : [];
-  const bannerSrc = resolveBannerImage(user.bannerUrl, user.bannerId);
-  const giftsCount = Array.isArray(user.gifts) ? user.gifts.length : 0;
-
-  const handleCopyMyId = () => {
-    navigator.clipboard?.writeText(user.gameId);
-    setCopiedId(true);
-    onNotify('success', `Copied Game ID: ${user.gameId}`);
-    setTimeout(() => setCopiedId(false), 1800);
-  };
+  const safeUsers = Array.isArray(allUsers) ? allUsers : [];
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-5">
-      {/* 1. LIVE PREMIUM TOURNAMENT BILLBOARD */}
+      {/* 1. LIVE PREMIUM TOURNAMENT BILLBOARD (Only renders when an active/featured tournament exists) */}
       <TournamentBillboard
         lang={lang}
         tournaments={safeTourneys}
-        allUsers={safePlayers}
+        allUsers={safeUsers}
+        currentUserId={currentUserId}
         frames={frames}
         onInspectPlayer={onInspectPlayer}
         onOpenTournaments={onOpenTournaments}
+        onEnterTournamentMatch={onEnterTournamentMatch}
       />
 
-      {/* 2. PLAYER BANNER IDENTITY CARD (Real-Time Display Name & Bio) */}
-      <div className="cyber-panel rounded-2xl overflow-hidden border border-amber-500/25 relative">
-        <img
-          src={bannerSrc}
-          alt="Player Banner"
-          className="absolute inset-0 w-full h-full object-cover opacity-35 pointer-events-none"
-        />
-        <div className="absolute inset-0 bg-gradient-to-r from-[#070b14] via-[#0b101d]/85 to-[#070b14]/70 pointer-events-none" />
-
-        <div className="relative z-10 p-4 sm:p-5 flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-3.5 min-w-0">
-            <button type="button" onClick={onOpenProfile} className="cursor-pointer shrink-0">
-              <AvatarWithFrame
-                avatarUrl={user.avatarUrl}
-                frameId={user.frameId}
-                frames={frames}
-                displayName={user.displayName}
-                size="md"
-                status="online"
-              />
-            </button>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <h2 className="text-base sm:text-lg font-display font-bold text-white truncate">
-                  {user.displayName}
-                </h2>
-                <RankTierIcon tier={user.rank || 'silver'} className="w-5 h-5 shrink-0" />
-              </div>
-              <div className="flex flex-wrap items-center gap-2 mt-1">
-                <button
-                  type="button"
-                  onClick={handleCopyMyId}
-                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-[11px] font-mono font-bold text-amber-300 cursor-pointer"
-                >
-                  <span>{user.gameId}</span>
-                  {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                </button>
-                <span className="text-xs font-mono text-slate-300">
-                  {user.xp || 0} XP · {user.rank || 'Silver'}
-                </span>
-                {giftsCount > 0 && (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-amber-500/15 text-[10px] font-bold text-amber-200">
-                    <Award className="w-3 h-3 text-amber-400" /> {giftsCount} Trophies
-                  </span>
-                )}
-              </div>
-              {user.bio && (
-                <p className="text-[11px] text-slate-300 truncate max-w-md mt-1">{user.bio}</p>
-              )}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={onOpenProfile}
-            className="px-3.5 h-9 rounded-xl bg-white/10 hover:bg-amber-500/20 border border-white/15 hover:border-amber-400/40 text-xs font-bold text-white cursor-pointer"
-          >
-            {lang === 'my' ? 'Profile ပြင်မည်' : 'Edit Profile'}
-          </button>
-        </div>
-      </div>
-
-      {/* 3. FULL-SIZE 3D INTERACTIVE GAME CARDS (Click -> Opens Next-Page Setup) */}
+      {/* 2. CLEAN FULL-SIZE 3D INTERACTIVE GAME CARDS */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm sm:text-base font-display font-bold text-white flex items-center gap-2">
@@ -209,11 +125,9 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                 className={`cyber-panel overflow-hidden border border-white/15 ${g.borderAccent} shadow-xl`}
               >
                 <div className="relative flex flex-col h-full">
-                  {/* Full 3D Animated Game Stage */}
                   <div className="relative overflow-hidden">
                     <GameStage3D gameType={g.id} compact />
 
-                    {/* Top Floating Badges */}
                     <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between">
                       <span className="px-2.5 py-1 rounded-xl bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-mono font-bold text-amber-300 flex items-center gap-1.5">
                         <GameBadgeIcon gameType={g.id} className="w-4 h-4" />
@@ -228,7 +142,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Clean Full-Card Footer */}
                   <div className="p-4 bg-gradient-to-b from-[#0c1324] to-[#070b14] flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <h4 className="text-base sm:text-lg font-display font-extrabold text-white truncate">
@@ -245,50 +158,6 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   </div>
                 </div>
               </TiltCard3D>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 4. LIVE PLAYERS DIRECTORY (Click any player -> Inspect Banner, Bio & Gifts) */}
-      <div className="cyber-panel rounded-2xl p-4 space-y-2.5 border border-white/10">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs font-bold text-emerald-300 uppercase tracking-wider flex items-center gap-1.5">
-            <Users className="w-3.5 h-3.5" />
-            <span>
-              {lang === 'my'
-                ? `အွန်လိုင်း ကစားသမားများ (${safePlayers.length})`
-                : `Arena Players (${safePlayers.length})`}
-            </span>
-          </h3>
-          <span className="text-[10px] text-slate-400">
-            {lang === 'my' ? 'နှိပ်၍ Profile & Bio ကြည့်မည်' : 'Tap to inspect profile'}
-          </span>
-        </div>
-
-        <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
-          {safePlayers.slice(0, 20).map((p) => {
-            const isLive = Boolean(p.online && Date.now() - Number(p.lastSeenMs || 0) < 90000);
-            return (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => onInspectPlayer(p.id)}
-                className="min-w-[156px] p-2.5 rounded-xl bg-[#070b14] border border-white/10 hover:border-amber-400/50 flex items-center gap-2.5 text-left shrink-0 cursor-pointer transition-all"
-              >
-                <AvatarWithFrame
-                  avatarUrl={p.avatarUrl}
-                  frameId={p.frameId}
-                  frames={frames}
-                  displayName={p.displayName}
-                  size="xs"
-                  status={isLive ? 'online' : 'offline'}
-                />
-                <div className="min-w-0">
-                  <div className="text-xs font-bold text-white truncate">{p.displayName}</div>
-                  <div className="text-[10px] font-mono text-amber-300">{p.xp || 0} XP</div>
-                </div>
-              </button>
             );
           })}
         </div>
