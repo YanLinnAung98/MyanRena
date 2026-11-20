@@ -8,13 +8,14 @@ import {
   Image as ImageIcon,
   Lock,
   Save,
+  Share2,
   Sparkles,
   Upload,
   X,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { doc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
@@ -30,6 +31,7 @@ import {
 } from '../utils/gameArtworks.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
+import { ShareProfileModal } from './ShareProfileModal.tsx';
 
 interface ProfileViewProps {
   lang: Language;
@@ -44,6 +46,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   lang,
   token,
   user,
+  frames,
   onUserUpdated,
   onNotify,
 }) => {
@@ -54,16 +57,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [selectedBannerId, setSelectedBannerId] = React.useState(user.bannerId || 'cyber_gold');
   const [customBannerUrl, setCustomBannerUrl] = React.useState<string>(user.bannerUrl || '');
   const [saving, setSaving] = React.useState(false);
+  const [shareOpen, setShareOpen] = React.useState(false);
 
-  // Sync local inputs whenever user profile updates remotely in real-time
+  // Only reset form fields if logged-in user ID changes (prevents typing overwrite)
+  const lastUserIdRef = React.useRef(user.id);
   React.useEffect(() => {
-    setDisplayName(user.displayName || '');
-    setBio(user.bio || '');
-    if (user.favoriteGame) setFavoriteGame(user.favoriteGame);
-    if (user.frameId) setSelectedFrame(user.frameId);
-    if (user.bannerId) setSelectedBannerId(user.bannerId);
-    setCustomBannerUrl(user.bannerUrl || '');
-  }, [user.displayName, user.bio, user.favoriteGame, user.frameId, user.bannerId, user.bannerUrl]);
+    if (lastUserIdRef.current !== user.id) {
+      lastUserIdRef.current = user.id;
+      setDisplayName(user.displayName || '');
+      setBio(user.bio || '');
+      setFavoriteGame(user.favoriteGame || 'connect4');
+      setSelectedFrame(user.frameId || 'bronze');
+      setSelectedBannerId(user.bannerId || 'cyber_gold');
+      setCustomBannerUrl(user.bannerUrl || '');
+    }
+  }, [user]);
 
   // Avatar Cropper State
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
@@ -75,33 +83,73 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const dragStartRef = React.useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const imgRef = React.useRef<HTMLImageElement | null>(null);
 
-  const persistProfilePatch = async (patch: Partial<UserProfile>) => {
-    const cleanPatch = stripUndefined({ ...patch, updatedAtMs: Date.now() });
-    const updatedUser: UserProfile = { ...user, ...cleanPatch };
+  /**
+   * Guaranteed Real-Time Server + Cloud Firestore + Local Session Sync
+   */
+  const persistProfilePatch = async (patch: Partial<UserProfile>): Promise<boolean> => {
+    const now = Date.now();
+    const cleanPatch = stripUndefined({
+      ...patch,
+      updatedAtMs: now,
+      lastSeenMs: now,
+      online: true,
+    });
+    const fullUserPayload: UserProfile = stripUndefined({
+      ...user,
+      ...cleanPatch,
+    });
 
-    // 1. Update Active Session & Local Serverless Store IMMEDIATELY
-    saveActiveSessionUser(updatedUser);
+    // 1. Update local session & local store immediately
+    saveActiveSessionUser(fullUserPayload);
     const store = readServerlessStore();
-    store.users[updatedUser.id] = { ...(store.users[updatedUser.id] || {}), ...updatedUser };
+    store.users[fullUserPayload.id] = {
+      ...(store.users[fullUserPayload.id] || {}),
+      ...fullUserPayload,
+    };
     writeServerlessStore(store);
-
-    // 2. Push into App React state immediately
-    onUserUpdated(updatedUser);
+    onUserUpdated(fullUserPayload);
     broadcastLocalSync('PROFILE_UPDATED');
 
-    // 3. Persist to Firestore Cloud Real-Time (so all connected devices see it instantly)
+    // 2. Write FULL merged user document to Firestore so doc always exists & triggers onSnapshot on every client + Admin
+    let cloudOk = true;
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', user.id), cleanPatch, { merge: true }).catch((err) => {
-        onNotify('error', `Cloud sync warning: ${err?.message || 'Retry'}`);
-      });
+      try {
+        await setDoc(doc(db, 'users', user.id), fullUserPayload, { merge: true });
+
+        // Also sync any matching Firestore doc by gameId or username (in case legacy doc ID differed)
+        if (user.gameId) {
+          const snap = await getDocs(
+            query(collection(db, 'users'), where('gameId', '==', user.gameId))
+          ).catch(() => null);
+          if (snap) {
+            const updates: Promise<any>[] = [];
+            snap.forEach((d) => {
+              if (d.id !== user.id) {
+                updates.push(setDoc(doc(db, 'users', d.id), cleanPatch, { merge: true }));
+              }
+            });
+            if (updates.length > 0) await Promise.all(updates);
+          }
+        }
+      } catch (err: any) {
+        cloudOk = false;
+        onNotify(
+          'error',
+          lang === 'my'
+            ? `Server ချိတ်ဆက်မှု အမှား: ${err?.message || 'Firestore write failed'}`
+            : `Cloud sync failed: ${err?.message || 'Firestore write error'}`
+        );
+      }
     }
 
-    // 4. Keep legacy serverless endpoint in sync
+    // 3. Keep serverless API cache synchronized
     await fetch('/api/profile', {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify(cleanPatch),
     }).catch(() => {});
+
+    return cloudOk;
   };
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -140,8 +188,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
         const bannerDataUrl = canvas.toDataURL('image/webp', 0.82);
         setCustomBannerUrl(bannerDataUrl);
-        await persistProfilePatch({ bannerUrl: bannerDataUrl, bannerId: 'custom' });
-        onNotify('success', lang === 'my' ? 'Profile Banner အသစ် တင်ပြီးပါပြီ!' : 'Custom Banner updated!');
+        const ok = await persistProfilePatch({ bannerUrl: bannerDataUrl, bannerId: 'custom' });
+        if (ok) {
+          onNotify('success', lang === 'my' ? 'Profile Banner အသစ် တင်ပြီးပါပြီ!' : 'Banner updated!');
+        }
       };
       img.src = reader.result;
     };
@@ -196,8 +246,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
     const croppedDataUrl = canvas.toDataURL('image/webp', 0.88);
     setCropSource(null);
-    await persistProfilePatch({ avatarUrl: croppedDataUrl });
-    onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
+    const ok = await persistProfilePatch({ avatarUrl: croppedDataUrl });
+    if (ok) {
+      onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
+    }
   };
 
   const handleEquipFrame = async (frameId: string, unlocked: boolean) => {
@@ -206,8 +258,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       return;
     }
     setSelectedFrame(frameId);
-    await persistProfilePatch({ frameId });
-    onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Frame equipped!');
+    const ok = await persistProfilePatch({ frameId });
+    if (ok) onNotify('success', lang === 'my' ? 'Profile Frame တပ်ဆင်ပြီးပါပြီ!' : 'Frame equipped!');
   };
 
   const handleEquipBanner = async (bannerId: string, unlocked: boolean) => {
@@ -217,8 +269,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
     setSelectedBannerId(bannerId);
     setCustomBannerUrl('');
-    await persistProfilePatch({ bannerId, bannerUrl: '' });
-    onNotify('success', lang === 'my' ? 'Profile Banner ပြောင်းလဲပြီးပါပြီ!' : 'Banner equipped!');
+    const ok = await persistProfilePatch({ bannerId, bannerUrl: '' });
+    if (ok) onNotify('success', lang === 'my' ? 'Profile Banner ပြောင်းလဲပြီးပါပြီ!' : 'Banner equipped!');
   };
 
   const handleSaveProfile = async (e: React.FormEvent) => {
@@ -230,18 +282,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     }
     setSaving(true);
     try {
-      await persistProfilePatch({
+      const ok = await persistProfilePatch({
         displayName: cleanName,
         bio: bio.trim().slice(0, 180),
         favoriteGame,
         frameId: selectedFrame,
       });
-      onNotify(
-        'success',
-        lang === 'my'
-          ? `အမည် (${cleanName}) နှင့် Bio ကို Real-Time ပြောင်းလဲပြီးပါပြီ!`
-          : `Profile updated to "${cleanName}" in real time!`
-      );
+      if (ok) {
+        onNotify(
+          'success',
+          lang === 'my'
+            ? `အမည် (${cleanName}) ကို Server ပေါ်သို့ Real-Time သိမ်းဆည်းပြီးပါပြီ!`
+            : `Display name "${cleanName}" synced to server in real time!`
+        );
+      }
     } finally {
       setSaving(false);
     }
@@ -256,19 +310,31 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   return (
     <div className="max-w-4xl mx-auto px-3 sm:px-6 py-4 space-y-4">
-      {/* Live Profile Banner + Avatar Header */}
+      {/* Live Profile Banner + Avatar Header + Share Profile Button */}
       <div className="cyber-panel rounded-2xl overflow-hidden border border-amber-500/30 shadow-xl">
         <div className="relative h-36 sm:h-44 w-full bg-[#070b14]">
           <img src={activeBannerSrc} alt="Profile Banner" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-transparent" />
-          <button
-            type="button"
-            onClick={() => bannerInputRef.current?.click()}
-            className="absolute top-3 right-3 px-3 py-1.5 rounded-xl bg-black/70 hover:bg-black/90 border border-amber-400/40 text-[11px] font-bold text-amber-200 flex items-center gap-1.5 backdrop-blur-sm cursor-pointer"
-          >
-            <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
-            <span>{lang === 'my' ? 'Banner ပုံတင်မည်' : 'Upload Banner'}</span>
-          </button>
+
+          <div className="absolute top-3 right-3 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setShareOpen(true)}
+              className="px-3 py-1.5 rounded-xl cyber-cta-gold text-slate-950 text-[11px] font-extrabold flex items-center gap-1.5 shadow-lg cursor-pointer"
+            >
+              <Share2 className="w-3.5 h-3.5" />
+              <span>{lang === 'my' ? 'Profile မျှဝေမည်' : 'Share Profile'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => bannerInputRef.current?.click()}
+              className="px-3 py-1.5 rounded-xl bg-black/70 hover:bg-black/90 border border-amber-400/40 text-[11px] font-bold text-amber-200 flex items-center gap-1.5 backdrop-blur-sm cursor-pointer"
+            >
+              <ImageIcon className="w-3.5 h-3.5 text-amber-400" />
+              <span className="hidden sm:inline">{lang === 'my' ? 'Banner ပုံတင်မည်' : 'Upload Banner'}</span>
+            </button>
+          </div>
           <input ref={bannerInputRef} type="file" accept="image/*" onChange={handleBannerUpload} className="hidden" />
         </div>
 
@@ -295,14 +361,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             <div className="text-center sm:text-left space-y-1 pb-1">
               <div className="flex items-center justify-center sm:justify-start gap-2">
                 <h2 className="text-lg sm:text-xl font-display font-bold text-white">
-                  {displayName || user.displayName}
+                  {user.displayName}
                 </h2>
                 <RankTierIcon tier={user.rank || 'silver'} className="w-5 h-5" />
               </div>
               <div className="text-xs font-mono text-amber-400">
                 {user.gameId} • {user.xp || 0} XP ({user.rank || 'Silver'})
               </div>
-              {bio && <p className="text-xs text-slate-300 max-w-md line-clamp-2 pt-0.5">{bio}</p>}
+              {user.bio && <p className="text-xs text-slate-300 max-w-md line-clamp-2 pt-0.5">{user.bio}</p>}
             </div>
           </div>
 
@@ -364,7 +430,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       <form onSubmit={handleSaveProfile} className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
         <h3 className="text-sm font-bold text-white flex items-center gap-2">
           <FileText className="w-4 h-4 text-amber-400" />
-          <span>{lang === 'my' ? 'အမည်နှင့် Bio ပြင်ဆင်ရန် (Real-Time)' : 'Edit Display Name & Bio'}</span>
+          <span>{lang === 'my' ? 'အမည်နှင့် Bio ပြင်ဆင်ရန် (Server Real-Time)' : 'Edit Display Name & Bio'}</span>
         </h3>
 
         <div className="grid sm:grid-cols-2 gap-3">
@@ -425,7 +491,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             className="h-10 px-6 rounded-xl cyber-cta-gold text-slate-950 font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
           >
             <Save className="w-4 h-4" />
-            <span>{saving ? 'Saving...' : lang === 'my' ? 'Profile & Bio သိမ်းဆည်းမည်' : 'Save Changes'}</span>
+            <span>{saving ? 'Syncing...' : lang === 'my' ? 'Profile & Bio သိမ်းဆည်းမည်' : 'Save Changes'}</span>
           </button>
         </div>
       </form>
@@ -538,6 +604,17 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           })}
         </div>
       </div>
+
+      {/* Share Profile Modal */}
+      {shareOpen && (
+        <ShareProfileModal
+          lang={lang}
+          player={user}
+          frames={frames}
+          onClose={() => setShareOpen(false)}
+          onNotify={onNotify}
+        />
+      )}
 
       {/* Avatar Crop Modal */}
       {cropSource && (
