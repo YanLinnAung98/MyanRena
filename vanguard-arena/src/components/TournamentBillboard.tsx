@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { ChevronLeft, ChevronRight, Radio, Sparkles, Swords, Trophy, Users } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Play, Radio, Sparkles, Swords, Trophy, Users } from 'lucide-react';
 import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Language, Tournament, UserProfile } from '../types.ts';
 import { GAME_ARTWORKS } from '../utils/gameArtworks.ts';
@@ -11,20 +11,23 @@ interface TournamentBillboardProps {
   lang: Language;
   tournaments: Tournament[];
   allUsers: UserProfile[];
+  currentUserId?: string;
   frames?: any[];
   onInspectPlayer?: (userId: string) => void;
   onOpenTournaments?: () => void;
+  onEnterTournamentMatch?: (tournament: Tournament, matchupId?: string) => void;
 }
 
 export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
   lang,
   tournaments,
   allUsers,
+  currentUserId,
   frames = [],
   onInspectPlayer,
   onOpenTournaments,
+  onEnterTournamentMatch,
 }) => {
-  // Prioritize Ongoing (LIVE) tournaments, then Featured Open tournaments
   const featuredList = React.useMemo(() => {
     const safe = Array.isArray(tournaments) ? tournaments : [];
     const live = safe.filter((t) => t.status === 'ongoing');
@@ -54,16 +57,21 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
   const isLive = active.status === 'ongoing';
   const isCompleted = active.status === 'completed';
 
+  const isJoinedMe = Boolean(currentUserId && participantIds.includes(currentUserId));
+  const myActiveMatchup = currentUserId
+    ? matchups.find(
+        (m) => (m.player1Id === currentUserId || m.player2Id === currentUserId) && m.status !== 'finished'
+      )
+    : undefined;
+
   return (
     <motion.section
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       className="relative rounded-2xl overflow-hidden border border-amber-400/50 bg-[#080d18] shadow-[0_0_40px_rgba(245,158,11,0.16)]"
     >
-      {/* Top Neon Gold Esports Accent Bar */}
       <div className="h-1 w-full bg-gradient-to-r from-amber-600 via-yellow-300 to-rose-500" />
 
-      {/* Background Artwork Overlay */}
       <div className="relative">
         <img
           src={GAME_ARTWORKS[normGame]}
@@ -73,7 +81,6 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
         <div className="absolute inset-0 bg-gradient-to-r from-[#070b14] via-[#0b1224]/90 to-[#140a05]/85 pointer-events-none" />
 
         <div className="relative z-10 p-4 sm:p-5 space-y-4">
-          {/* Header Row */}
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3 min-w-0">
               <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-amber-500/25 to-rose-500/20 border border-amber-400/50 flex items-center justify-center shrink-0">
@@ -109,6 +116,17 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
             </div>
 
             <div className="flex items-center gap-2 shrink-0">
+              {isLive && isJoinedMe && onEnterTournamentMatch && (
+                <button
+                  type="button"
+                  onClick={() => onEnterTournamentMatch(active, myActiveMatchup?.id)}
+                  className="px-3.5 h-9 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs flex items-center gap-1.5 shadow-[0_0_20px_rgba(16,185,129,0.45)] cursor-pointer animate-pulse"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current" />
+                  <span>{lang === 'my' ? 'ပွဲစဉ် ဝင်ဆော့မည်' : 'Enter Match'}</span>
+                </button>
+              )}
+
               {featuredList.length > 1 && (
                 <div className="flex items-center gap-1">
                   <button
@@ -143,7 +161,6 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
             </div>
           </div>
 
-          {/* Hall of Fame Winners Strip (if completed) */}
           {isCompleted && winners.length > 0 && (
             <div className="grid sm:grid-cols-3 gap-2.5">
               {winners.slice(0, 3).map((w, idx) => (
@@ -151,7 +168,7 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
                   key={`${w.userId}_${idx}`}
                   type="button"
                   onClick={() => onInspectPlayer?.(w.userId)}
-                  className="p-3 rounded-xl bg-gradient-to-br from-amber-500/15 via-[#0d1425] to-[#080c16] border border-amber-400/40 flex items-center gap-3 text-left hover:border-amber-300 transition-all cursor-pointer"
+                  className="p-3 rounded-xl bg-gradient-to-br from-amber-500/15 via-[#0d1425] to-[#080c16] border border-amber-400/40 flex items-center gap-3 text-left cursor-pointer"
                 >
                   <PodiumMedalIcon place={(idx + 1) as 1 | 2 | 3} className="w-8 h-8 shrink-0" />
                   <div className="min-w-0 flex-1">
@@ -166,7 +183,6 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
             </div>
           )}
 
-          {/* Live Matchups Ticker (if generated by Admin) */}
           {!isCompleted && matchups.length > 0 && (
             <div className="space-y-1.5">
               <div className="text-[11px] font-bold text-rose-300 flex items-center gap-1.5">
@@ -177,21 +193,36 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
                 {matchups.map((m) => {
                   const p1 = allUsers.find((u) => u.id === m.player1Id);
                   const p2 = m.player2Id ? allUsers.find((u) => u.id === m.player2Id) : null;
+                  const isMyMatch = Boolean(
+                    currentUserId && (m.player1Id === currentUserId || m.player2Id === currentUserId)
+                  );
                   return (
                     <div
                       key={m.id}
-                      className="px-3 py-2 rounded-xl bg-[#070b14]/90 border border-amber-400/25 flex items-center justify-between gap-2 text-xs"
+                      className={`px-3 py-2 rounded-xl bg-[#070b14]/90 border flex items-center justify-between gap-2 text-xs ${
+                        isMyMatch ? 'border-emerald-400/60' : 'border-amber-400/25'
+                      }`}
                     >
                       <button
                         type="button"
                         onClick={() => p1 && onInspectPlayer?.(p1.id)}
                         className="font-bold text-white truncate hover:text-amber-300 cursor-pointer"
                       >
-                        {p1?.displayName || 'TBD'}
+                        {p1?.displayName || 'Player 1'}
                       </button>
-                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-[10px] font-mono font-extrabold text-amber-300 shrink-0">
-                        VS
-                      </span>
+                      {isMyMatch && m.status !== 'finished' && onEnterTournamentMatch ? (
+                        <button
+                          type="button"
+                          onClick={() => onEnterTournamentMatch(active, m.id)}
+                          className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-extrabold text-[10px] shrink-0 cursor-pointer"
+                        >
+                          PLAY
+                        </button>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-[10px] font-mono font-extrabold text-amber-300 shrink-0">
+                          VS
+                        </span>
+                      )}
                       <button
                         type="button"
                         onClick={() => p2 && onInspectPlayer?.(p2.id)}
@@ -206,65 +237,48 @@ export const TournamentBillboard: React.FC<TournamentBillboardProps> = ({
             </div>
           )}
 
-          {/* Premium Contenders Roster Grid */}
+          {/* Contenders Roster */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-[11px]">
               <span className="font-bold text-amber-200 flex items-center gap-1.5">
                 <Users className="w-3.5 h-3.5 text-amber-400" />
                 {lang === 'my'
                   ? `ပါဝင်ယှဉ်ပြိုင်သူများ စာရင်း (${participants.length}/${active.bracketSize} ဦး)`
-                  : `Official Contenders Roster (${participants.length}/${active.bracketSize})`}
-              </span>
-              <span className="text-[10px] text-slate-400">
-                {lang === 'my' ? 'ကစားသမားပုံနှိပ်၍ Profile ကြည့်နိုင်သည်' : 'Tap any player to inspect profile'}
+                  : `Official Contenders (${participants.length}/${active.bracketSize})`}
               </span>
             </div>
 
-            {participants.length === 0 ? (
-              <div className="py-3 text-center text-xs text-slate-400 rounded-xl bg-black/30 border border-white/5">
-                {lang === 'my'
-                  ? 'ပထမဆုံး စာရင်းသွင်းမည့် ချန်ပီယံ ဖြစ်လိုက်ပါ!'
-                  : 'Be the first contender to enter the arena!'}
-              </div>
-            ) : (
+            {participants.length > 0 && (
               <div className="flex gap-2.5 overflow-x-auto pb-1 no-scrollbar">
-                {participants.map((p, idx) => {
-                  const online = Boolean(p.online && Date.now() - Number(p.lastSeenMs || 0) < 60000);
-                  return (
-                    <motion.button
-                      key={p.id}
-                      whileHover={{ y: -2 }}
-                      type="button"
-                      onClick={() => onInspectPlayer?.(p.id)}
-                      className="min-w-[168px] p-2.5 rounded-xl bg-gradient-to-b from-[#11192d]/95 to-[#070b14]/95 border border-amber-400/30 hover:border-amber-300 flex items-center gap-2.5 text-left shrink-0 cursor-pointer transition-all"
-                    >
-                      <div className="relative shrink-0">
-                        <AvatarWithFrame
-                          avatarUrl={p.avatarUrl}
-                          frameId={p.frameId}
-                          frames={frames}
-                          displayName={p.displayName}
-                          size="sm"
-                          status={online ? 'online' : 'offline'}
-                        />
-                        <span className="absolute -top-1.5 -left-1.5 px-1.5 py-0.2 rounded-md bg-amber-500 text-slate-950 text-[9px] font-mono font-extrabold">
-                          #{idx + 1}
-                        </span>
+                {participants.map((p, idx) => (
+                  <motion.button
+                    key={p.id}
+                    whileHover={{ y: -2 }}
+                    type="button"
+                    onClick={() => onInspectPlayer?.(p.id)}
+                    className="min-w-[162px] p-2.5 rounded-xl bg-gradient-to-b from-[#11192d]/95 to-[#070b14]/95 border border-amber-400/30 hover:border-amber-300 flex items-center gap-2.5 text-left shrink-0 cursor-pointer"
+                  >
+                    <div className="relative shrink-0">
+                      <AvatarWithFrame
+                        avatarUrl={p.avatarUrl}
+                        frameId={p.frameId}
+                        frames={frames}
+                        displayName={p.displayName}
+                        size="sm"
+                      />
+                      <span className="absolute -top-1.5 -left-1.5 px-1.5 rounded-md bg-amber-500 text-slate-950 text-[9px] font-mono font-extrabold">
+                        #{idx + 1}
+                      </span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1">
+                        <span className="text-xs font-bold text-white truncate">{p.displayName}</span>
+                        <RankTierIcon tier={p.rank || 'silver'} className="w-3.5 h-3.5 shrink-0" />
                       </div>
-
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1">
-                          <span className="text-xs font-bold text-white truncate">{p.displayName}</span>
-                          <RankTierIcon tier={p.rank || 'silver'} className="w-3.5 h-3.5 shrink-0" />
-                        </div>
-                        <div className="text-[10px] font-mono text-amber-300 truncate">{p.gameId}</div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {p.xp || 0} XP · {p.wins || 0}W
-                        </div>
-                      </div>
-                    </motion.button>
-                  );
-                })}
+                      <div className="text-[10px] font-mono text-amber-300 truncate">{p.gameId}</div>
+                    </div>
+                  </motion.button>
+                ))}
               </div>
             )}
           </div>
