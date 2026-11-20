@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Award, Calendar, CheckCircle2, Lock, Shield, Swords, Trophy, Users } from 'lucide-react';
+import { Award, Calendar, CheckCircle2, Lock, Play, Shield, Swords, Trophy, Users } from 'lucide-react';
 import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Language, Tournament, UserProfile } from '../types.ts';
 import { GAME_ARTWORKS } from '../utils/gameArtworks.ts';
@@ -18,7 +18,7 @@ interface TournamentViewProps {
   onJoin: (id: string) => void;
   onLeave: (id: string) => void;
   onInspectPlayer?: (userId: string) => void;
-  onLaunchBracketMatch: (tournamentId: string, bmId: string) => void;
+  onLaunchBracketMatch: (tournament: Tournament, matchupId?: string) => void;
 }
 
 function safeGameLabel(rawType: string | undefined, lang: Language): string {
@@ -39,22 +39,23 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
   onJoin,
   onLeave,
   onInspectPlayer,
+  onLaunchBracketMatch,
 }) => {
   const locked = Boolean(featureLocks?.tournaments);
   const safeList = Array.isArray(tournaments) ? tournaments : [];
 
   return (
     <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 space-y-4">
-      {/* Premium Live Tournament Billboard */}
       <TournamentBillboard
         lang={lang}
         tournaments={safeList}
         allUsers={allUsers}
+        currentUserId={currentUser.id}
         frames={frames}
         onInspectPlayer={onInspectPlayer}
+        onEnterTournamentMatch={onLaunchBracketMatch}
       />
 
-      {/* Arena Header */}
       <div className="cyber-panel rounded-2xl p-4 border border-amber-500/25 flex items-center justify-between gap-3">
         <div>
           <h2 className="text-base sm:text-lg font-display font-bold text-white flex items-center gap-2">
@@ -63,8 +64,8 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
             {lang === 'my'
-              ? 'Admin မှ ဖန်တီးထားသော 8 / 16 / 32 Bracket ပြိုင်ပွဲများတွင် ဝင်ရောက်ယှဉ်ပြိုင်ပြီး အထူးဆုလက်ဆောင်များ ရယူပါ။'
-              : 'Compete in official 8 / 16 / 32 player brackets to earn exclusive trophies and gifts.'}
+              ? 'စာရင်းသွင်းပြီး ပြိုင်ပွဲစတင်သည်နှင့် "ပွဲစဉ် ဝင်ဆော့မည်" ခလုတ်ကိုနှိပ်၍ တိုက်ရိုက်ယှဉ်ပြိုင်ပါ။'
+              : 'Join a tournament and click Enter Match as soon as the bracket goes live.'}
           </p>
         </div>
         {locked && (
@@ -80,11 +81,6 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
           <div className="text-sm font-bold text-white">
             {lang === 'my' ? 'လက်ရှိ ပြိုင်ပွဲအသစ် မရှိသေးပါ' : 'No Active Tournaments Yet'}
           </div>
-          <p className="text-xs text-slate-400">
-            {lang === 'my'
-              ? 'Admin မှ ပြိုင်ပွဲအသစ် ဖန်တီးလိုက်သည်နှင့် ဤနေရာတွင် Real-Time တိုက်ရိုက်ပေါ်လာပါမည်။'
-              : 'New tournaments created by the Administrator will appear here live.'}
-          </p>
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 gap-4">
@@ -100,7 +96,21 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
             const minXp = Number(tr.minXpRequired || 0);
             const meetsXp = (currentUser.xp || 0) >= minXp || currentUser.role === 'admin';
             const status = String(tr.status || 'open').toLowerCase();
+            const matchups = Array.isArray(tr.matchups) ? tr.matchups : [];
             const winners = Array.isArray(tr.winners) ? tr.winners : [];
+
+            // Find current user's latest matchup in this tournament
+            const myMatchups = matchups.filter(
+              (m) => m.player1Id === currentUser.id || m.player2Id === currentUser.id
+            );
+            const myActiveMatch = myMatchups.find((m) => m.status !== 'finished');
+            const myLastMatch = myMatchups[myMatchups.length - 1];
+            const opponentId = myActiveMatch
+              ? myActiveMatch.player1Id === currentUser.id
+                ? myActiveMatch.player2Id
+                : myActiveMatch.player1Id
+              : undefined;
+            const opponentUser = opponentId ? allUsers.find((u) => u.id === opponentId) : null;
 
             return (
               <motion.div
@@ -164,10 +174,6 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
                       </div>
                     )}
 
-                    {tr.description && (
-                      <p className="text-[11px] text-slate-300 line-clamp-2">{tr.description}</p>
-                    )}
-
                     <div className="flex items-center justify-between text-xs text-slate-300">
                       <span className="flex items-center gap-1.5">
                         <Users className="w-3.5 h-3.5 text-amber-400" />
@@ -187,7 +193,48 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
                       />
                     </div>
 
-                    {/* Mini Avatar Strip of Contenders */}
+                    {/* Bracket Matchups Preview */}
+                    {status === 'ongoing' && matchups.length > 0 && (
+                      <div className="p-2.5 rounded-xl bg-[#070b14] border border-white/10 space-y-1.5 max-h-32 overflow-y-auto">
+                        <div className="text-[10px] font-bold text-rose-300 uppercase">
+                          {lang === 'my' ? 'ပြိုင်ပွဲ ပွဲစဉ်များ' : 'Live Bracket Matches'}
+                        </div>
+                        {matchups.map((m) => {
+                          const p1 = allUsers.find((u) => u.id === m.player1Id);
+                          const p2 = m.player2Id ? allUsers.find((u) => u.id === m.player2Id) : null;
+                          const isMine = m.player1Id === currentUser.id || m.player2Id === currentUser.id;
+                          return (
+                            <div
+                              key={m.id}
+                              className={`px-2 py-1 rounded-lg flex items-center justify-between text-[11px] ${
+                                isMine ? 'bg-emerald-500/15 border border-emerald-400/35' : 'bg-white/[0.03]'
+                              }`}
+                            >
+                              <span className="text-white font-semibold truncate">
+                                R{m.round || 1}: {p1?.displayName || 'P1'} vs {p2?.displayName || 'BYE'}
+                              </span>
+                              {isMine && m.status !== 'finished' ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onLaunchBracketMatch(tr, m.id)}
+                                  className="px-2 py-0.5 rounded bg-emerald-500 text-slate-950 font-extrabold text-[10px] cursor-pointer shrink-0"
+                                >
+                                  PLAY
+                                </button>
+                              ) : m.winnerId ? (
+                                <span className="text-[10px] text-amber-300 shrink-0">
+                                  🏆 {allUsers.find((u) => u.id === m.winnerId)?.displayName || 'Won'}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-rose-300 shrink-0">LIVE</span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Contender Avatars */}
                     {participantProfiles.length > 0 && (
                       <div className="flex items-center gap-1.5 overflow-x-auto pt-1 no-scrollbar">
                         {participantProfiles.slice(0, 8).map((p) => (
@@ -210,7 +257,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
                       </div>
                     )}
 
-                    {/* Awarded Winners Display */}
+                    {/* Winners */}
                     {winners.length > 0 && (
                       <div className="p-2.5 rounded-xl bg-[#070b14] border border-amber-400/25 space-y-1.5">
                         <div className="text-[10px] font-bold text-amber-300 uppercase">
@@ -228,8 +275,7 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
                               <span className="truncate">{w.displayName}</span>
                             </span>
                             <span className="text-[10px] text-amber-300 flex items-center gap-1 shrink-0">
-                              <GiftTrophyIcon iconId={w.giftIconId} className="w-3.5 h-3.5" />
-                              +{w.bonusXp} XP
+                              <GiftTrophyIcon iconId={w.giftIconId} className="w-3.5 h-3.5" />+{w.bonusXp} XP
                             </span>
                           </button>
                         ))}
@@ -237,21 +283,48 @@ export const TournamentView: React.FC<TournamentViewProps> = ({
                     )}
                   </div>
 
+                  {/* Primary Action Button */}
                   <div className="pt-2">
                     {status === 'completed' ? (
                       <div className="w-full h-10 rounded-xl bg-white/5 border border-white/10 text-xs font-bold text-slate-400 flex items-center justify-center">
                         {lang === 'my' ? 'ပြိုင်ပွဲ ပြီးဆုံးသွားပါပြီ' : 'Tournament Completed'}
                       </div>
+                    ) : isJoined && status === 'ongoing' ? (
+                      myLastMatch && myLastMatch.status === 'finished' && !myActiveMatch ? (
+                        <div className="w-full h-10 rounded-xl bg-amber-500/15 border border-amber-400/40 text-xs font-bold text-amber-200 flex items-center justify-center">
+                          {myLastMatch.winnerId === currentUser.id
+                            ? lang === 'my'
+                              ? '🏆 ဤအဆင့်အနိုင်ရပြီး — နောက်တစ်ဆင့် စောင့်ဆိုင်းနေပါသည်'
+                              : '🏆 Round Won — Awaiting Next Round'
+                            : lang === 'my'
+                            ? 'ဤပြိုင်ပွဲတွင် ရှုံးနိမ့်သွားပါပြီ'
+                            : 'Eliminated from Bracket'}
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => onLaunchBracketMatch(tr, myActiveMatch?.id)}
+                          className="w-full h-11 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 font-extrabold text-xs flex items-center justify-center gap-2 shadow-[0_0_24px_rgba(16,185,129,0.45)] cursor-pointer"
+                        >
+                          <Play className="w-4 h-4 fill-current" />
+                          <span>
+                            {opponentUser
+                              ? lang === 'my'
+                                ? `ပွဲစဉ် ဝင်ဆော့မည် (vs ${opponentUser.displayName})`
+                                : `Enter Match vs ${opponentUser.displayName}`
+                              : lang === 'my'
+                              ? 'ပြိုင်ပွဲထဲ ဝင်ရောက်ဆော့ကစားမည်'
+                              : 'Enter Live Tournament Match'}
+                          </span>
+                        </button>
+                      )
                     ) : isJoined ? (
                       <button
                         type="button"
-                        disabled={status === 'ongoing'}
                         onClick={() => onLeave(tr.id)}
-                        className="w-full h-10 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 disabled:opacity-45 border border-rose-500/40 text-xs font-bold text-rose-300 cursor-pointer"
+                        className="w-full h-10 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/40 text-xs font-bold text-rose-300 cursor-pointer"
                       >
-                        {status === 'ongoing'
-                          ? lang === 'my' ? 'ပြိုင်ပွဲ စတင်နေပါပြီ' : 'Match In Progress'
-                          : lang === 'my' ? 'ပြိုင်ပွဲမှ နုတ်ထွက်မည်' : 'Withdraw'}
+                        {lang === 'my' ? 'ပြိုင်ပွဲမှ နုတ်ထွက်မည်' : 'Withdraw'}
                       </button>
                     ) : (
                       <button
