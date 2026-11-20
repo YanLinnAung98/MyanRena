@@ -1,6 +1,8 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  ArrowRightCircle,
+  CheckCircle2,
   Gift,
   Plus,
   Radio,
@@ -16,11 +18,23 @@ import {
 } from 'lucide-react';
 import { deleteDoc, doc, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
-import { broadcastLocalSync, readServerlessStore, writeServerlessStore } from '../lib/serverlessApi.ts';
-import type { PlayerGift, Tournament, TournamentMatchup, TournamentWinnerRecord, UserProfile } from '../types.ts';
+import {
+  broadcastLocalSync,
+  buildPlayableMatch,
+  normalizeGameId,
+  readServerlessStore,
+  writeServerlessStore,
+} from '../lib/serverlessApi.ts';
+import type {
+  PlayerGift,
+  Tournament,
+  TournamentMatchup,
+  TournamentWinnerRecord,
+  UserProfile,
+} from '../types.ts';
 import { GIFT_CATALOG } from '../utils/gameArtworks.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import { GameBadgeIcon, GiftTrophyIcon, PodiumMedalIcon } from './PremiumIcons.tsx';
+import { GameBadgeIcon, GiftTrophyIcon } from './PremiumIcons.tsx';
 
 interface AdminTournamentSectionProps {
   tournaments: Tournament[];
@@ -47,7 +61,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
   onLogAction,
   onNotify,
 }) => {
-  // Pro Tournament Creator State
   const [title, setTitle] = React.useState('');
   const [gameType, setGameType] = React.useState('connect4');
   const [bracketSize, setBracketSize] = React.useState<8 | 16 | 32>(8);
@@ -58,11 +71,10 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
   const [description, setDescription] = React.useState('');
   const [featuredOnBillboard, setFeaturedOnBillboard] = React.useState(true);
 
-  // Selected Tournament Management Drawer/Modal
   const [managingTournamentId, setManagingTournamentId] = React.useState<string | null>(null);
   const [manualAddUserId, setManualAddUserId] = React.useState('');
 
-  // Winner Gift Awarding Modal State
+  // Winner Gift Modal State
   const [giftModalTournament, setGiftModalTournament] = React.useState<Tournament | null>(null);
   const [winnerUserId, setWinnerUserId] = React.useState('');
   const [placement, setPlacement] = React.useState<'1st' | '2nd' | '3rd' | 'mvp'>('1st');
@@ -73,6 +85,93 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
   const [awarding, setAwarding] = React.useState(false);
 
   const managingTournament = tournaments.find((t) => t.id === managingTournamentId) || null;
+
+  const updateTournamentFields = async (tid: string, patch: Partial<Tournament>, toast?: string) => {
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'tournaments', tid), stripUndefined(patch), { merge: true }).catch(() => {});
+    }
+    if (toast) onNotify('success', toast);
+  };
+
+  /**
+   * Creates real playable Firestore `matches/{matchId}` docs for every paired bracket matchup
+   */
+  const createMatchupsAndFirestoreMatches = async (
+    tr: Tournament,
+    playerIds: string[],
+    roundNumber: number
+  ): Promise<TournamentMatchup[]> => {
+    const normGame = normalizeGameId(tr.gameType);
+    const matchups: TournamentMatchup[] = [];
+
+    for (let i = 0; i < playerIds.length; i += 2) {
+      const p1Id = playerIds[i];
+      const p2Id = playerIds[i + 1];
+      const mId = `m_r${roundNumber}_${i}_${Date.now()}`;
+      const matchId = `tmatch_${tr.id}_r${roundNumber}_${i}`;
+
+      if (!p2Id) {
+        // Odd participant gets automatic BYE advance
+        matchups.push({
+          id: mId,
+          round: roundNumber,
+          player1Id: p1Id,
+          winnerId: p1Id,
+          status: 'finished',
+        });
+        continue;
+      }
+
+      const p1 = users.find((u) => u.id === p1Id) || {
+        id: p1Id,
+        displayName: 'Player 1',
+        username: p1Id,
+        gameId: p1Id,
+        xp: 1000,
+      };
+      const p2 = users.find((u) => u.id === p2Id) || {
+        id: p2Id,
+        displayName: 'Player 2',
+        username: p2Id,
+        gameId: p2Id,
+        xp: 1000,
+      };
+
+      const playable = buildPlayableMatch([p1 as any, p2 as any], {
+        gameType: normGame,
+        mode: 'tournament',
+        bestOf: 3,
+        turnTimeLimit: 20,
+        isRealtimePvp: true,
+      });
+
+      const matchDoc = stripUndefined({
+        ...playable,
+        id: matchId,
+        tournamentId: tr.id,
+        tournamentTitle: tr.title,
+        matchupId: mId,
+        round: roundNumber,
+        isRealtimePvp: true,
+        updatedAtMs: Date.now(),
+      });
+
+      if (isFirebaseConfigured && db) {
+        await setDoc(doc(db, 'matches', matchId), matchDoc).catch(() => {});
+      }
+
+      matchups.push({
+        id: mId,
+        round: roundNumber,
+        player1Id: p1Id,
+        player2Id: p2Id,
+        matchId,
+        status: 'live',
+      });
+    }
+
+    return matchups;
+  };
 
   const handleCreateTournament = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,51 +206,35 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
     onNotify('success', 'Professional ပြိုင်ပွဲအသစ် ဖန်တီးပြီးပါပြီ!');
   };
 
-  const updateTournamentFields = async (tid: string, patch: Partial<Tournament>, toast?: string) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'tournaments', tid), stripUndefined(patch), { merge: true }).catch(() => {});
-    }
-    if (toast) onNotify('success', toast);
-  };
-
   const handleGenerateMatchupsAndStart = async (tr: Tournament) => {
     const ids = [...(tr.participants || [])];
     if (ids.length < 2) {
       onNotify('error', 'ပြိုင်ပွဲစတင်ရန် ကစားသမား အနည်းဆုံး ၂ ဦး လိုအပ်ပါသည်။');
       return;
     }
-    // Fisher-Yates shuffle for fair seeding
+
     for (let i = ids.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
-    const matchups: TournamentMatchup[] = [];
-    for (let i = 0; i < ids.length; i += 2) {
-      matchups.push({
-        id: `m_${Date.now()}_${i}`,
-        round: 1,
-        player1Id: ids[i],
-        player2Id: ids[i + 1],
-        status: 'live',
-      });
-    }
+
+    const matchups = await createMatchupsAndFirestoreMatches(tr, ids, 1);
 
     await updateTournamentFields(
       tr.id,
       { status: 'ongoing', matchups, featuredOnBillboard: true },
-      `🚀 ${tr.title} ပြိုင်ပွဲ စတင်ပြီး Billboard တွင် တိုက်ရိုက်ပြသလိုက်ပါပြီ!`
+      `🚀 ${tr.title} စတင်ပြီး ပွဲစဉ် ${matchups.length} ခု ဖန်တီးလိုက်ပါပြီ! ကစားသမားများ ချက်ချင်းဝင်ဆော့နိုင်ပါပြီ။`
     );
 
-    // Send Global Live Start Notification
-    const notiId = `noti_${Date.now()}`;
     if (isFirebaseConfigured && db) {
+      const notiId = `noti_${Date.now()}`;
       await setDoc(
         doc(db, 'notifications', notiId),
         stripUndefined({
           id: notiId,
           targetUserId: 'ALL',
           title: `🏆 LIVE: ${tr.title}`,
-          message: `ပြိုင်ပွဲ စတင်နေပါပြီ! ပါဝင်ယှဉ်ပြိုင်သူ ${ids.length} ဦး စာရင်းကို Billboard တွင် ကြည့်ရှုအားပေးနိုင်ပါသည်။`,
+          message: `ပြိုင်ပွဲ စတင်နေပါပြီ! စာရင်းသွင်းထားသော ကစားသမားများ Tournaments ထဲဝင်၍ "ပွဲစဉ် ဝင်ဆော့မည်" ခလုတ်ကို နှိပ်ကာ ချက်ချင်းယှဉ်ပြိုင်နိုင်ပါပြီ။`,
           type: 'broadcast',
           senderName: 'Vanguard Arena Official',
           createdAtMs: Date.now(),
@@ -160,6 +243,40 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       ).catch(() => {});
     }
     await onLogAction('START_TOURNAMENT', `Started ${tr.title} with ${ids.length} players`);
+  };
+
+  const handleGenerateNextRound = async (tr: Tournament) => {
+    const existing = Array.isArray(tr.matchups) ? tr.matchups : [];
+    const maxRound = existing.reduce((acc, m) => Math.max(acc, m.round || 1), 1);
+    const currentRoundMatches = existing.filter((m) => (m.round || 1) === maxRound);
+    const winners = currentRoundMatches.map((m) => m.winnerId).filter(Boolean) as string[];
+
+    if (winners.length < 2) {
+      onNotify('error', 'နောက်တစ်ဆင့် ဖန်တီးရန် လက်ရှိအဆင့်မှ အနိုင်ရသူ အနည်းဆုံး ၂ ဦး ရှိရပါမည်။');
+      return;
+    }
+
+    const nextMatches = await createMatchupsAndFirestoreMatches(tr, winners, maxRound + 1);
+    await updateTournamentFields(
+      tr.id,
+      { matchups: [...existing, ...nextMatches] },
+      `Round ${maxRound + 1} ပွဲစဉ်များ ဖန်တီးပြီးပါပြီ!`
+    );
+  };
+
+  const handleAdminMarkWinner = async (tr: Tournament, matchupId: string, winnerId: string) => {
+    const updated = (tr.matchups || []).map((m) =>
+      m.id === matchupId ? { ...m, winnerId, status: 'finished' as const } : m
+    );
+    await updateTournamentFields(tr.id, { matchups: updated }, 'အနိုင်ရသူ မှတ်တမ်းတင်ပြီးပါပြီ။');
+  };
+
+  const handleStatusChange = async (tr: Tournament, st: 'open' | 'ongoing' | 'completed') => {
+    if (st === 'ongoing' && (!tr.matchups || tr.matchups.length === 0) && (tr.participants || []).length >= 2) {
+      await handleGenerateMatchupsAndStart(tr);
+      return;
+    }
+    await updateTournamentFields(tr.id, { status: st }, `အခြေအနေ ${st.toUpperCase()} ပြောင်းပြီးပါပြီ`);
   };
 
   const handleManualAddPlayer = async (tr: Tournament) => {
@@ -180,7 +297,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
 
   const handleRemoveParticipant = async (tr: Tournament, uid: string) => {
     const next = (tr.participants || []).filter((id) => id !== uid);
-    await updateTournamentFields(tr.id, { participants: next }, 'ကစားသမားကို ပြိုင်ပွဲစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။');
+    await updateTournamentFields(tr.id, { participants: next }, 'ကစားသမားကို ဖယ်ရှားပြီးပါပြီ။');
   };
 
   const handleDeleteTournament = async (tid: string) => {
@@ -191,9 +308,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
     onNotify('info', 'ပြိုင်ပွဲ ဖျက်ပြီးပါပြီ။');
   };
 
-  // ==========================================================
-  // AWARD GIFT TO TOURNAMENT WINNER
-  // ==========================================================
+  // Winner Gift Awarding
   const openGiftModal = (tr: Tournament) => {
     setGiftModalTournament(tr);
     const firstId = tr.participants?.[0] || users.find((u) => u.role !== 'admin')?.id || '';
@@ -252,9 +367,9 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
         gifts: nextGifts,
         unlockedFrames: nextUnlockedFrames,
         unlockedBanners: nextUnlockedBanners,
+        updatedAtMs: Date.now(),
       });
 
-      // 1) Update Winner User Profile (Firestore + Local Store)
       const store = readServerlessStore();
       if (store.users[targetUser.id]) {
         store.users[targetUser.id] = { ...store.users[targetUser.id], ...userPatch };
@@ -264,7 +379,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
         await setDoc(doc(db, 'users', targetUser.id), userPatch, { merge: true });
       }
 
-      // 2) Record Winner on Tournament Hall of Fame
       const winnerRec: TournamentWinnerRecord = stripUndefined({
         userId: targetUser.id,
         displayName: targetUser.displayName,
@@ -281,7 +395,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       ];
       await updateTournamentFields(giftModalTournament.id, { winners: nextWinners });
 
-      // 3) Personal Gift Notification + Optional Global Broadcast
       if (isFirebaseConfigured && db) {
         const personalNotiId = `noti_gift_${Date.now()}`;
         await setDoc(
@@ -317,10 +430,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       }
 
       broadcastLocalSync('GIFT_AWARDED');
-      await onLogAction(
-        'AWARD_GIFT',
-        `Awarded ${giftTpl.name} (+${bonus} XP) to ${targetUser.displayName} (${giftModalTournament.title})`
-      );
+      await onLogAction('AWARD_GIFT', `Awarded ${giftTpl.name} to ${targetUser.displayName}`);
       onNotify('success', `${targetUser.displayName} ထံ ဆုလက်ဆောင် ပေးအပ်ပြီးပါပြီ!`);
       setGiftModalTournament(null);
     } finally {
@@ -331,13 +441,13 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
   return (
     <div className="space-y-4">
       <div className="grid lg:grid-cols-12 gap-4">
-        {/* Pro Tournament Creator & List */}
         <div className="lg:col-span-8 cyber-panel rounded-2xl p-4 space-y-4 border border-amber-500/25">
           <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
             <Trophy className="w-4 h-4" />
             <span>Professional Tournament Command & Prize Center</span>
           </h3>
 
+          {/* Create Form */}
           <form onSubmit={handleCreateTournament} className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 space-y-2.5">
             <div className="grid sm:grid-cols-12 gap-2">
               <input
@@ -345,7 +455,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 required
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="ပြိုင်ပွဲအမည် (ဥပမာ - MyanRena Grand Championship S1)"
+                placeholder="ပြိုင်ပွဲအမည် (ဥပမာ - MyanRena Grand Cup S1)"
                 className="sm:col-span-6 h-10 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
               />
               <select
@@ -375,14 +485,13 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 value={prizeXp}
                 onChange={(e) => setPrizeXp(Number(e.target.value))}
                 placeholder="Prize XP"
-                title="Champion Bonus XP"
                 className="sm:col-span-3 h-9 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs font-mono text-amber-300"
               />
               <input
                 type="text"
                 value={prizeLabel}
                 onChange={(e) => setPrizeLabel(e.target.value)}
-                placeholder="ဆုလက်ဆောင် ဖော်ပြချက် (ဥပမာ - VIP Cup + 50,000 MMK)"
+                placeholder="ဆုလက်ဆောင် ဖော်ပြချက်..."
                 className="sm:col-span-5 h-9 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
               />
               <input
@@ -391,7 +500,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 value={minXpRequired}
                 onChange={(e) => setMinXpRequired(Number(e.target.value))}
                 placeholder="Min XP"
-                title="Minimum XP to Join"
                 className="sm:col-span-2 h-9 px-2.5 rounded-xl bg-[#101728] border border-white/15 text-xs font-mono text-sky-300"
               />
               <input
@@ -399,7 +507,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 value={scheduledAt}
                 onChange={(e) => setScheduledAt(e.target.value)}
                 placeholder="8:00 PM"
-                title="Start Time"
                 className="sm:col-span-2 h-9 px-2.5 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
               />
             </div>
@@ -412,14 +519,14 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 placeholder="ပြိုင်ပွဲ စည်းကမ်းချက် အကျဉ်းချုပ်..."
                 className="sm:col-span-7 h-9 px-3 rounded-xl bg-[#101728] border border-white/15 text-xs text-white"
               />
-              <label className="sm:col-span-5 flex items-center gap-2 text-xs text-amber-200 cursor-pointer select-none px-1">
+              <label className="sm:col-span-5 flex items-center gap-2 text-xs text-amber-200 cursor-pointer px-1">
                 <input
                   type="checkbox"
                   checked={featuredOnBillboard}
                   onChange={(e) => setFeaturedOnBillboard(e.target.checked)}
                   className="accent-amber-500"
                 />
-                <span>Billboard ပေါ်တွင် တိုက်ရိုက်ပြသမည်</span>
+                <span>Billboard ပေါ်တွင် ပြသမည်</span>
               </label>
             </div>
 
@@ -431,18 +538,16 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
             </button>
           </form>
 
-          {/* Tournament Management Cards */}
-          <div className="space-y-2.5 max-h-[52vh] overflow-y-auto pr-1">
+          {/* Tournament List */}
+          <div className="space-y-2.5 max-h-[54vh] overflow-y-auto pr-1">
             {tournaments.length === 0 ? (
-              <div className="text-xs text-slate-500 text-center py-6">ပြိုင်ပွဲ ဖန်တီးထားခြင်း မရှိသေးပါ။</div>
+              <div className="text-xs text-slate-500 text-center py-6">ပြိုင်ပွဲ မရှိသေးပါ။</div>
             ) : (
               tournaments.map((tr) => {
                 const count = (tr.participants || []).length;
+                const matchups = Array.isArray(tr.matchups) ? tr.matchups : [];
                 return (
-                  <div
-                    key={tr.id}
-                    className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 space-y-2.5"
-                  >
+                  <div key={tr.id} className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 space-y-2.5">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5 min-w-0">
                         <GameBadgeIcon gameType={tr.gameType} className="w-8 h-8 shrink-0" />
@@ -456,7 +561,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                             )}
                           </div>
                           <div className="text-[11px] text-slate-400 font-mono">
-                            {count}/{tr.bracketSize} Players · Prize +{tr.prizeXp} XP {tr.prizeLabel ? `(${tr.prizeLabel})` : ''}
+                            {count}/{tr.bracketSize} Players · Matchups: {matchups.length} · +{tr.prizeXp} XP
                           </div>
                         </div>
                       </div>
@@ -467,7 +572,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                           onClick={() => setManagingTournamentId(managingTournamentId === tr.id ? null : tr.id)}
                           className="px-2.5 py-1.5 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/35 text-[11px] font-bold text-sky-200 flex items-center gap-1 cursor-pointer"
                         >
-                          <Users className="w-3.5 h-3.5" /> Roster ({count})
+                          <Users className="w-3.5 h-3.5" /> Bracket & Roster ({count})
                         </button>
 
                         {tr.status === 'open' && (
@@ -476,7 +581,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                             onClick={() => handleGenerateMatchupsAndStart(tr)}
                             className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/40 text-[11px] font-bold text-emerald-200 flex items-center gap-1 cursor-pointer"
                           >
-                            <Radio className="w-3.5 h-3.5" /> Start & Billboard
+                            <Radio className="w-3.5 h-3.5" /> Start & Create Matches
                           </button>
                         )}
 
@@ -498,16 +603,14 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                       </div>
                     </div>
 
-                    {/* Status Controls */}
+                    {/* Status Switcher */}
                     <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-white/5 text-[10px]">
                       <div className="flex items-center gap-1">
                         {(['open', 'ongoing', 'completed'] as const).map((st) => (
                           <button
                             key={st}
                             type="button"
-                            onClick={() =>
-                              updateTournamentFields(tr.id, { status: st }, `အခြေအနေ ${st.toUpperCase()} ပြောင်းပြီးပါပြီ`)
-                            }
+                            onClick={() => handleStatusChange(tr, st)}
                             className={`px-2 py-0.5 rounded font-bold uppercase cursor-pointer ${
                               tr.status === st ? 'bg-amber-500 text-slate-950' : 'bg-white/5 text-slate-400'
                             }`}
@@ -532,22 +635,93 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                       </button>
                     </div>
 
-                    {/* Expandable Roster & Seeding Drawer */}
+                    {/* Expandable Bracket + Roster Management */}
                     {managingTournament?.id === tr.id && (
-                      <div className="p-3 rounded-xl bg-[#0d1425] border border-sky-400/25 space-y-2.5">
+                      <div className="p-3 rounded-xl bg-[#0d1425] border border-sky-400/25 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                           <span className="text-xs font-bold text-white">
-                            ပြိုင်ပွဲဝင် ကစားသမားများ စီမံခန့်ခွဲရန် ({count}/{tr.bracketSize})
+                            ပြိုင်ပွဲဝင်များနှင့် ပွဲစဉ်ဇယား ({count}/{tr.bracketSize})
                           </span>
-                          <button
-                            type="button"
-                            onClick={() => handleGenerateMatchupsAndStart(tr)}
-                            className="px-2.5 py-1 rounded-lg bg-indigo-500/25 text-indigo-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
-                          >
-                            <Shuffle className="w-3 h-3" /> Auto-Seed Matchups
-                          </button>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleGenerateMatchupsAndStart(tr)}
+                              className="px-2.5 py-1 rounded-lg bg-indigo-500/25 text-indigo-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                            >
+                              <Shuffle className="w-3 h-3" /> Seed Round 1
+                            </button>
+                            {matchups.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateNextRound(tr)}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-500/25 text-emerald-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                              >
+                                <ArrowRightCircle className="w-3 h-3" /> Next Round
+                              </button>
+                            )}
+                          </div>
                         </div>
 
+                        {/* Live Matchups Admin Control */}
+                        {matchups.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="text-[10px] uppercase font-bold text-amber-300">
+                              Bracket Matchups (Admin Winner Override)
+                            </div>
+                            {matchups.map((m) => {
+                              const p1 = users.find((u) => u.id === m.player1Id);
+                              const p2 = m.player2Id ? users.find((u) => u.id === m.player2Id) : null;
+                              return (
+                                <div
+                                  key={m.id}
+                                  className="p-2 rounded-lg bg-[#070b14] border border-white/10 flex flex-wrap items-center justify-between gap-2 text-[11px]"
+                                >
+                                  <span className="font-mono text-slate-400">R{m.round || 1}</span>
+                                  <div className="flex items-center gap-1.5 flex-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => handleAdminMarkWinner(tr, m.id, m.player1Id)}
+                                      className={`px-2 py-0.5 rounded font-bold cursor-pointer ${
+                                        m.winnerId === m.player1Id
+                                          ? 'bg-emerald-500 text-slate-950'
+                                          : 'bg-white/5 text-white hover:bg-emerald-500/20'
+                                      }`}
+                                    >
+                                      {p1?.displayName || m.player1Id}
+                                    </button>
+                                    <span className="text-amber-400 font-mono text-[10px]">VS</span>
+                                    {p2 ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleAdminMarkWinner(tr, m.id, p2.id)}
+                                        className={`px-2 py-0.5 rounded font-bold cursor-pointer ${
+                                          m.winnerId === p2.id
+                                            ? 'bg-emerald-500 text-slate-950'
+                                            : 'bg-white/5 text-white hover:bg-emerald-500/20'
+                                        }`}
+                                      >
+                                        {p2.displayName}
+                                      </button>
+                                    ) : (
+                                      <span className="text-slate-500">BYE</span>
+                                    )}
+                                  </div>
+                                  <span className="text-[10px] font-mono text-emerald-400 flex items-center gap-1">
+                                    {m.winnerId ? (
+                                      <>
+                                        <CheckCircle2 className="w-3 h-3" /> Done
+                                      </>
+                                    ) : (
+                                      '● LIVE'
+                                    )}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                        {/* Manual Add Player */}
                         <div className="flex gap-2">
                           <select
                             value={manualAddUserId}
@@ -572,7 +746,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                           </button>
                         </div>
 
-                        <div className="grid sm:grid-cols-2 gap-1.5 max-h-40 overflow-y-auto">
+                        <div className="grid sm:grid-cols-2 gap-1.5 max-h-36 overflow-y-auto">
                           {(tr.participants || []).map((pid, idx) => {
                             const p = users.find((u) => u.id === pid);
                             return (
@@ -594,7 +768,6 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                                   type="button"
                                   onClick={() => handleRemoveParticipant(tr, pid)}
                                   className="text-rose-400 hover:text-rose-300 cursor-pointer"
-                                  title="Remove"
                                 >
                                   <UserMinus className="w-3.5 h-3.5" />
                                 </button>
@@ -611,7 +784,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
           </div>
         </div>
 
-        {/* Live Active Rooms Monitor */}
+        {/* Live Rooms Monitor */}
         <div className="lg:col-span-4 cyber-panel rounded-2xl p-4 space-y-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-2">
             <Swords className="w-4 h-4 text-sky-400" />
@@ -648,9 +821,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
         </div>
       </div>
 
-      {/* ==========================================================
-          WINNER GIFT AWARDING MODAL
-      ========================================================== */}
+      {/* Winner Gift Modal */}
       <AnimatePresence>
         {giftModalTournament && (
           <motion.div
@@ -682,10 +853,9 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 </button>
               </div>
 
-              {/* Winner Selection & Placement */}
               <div className="grid sm:grid-cols-12 gap-2.5">
                 <div className="sm:col-span-8">
-                  <label className="block text-[11px] text-slate-400 mb-1">ဆုရရှိသော ကစားသမား ရွေးချယ်ပါ</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">ဆုရရှိသော ကစားသမား</label>
                   <select
                     required
                     value={winnerUserId}
@@ -703,9 +873,8 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                     })}
                   </select>
                 </div>
-
                 <div className="sm:col-span-4">
-                  <label className="block text-[11px] text-slate-400 mb-1">ရရှိသည့် အဆင့်</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">အဆင့်</label>
                   <select
                     value={placement}
                     onChange={(e) => setPlacement(e.target.value as any)}
@@ -719,38 +888,33 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                 </div>
               </div>
 
-              {/* Gift Item Selector Grid */}
-              <div className="space-y-1.5">
-                <label className="block text-[11px] text-slate-400">ပေးအပ်မည့် Premium လက်ဆောင် အမျိုးအစား</label>
-                <div className="grid sm:grid-cols-2 gap-2">
-                  {GIFT_CATALOG.map((g) => {
-                    const active = selectedGiftId === g.giftId;
-                    return (
-                      <button
-                        key={g.giftId}
-                        type="button"
-                        onClick={() => {
-                          setSelectedGiftId(g.giftId);
-                          setCustomBonusXp(g.defaultXp);
-                        }}
-                        className={`p-2.5 rounded-xl border flex items-center gap-2.5 text-left cursor-pointer transition-all ${
-                          active ? 'cyber-gold-active' : 'bg-[#070b14] border-white/10 hover:border-amber-400/40'
-                        }`}
-                      >
-                        <GiftTrophyIcon iconId={g.iconId} className="w-8 h-8 shrink-0" />
-                        <div className="min-w-0">
-                          <div className="text-xs font-bold text-white truncate">{g.nameMy}</div>
-                          <div className="text-[10px] font-mono text-amber-300 uppercase">
-                            {g.rarity} · +{g.defaultXp} XP
-                          </div>
+              <div className="grid sm:grid-cols-2 gap-2">
+                {GIFT_CATALOG.map((g) => {
+                  const active = selectedGiftId === g.giftId;
+                  return (
+                    <button
+                      key={g.giftId}
+                      type="button"
+                      onClick={() => {
+                        setSelectedGiftId(g.giftId);
+                        setCustomBonusXp(g.defaultXp);
+                      }}
+                      className={`p-2.5 rounded-xl border flex items-center gap-2.5 text-left cursor-pointer ${
+                        active ? 'cyber-gold-active' : 'bg-[#070b14] border-white/10'
+                      }`}
+                    >
+                      <GiftTrophyIcon iconId={g.iconId} className="w-8 h-8 shrink-0" />
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-white truncate">{g.nameMy}</div>
+                        <div className="text-[10px] font-mono text-amber-300 uppercase">
+                          {g.rarity} · +{g.defaultXp} XP
                         </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
 
-              {/* Bonus XP & Custom Note */}
               <div className="grid sm:grid-cols-12 gap-2.5">
                 <div className="sm:col-span-4">
                   <label className="block text-[11px] text-slate-400 mb-1">Bonus XP</label>
@@ -763,12 +927,12 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                   />
                 </div>
                 <div className="sm:col-span-8">
-                  <label className="block text-[11px] text-slate-400 mb-1">ဂုဏ်ပြုမှတ်ချက် / ဆုကြေးစာသား</label>
+                  <label className="block text-[11px] text-slate-400 mb-1">ဂုဏ်ပြုမှတ်ချက်</label>
                   <input
                     type="text"
                     value={giftNote}
                     onChange={(e) => setGiftNote(e.target.value)}
-                    placeholder="ဥပမာ - ချန်ပီယံဆု 50,000 MMK နှင့် Mythic Frame"
+                    placeholder="ဥပမာ - ချန်ပီယံဆု 50,000 MMK"
                     className="w-full h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white"
                   />
                 </div>
@@ -781,7 +945,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
                   onChange={(e) => setBroadcastWinner(e.target.checked)}
                   className="accent-amber-500"
                 />
-                <span>ကစားသမားအားလုံးထံ ဆုရရှိကြောင်း Global Broadcast ကြေညာမည်</span>
+                <span>ကစားသမားအားလုံးထံ Global Broadcast ကြေညာမည်</span>
               </label>
 
               <button
