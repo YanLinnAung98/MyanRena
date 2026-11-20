@@ -1,5 +1,7 @@
 export type Language = 'my' | 'en';
 export type GameType = 'connect4' | 'tictactoe' | 'rps' | 'sakarhtar';
+export type Difficulty = 'easy' | 'medium' | 'hard';
+export type TurnTimeLimit = 15 | 20 | 30;
 
 export interface PlayerGift {
   id: string;
@@ -22,7 +24,8 @@ export interface UserProfile {
   username: string;
   displayName: string;
   gameId: string;
-  role?: 'user' | 'admin';
+  role?: 'user' | 'player' | 'admin';
+  isAdmin?: boolean;
   avatarUrl?: string;
   frameId?: string;
   bannerId?: string;
@@ -41,7 +44,9 @@ export interface UserProfile {
   unlockedBanners?: string[];
   online?: boolean;
   lastSeenMs?: number;
+  updatedAtMs?: number;
   status?: 'active' | 'warned' | 'suspended' | 'banned';
+  suspendedUntil?: string;
   createdAt?: string;
 }
 
@@ -50,6 +55,7 @@ export interface TournamentMatchup {
   round: number;
   player1Id: string;
   player2Id?: string;
+  matchId?: string;
   winnerId?: string;
   status: 'pending' | 'live' | 'finished';
 }
