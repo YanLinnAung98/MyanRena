@@ -26,6 +26,7 @@ import {
   arrayUnion,
   collection,
   doc,
+  getDoc,
   onSnapshot,
   setDoc,
   updateDoc,
@@ -33,7 +34,7 @@ import {
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
-import { db, isFirebaseConfigured } from './lib/firebase.ts';
+import { db, isFirebaseConfigured, stripUndefined } from './lib/firebase.ts';
 import {
   ACTIVE_USER_KEY,
   buildPlayableMatch,
@@ -42,7 +43,15 @@ import {
   readActiveSessionUser,
   saveActiveSessionUser,
 } from './lib/serverlessApi.ts';
-import type { GameType, LandingContent, Language, UserProfile } from './types.ts';
+import type {
+  Difficulty,
+  GameType,
+  LandingContent,
+  Language,
+  Tournament,
+  TurnTimeLimit,
+  UserProfile,
+} from './types.ts';
 import { soundEngine } from './utils/sound.ts';
 import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
 import { GameArenaSetupView } from './components/GameArenaSetupView.tsx';
@@ -64,8 +73,6 @@ const AdminPanel = React.lazy(() =>
   import('./components/AdminPanel.tsx').then((m) => ({ default: m.AdminPanel }))
 );
 
-type Difficulty = 'easy' | 'medium' | 'hard';
-type TurnTimeLimit = 15 | 20 | 30;
 type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
 
 class GlobalErrorBoundary extends React.Component<
@@ -130,6 +137,12 @@ function safeChallengeGameName(rawType: string | undefined, lang: Language): str
   return lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz';
 }
 
+function readSharedPlayerParam(): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  return params.get('player') || params.get('profile');
+}
+
 function VanguardAppCore() {
   const [lang, setLang] = React.useState<Language>(() => {
     if (typeof window === 'undefined') return 'my';
@@ -145,15 +158,16 @@ function VanguardAppCore() {
   const [activeTab, setActiveTab] = React.useState<LobbyTab>('lobby');
   const [selectedSetupGame, setSelectedSetupGame] = React.useState<GameType | null>(null);
   const [adminViewMode, setAdminViewMode] = React.useState<'admin' | 'lobby'>('admin');
-  const [inspectUserId, setInspectUserId] = React.useState<string | null>(null);
+  const [inspectUserId, setInspectUserId] = React.useState<string | null>(readSharedPlayerParam);
   const [initialChatUserId, setInitialChatUserId] = React.useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = React.useState(false);
   const [kickBanner, setKickBanner] = React.useState<string | null>(null);
   const [notiDrawerOpen, setNotiDrawerOpen] = React.useState(false);
   const [nowTs, setNowTs] = React.useState(() => Date.now());
 
-  // Direct Real-Time Firestore Mirrors (guarantees real-time name/bio/noti/config sync)
+  // Direct Real-Time Firestore Mirrors
   const [liveUsers, setLiveUsers] = React.useState<UserProfile[]>([]);
+  const [liveTournaments, setLiveTournaments] = React.useState<Tournament[]>([]);
   const [liveNotifications, setLiveNotifications] = React.useState<any[]>([]);
   const [liveAnnouncement, setLiveAnnouncement] = React.useState<{ title: string; message: string } | null>(null);
   const [maintenanceMode, setMaintenanceMode] = React.useState(false);
@@ -214,7 +228,7 @@ function VanguardAppCore() {
             setUser(
               initialToken === 'admin-token'
                 ? saved
-                : ({ ...saved, role: 'user' } as UserProfile)
+                : ({ ...saved, role: 'user', isAdmin: false } as UserProfile)
             );
           } else {
             const meRes = await fetch('/api/auth/me', {
@@ -239,25 +253,42 @@ function VanguardAppCore() {
     };
   }, []);
 
+  // Timestamp-guarded user update so stale socket state NEVER reverts a new displayName
+  const mergeUserSafely = React.useCallback(
+    (incoming: UserProfile) => {
+      setUser((prev) => {
+        if (prev && prev.id === incoming.id) {
+          const prevTs = Number(prev.updatedAtMs || 0);
+          const incTs = Number(incoming.updatedAtMs || 0);
+          if (prevTs > incTs && incTs > 0) return prev;
+          const merged = {
+            ...prev,
+            ...incoming,
+            displayName: prevTs > incTs ? prev.displayName : incoming.displayName || prev.displayName,
+            bio: prevTs > incTs ? prev.bio : incoming.bio ?? prev.bio,
+          };
+          const enforced =
+            token === 'admin-token' ? merged : ({ ...merged, role: 'user', isAdmin: false } as UserProfile);
+          saveActiveSessionUser(enforced);
+          return enforced;
+        }
+        const enforced =
+          token === 'admin-token' ? incoming : ({ ...incoming, role: 'user', isAdmin: false } as UserProfile);
+        saveActiveSessionUser(enforced);
+        return enforced;
+      });
+    },
+    [token]
+  );
+
   const socket = useArenaSocket({
     token: user ? token : null,
     lang,
-    onUserUpdate: React.useCallback(
-      (nextUser: UserProfile) => {
-        setUser((prev) => {
-          const merged = prev ? { ...prev, ...nextUser } : nextUser;
-          const enforced =
-            token === 'admin-token' ? merged : ({ ...merged, role: 'user' } as UserProfile);
-          saveActiveSessionUser(enforced);
-          return enforced;
-        });
-      },
-      [token]
-    ),
+    onUserUpdate: mergeUserSafely,
     onKicked: handleKicked,
   });
 
-  // REAL-TIME FIRESTORE SUBSCRIPTIONS (Direct User Doc + All Users + System Config + Notifications)
+  // Real-Time Firestore Listeners (Users, Tournaments, Config, Announcements)
   React.useEffect(() => {
     if (!isFirebaseConfigured || !db) return;
 
@@ -294,15 +325,23 @@ function VanguardAppCore() {
       setLiveUsers(list);
     });
 
+    const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
+      const list: Tournament[] = [];
+      snap.forEach((d) => list.push({ id: d.id, ...(d.data() as any) } as Tournament));
+      list.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      setLiveTournaments(list);
+    });
+
     return () => {
       unsubCfg();
       unsubAnn();
       unsubLanding();
       unsubUsers();
+      unsubTourneys();
     };
   }, []);
 
-  // Direct Real-Time Listener on Logged-in User Doc (Instant Name/Bio/XP/Gift Updates!)
+  // Direct Real-Time Listener on Logged-In User Document
   React.useEffect(() => {
     if (!user?.id || !isFirebaseConfigured || !db) return;
 
@@ -313,11 +352,7 @@ function VanguardAppCore() {
         handleKicked('Your account has been banned by an Administrator.');
         return;
       }
-      setUser((prev) => {
-        const merged = prev ? { ...prev, ...latest } : latest;
-        saveActiveSessionUser(merged);
-        return merged;
-      });
+      mergeUserSafely(latest);
     });
 
     const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
@@ -332,7 +367,6 @@ function VanguardAppCore() {
       setLiveNotifications(list.slice(0, 30));
     });
 
-    // Live Presence Heartbeat
     const beat = () => {
       setDoc(doc(db, 'users', user.id), { online: true, lastSeenMs: Date.now() }, { merge: true }).catch(() => {});
     };
@@ -344,7 +378,43 @@ function VanguardAppCore() {
       unsubNotis();
       window.clearInterval(timer);
     };
-  }, [user?.id, token, handleKicked]);
+  }, [user?.id, token, handleKicked, mergeUserSafely]);
+
+  // Real-Time Firestore Sync for Active Tournament PvP Match + Auto Bracket Winner Recording
+  const activeMatchId = socket.activeMatch?.id;
+  React.useEffect(() => {
+    if (!activeMatchId || !activeMatchId.startsWith('tmatch_') || !isFirebaseConfigured || !db) return;
+
+    const unsubMatch = onSnapshot(doc(db, 'matches', activeMatchId), async (snap) => {
+      if (!snap.exists()) return;
+      const mData = { id: snap.id, ...(snap.data() as any) };
+      socket.setActiveMatch(mData);
+
+      // Auto-record winner into Tournament bracket when match finishes
+      if (mData.status === 'finished' && mData.winnerId && mData.tournamentId && mData.matchupId) {
+        const tSnap = await getDoc(doc(db, 'tournaments', mData.tournamentId)).catch(() => null);
+        if (tSnap?.exists()) {
+          const tData = tSnap.data() as Tournament;
+          const matchups = Array.isArray(tData.matchups) ? tData.matchups : [];
+          const targetM = matchups.find((x) => x.id === mData.matchupId);
+          if (targetM && targetM.winnerId !== mData.winnerId) {
+            const nextMatchups = matchups.map((x) =>
+              x.id === mData.matchupId
+                ? { ...x, winnerId: mData.winnerId, status: 'finished' as const }
+                : x
+            );
+            await setDoc(
+              doc(db, 'tournaments', mData.tournamentId),
+              { matchups: nextMatchups },
+              { merge: true }
+            ).catch(() => {});
+          }
+        }
+      }
+    });
+
+    return () => unsubMatch();
+  }, [activeMatchId]);
 
   const suspendedUntilMs = (user as any)?.suspendedUntil ? Date.parse((user as any).suspendedUntil) : 0;
 
@@ -362,6 +432,11 @@ function VanguardAppCore() {
     return exists ? base.map((u) => (u.id === user.id ? { ...u, ...user } : u)) : [...base, user];
   }, [liveUsers, socket.leaderboard, user]);
 
+  const mergedTournaments = React.useMemo(
+    () => (liveTournaments.length > 0 ? liveTournaments : Array.isArray(socket.tournaments) ? socket.tournaments : []),
+    [liveTournaments, socket.tournaments]
+  );
+
   const mergedLocks = React.useMemo(
     () => ({ ...(socket.featureLocks || {}), ...(liveFeatureLocks || {}) }),
     [socket.featureLocks, liveFeatureLocks]
@@ -373,6 +448,7 @@ function VanguardAppCore() {
     const cleanProfile: UserProfile = {
       ...nextUser,
       role: isAdminAccount ? 'admin' : 'user',
+      isAdmin: isAdminAccount,
       frameId: isAdminAccount ? 'legend' : nextUser.frameId || 'bronze',
     };
 
@@ -391,7 +467,9 @@ function VanguardAppCore() {
   const handleUserProfileUpdated = React.useCallback(
     (updated: UserProfile) => {
       const isAd = token === 'admin-token' || user?.role === 'admin';
-      const enforced: UserProfile = isAd ? { ...updated, role: 'admin' } : { ...updated, role: 'user' };
+      const enforced: UserProfile = isAd
+        ? { ...updated, role: 'admin', isAdmin: true }
+        : { ...updated, role: 'user', isAdmin: false };
       saveActiveSessionUser(enforced);
       setUser(enforced);
       setLiveUsers((prev) => prev.map((u) => (u.id === enforced.id ? { ...u, ...enforced } : u)));
@@ -399,7 +477,102 @@ function VanguardAppCore() {
     [token, user?.role]
   );
 
-  // Game Launchers (called from GameArenaSetupView)
+  /**
+   * LAUNCH LIVE TOURNAMENT MATCH FOR JOINED PARTICIPANTS
+   * Guarantees both opponents load the EXACT SAME Firestore `matches/{matchId}` document
+   */
+  const handleLaunchTournamentMatch = async (tournament: Tournament, matchupId?: string) => {
+    if (!user) return;
+    const normGame = normalizeGameId(tournament.gameType);
+    const matchups = Array.isArray(tournament.matchups) ? tournament.matchups : [];
+
+    // Locate user's matchup
+    let targetMatchup = matchupId
+      ? matchups.find((m) => m.id === matchupId)
+      : matchups.find(
+          (m) => (m.player1Id === user.id || m.player2Id === user.id) && m.status !== 'finished'
+        );
+
+    // Fallback if Admin toggled `ongoing` directly without seeding matchups
+    if (!targetMatchup) {
+      const otherParticipantId = (tournament.participants || []).find((pid) => pid !== user.id);
+      if (!otherParticipantId) {
+        socket.pushToast(
+          'info',
+          lang === 'my'
+            ? 'ပြိုင်ဘက် နောက်တစ်ဦး စာရင်းသွင်းရန် စောင့်ဆိုင်းနေပါသည်။'
+            : 'Waiting for an opponent to join the tournament.'
+        );
+        return;
+      }
+      const sortedPair = [user.id, otherParticipantId].sort();
+      targetMatchup = {
+        id: `auto_${sortedPair[0]}_${sortedPair[1]}`,
+        round: 1,
+        player1Id: sortedPair[0],
+        player2Id: sortedPair[1],
+        matchId: `tmatch_${tournament.id}_auto_${sortedPair[0]}_${sortedPair[1]}`,
+        status: 'live',
+      };
+      if (isFirebaseConfigured && db) {
+        await setDoc(
+          doc(db, 'tournaments', tournament.id),
+          { matchups: [...matchups, targetMatchup] },
+          { merge: true }
+        ).catch(() => {});
+      }
+    }
+
+    if (!targetMatchup.player2Id) {
+      socket.pushToast(
+        'success',
+        lang === 'my' ? 'သင်သည် ဤအဆင့်တွင် BYE ဖြင့် အလိုအလျောက် အနိုင်ရထားပါသည်။' : 'You received a BYE for this round!'
+      );
+      return;
+    }
+
+    const matchId = targetMatchup.matchId || `tmatch_${tournament.id}_${targetMatchup.id}`;
+
+    // 1. Check if shared match document already exists in Firestore
+    if (isFirebaseConfigured && db) {
+      const existingSnap = await getDoc(doc(db, 'matches', matchId)).catch(() => null);
+      if (existingSnap?.exists()) {
+        socket.setActiveMatch({ id: existingSnap.id, ...(existingSnap.data() as any) });
+        return;
+      }
+    }
+
+    // 2. Otherwise build deterministic shared PvP match and persist to Firestore
+    const p1 = mergedUsers.find((u) => u.id === targetMatchup!.player1Id) || user;
+    const p2 = mergedUsers.find((u) => u.id === targetMatchup!.player2Id) || user;
+    const built = buildPlayableMatch([p1 as any, p2 as any], {
+      gameType: normGame,
+      mode: 'tournament',
+      bestOf: 3,
+      turnTimeLimit: 20,
+      isRealtimePvp: true,
+    });
+
+    const sharedMatch = stripUndefined({
+      ...built,
+      id: matchId,
+      tournamentId: tournament.id,
+      tournamentTitle: tournament.title,
+      matchupId: targetMatchup.id,
+      round: targetMatchup.round || 1,
+      isRealtimePvp: true,
+      updatedAtMs: Date.now(),
+    });
+
+    if (isFirebaseConfigured && db) {
+      await setDoc(doc(db, 'matches', matchId), sharedMatch).catch(() => {});
+    }
+
+    soundEngine.playNotify?.();
+    socket.setActiveMatch(sharedMatch);
+  };
+
+  // Game Launchers
   const handleStartBot = async (
     gameType: GameType,
     difficulty: Difficulty,
@@ -420,7 +593,6 @@ function VanguardAppCore() {
         return;
       }
     } catch {}
-    // Safe fallback if fetch interceptor isn't active
     const fallbackMatch = buildPlayableMatch([user] as any, {
       gameType,
       mode: 'bot',
@@ -605,7 +777,6 @@ function VanguardAppCore() {
   const safeFrames = Array.isArray(socket.frames) ? socket.frames : [];
   const safeMatchChat = Array.isArray(socket.matchChat) ? socket.matchChat : [];
   const safeRoomChat = Array.isArray(socket.roomChat) ? socket.roomChat : [];
-  const safeTourneys = Array.isArray(socket.tournaments) ? socket.tournaments : [];
   const safeRooms = Array.isArray(socket.openRooms) ? socket.openRooms : [];
   const safeWarnings = Array.isArray(socket.pendingWarnings) ? socket.pendingWarnings : [];
   const safeToasts = Array.isArray(socket.toasts) ? socket.toasts : [];
@@ -678,7 +849,6 @@ function VanguardAppCore() {
         !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
       } ${rootClass}`}
     >
-      {/* Top Cyber Header */}
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
@@ -787,7 +957,6 @@ function VanguardAppCore() {
         </div>
       </header>
 
-      {/* Global Broadcast Strip */}
       <AnimatePresence>
         {activeBannerAnnouncement && (
           <motion.div
@@ -832,7 +1001,6 @@ function VanguardAppCore() {
         </div>
       )}
 
-      {/* Main Content */}
       <main className="flex-1 min-h-0">
         {socket.activeMatch ? (
           <MatchArena
@@ -881,21 +1049,20 @@ function VanguardAppCore() {
           <LobbyView
             lang={lang}
             landingContent={publicLandingContent}
-            user={user}
+            currentUserId={user.id}
             frames={safeFrames}
             featureLocks={mergedLocks}
-            tournaments={safeTourneys}
-            onlinePlayers={mergedUsers}
+            tournaments={mergedTournaments}
+            allUsers={mergedUsers}
             onSelectGame={(g) => setSelectedSetupGame(g)}
             onInspectPlayer={(id) => setInspectUserId(id)}
             onOpenTournaments={() => setActiveTab('tournaments')}
-            onOpenProfile={() => setActiveTab('profile')}
-            onNotify={socket.pushToast}
+            onEnterTournamentMatch={handleLaunchTournamentMatch}
           />
         ) : activeTab === 'tournaments' ? (
           <TournamentView
             lang={lang}
-            tournaments={safeTourneys}
+            tournaments={mergedTournaments}
             featureLocks={mergedLocks}
             currentUser={user}
             allUsers={mergedUsers}
@@ -903,7 +1070,7 @@ function VanguardAppCore() {
             onJoin={handleJoinTournament}
             onLeave={handleLeaveTournament}
             onInspectPlayer={(id) => setInspectUserId(id)}
-            onLaunchBracketMatch={() => {}}
+            onLaunchBracketMatch={handleLaunchTournamentMatch}
           />
         ) : activeTab === 'leaderboard' ? (
           <LeaderboardView
@@ -940,7 +1107,6 @@ function VanguardAppCore() {
         )}
       </main>
 
-      {/* Settings Modal */}
       <SettingsModal
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
@@ -953,7 +1119,6 @@ function VanguardAppCore() {
         onNotify={socket.pushToast}
       />
 
-      {/* Notifications Drawer */}
       <AnimatePresence>
         {notiDrawerOpen && (
           <motion.div
@@ -1009,7 +1174,6 @@ function VanguardAppCore() {
         )}
       </AnimatePresence>
 
-      {/* Mobile Bottom Nav */}
       {!socket.activeMatch && (
         <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
           <div className="grid grid-cols-5 h-16 items-center">
@@ -1036,7 +1200,6 @@ function VanguardAppCore() {
         </nav>
       )}
 
-      {/* Matchmaking Overlay */}
       <AnimatePresence>
         {socket.queueStatus && !socket.activeMatch && (
           <MatchmakingOverlay
@@ -1049,7 +1212,6 @@ function VanguardAppCore() {
         )}
       </AnimatePresence>
 
-      {/* Direct Challenge Popup */}
       {socket.pendingChallenge && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-sm rounded-2xl cyber-panel border border-amber-400/40 p-6 space-y-5 shadow-2xl">
@@ -1089,7 +1251,6 @@ function VanguardAppCore() {
         </div>
       )}
 
-      {/* Player Profile Inspection Modal */}
       {inspectUserId && (
         <PlayerProfileModal
           lang={lang}
@@ -1098,7 +1259,12 @@ function VanguardAppCore() {
           currentUser={user}
           allUsers={mergedUsers}
           frames={safeFrames}
-          onClose={() => setInspectUserId(null)}
+          onClose={() => {
+            setInspectUserId(null);
+            if (typeof window !== 'undefined' && window.location.search.includes('player=')) {
+              window.history.replaceState({}, '', window.location.pathname);
+            }
+          }}
           onUserUpdated={handleUserProfileUpdated}
           onOpenChatWith={(targetId) => {
             setInitialChatUserId(targetId);
@@ -1109,7 +1275,6 @@ function VanguardAppCore() {
         />
       )}
 
-      {/* Pending Admin Warnings */}
       {safeWarnings.length > 0 && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/60 p-6 space-y-4 shadow-2xl">
