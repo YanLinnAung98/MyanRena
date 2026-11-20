@@ -8,13 +8,14 @@ import {
   Flag,
   MessageSquare,
   Send,
+  Share2,
   ShieldCheck,
   Swords,
   UserMinus,
   UserPlus,
   X,
 } from 'lucide-react';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import { readServerlessStore, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { GameType, Language, PlayerGift, UserProfile } from '../types.ts';
@@ -22,6 +23,7 @@ import { resolveBannerImage } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
+import { ShareProfileModal } from './ShareProfileModal.tsx';
 
 interface PlayerProfileModalProps {
   lang: Language;
@@ -50,10 +52,10 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   onNotify,
 }) => {
   const [targetUser, setTargetUser] = React.useState<any>(() => {
-    const found = allUsers.find((u) => u.id === userId);
+    const found = allUsers.find((u) => u.id === userId || u.gameId === userId);
     if (found) return found;
     const store = readServerlessStore();
-    return store.users[userId] || null;
+    return store.users[userId] || Object.values(store.users || {}).find((u: any) => u.gameId === userId) || null;
   });
   const [copiedId, setCopiedId] = React.useState(false);
   const [dmText, setDmText] = React.useState('');
@@ -61,15 +63,24 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const [duelPickerOpen, setDuelPickerOpen] = React.useState(false);
   const [reportOpen, setReportOpen] = React.useState(false);
   const [reportReason, setReportReason] = React.useState('');
+  const [shareOpen, setShareOpen] = React.useState(false);
 
+  // Supports lookup by either User ID or Game ID (for Deep-Linked Social Share URLs)
   React.useEffect(() => {
     let active = true;
     const loadLatest = async () => {
-      if (isFirebaseConfigured && db) {
-        const snap = await getDoc(doc(db, 'users', userId)).catch(() => null);
-        if (snap && snap.exists() && active) {
-          setTargetUser(snap.data());
-        }
+      if (!isFirebaseConfigured || !db) return;
+      const snap = await getDoc(doc(db, 'users', userId)).catch(() => null);
+      if (snap && snap.exists() && active) {
+        setTargetUser({ id: snap.id, ...snap.data() });
+        return;
+      }
+      const qSnap = await getDocs(
+        query(collection(db, 'users'), where('gameId', '==', userId))
+      ).catch(() => null);
+      if (qSnap && !qSnap.empty && active) {
+        const d = qSnap.docs[0];
+        setTargetUser({ id: d.id, ...d.data() });
       }
     };
     loadLatest();
@@ -100,7 +111,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const blocked: string[] = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
   const isFriend = friends.includes(targetUser.id);
   const isBlocked = blocked.includes(targetUser.id);
-  const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 60000);
+  const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 90000);
   const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
   const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts : [];
 
@@ -118,7 +129,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
         { merge: true }
       ).catch(() => {});
     }
-    soundEngine.playClick();
+    soundEngine.playClick?.();
     onNotify?.('success', toastMsg);
   };
 
@@ -158,7 +169,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
 
   const handleCopyGameId = () => {
     navigator.clipboard?.writeText(targetUser.gameId || targetUser.id);
-    soundEngine.playClick();
+    soundEngine.playClick?.();
     setCopiedId(true);
     onNotify?.('success', `Copied ID: ${targetUser.gameId}`);
     setTimeout(() => setCopiedId(false), 1800);
@@ -183,7 +194,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
         await setDoc(doc(db, 'messages', dmId), msg);
       }
       setDmText('');
-      soundEngine.playNotify();
+      soundEngine.playNotify?.();
       onNotify?.('success', lang === 'my' ? 'စာတို ပေးပို့ပြီးပါပြီ!' : 'Message sent!');
     } finally {
       setSendingDm(false);
@@ -213,296 +224,303 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
-      <motion.div
-        initial={{ scale: 0.93, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 overflow-hidden shadow-2xl max-h-[92dvh] flex flex-col"
-      >
-        {/* Top Profile Banner Header */}
-        <div className="relative h-28 sm:h-32 w-full shrink-0 bg-[#070b14]">
-          <img src={bannerSrc} alt="Player Banner" className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-black/30" />
+    <>
+      <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
+        <motion.div
+          initial={{ scale: 0.93, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 overflow-hidden shadow-2xl max-h-[92dvh] flex flex-col"
+        >
+          {/* Banner Header */}
+          <div className="relative h-28 sm:h-32 w-full shrink-0 bg-[#070b14]">
+            <img src={bannerSrc} alt="Player Banner" className="w-full h-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-black/30" />
 
-          <div className="absolute top-2.5 left-3 flex items-center gap-1.5">
-            <span
-              className={`px-2 py-0.5 rounded-full text-[10px] font-bold backdrop-blur-md border ${
-                isOnline
-                  ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
-                  : 'bg-black/60 border-white/15 text-slate-300'
-              }`}
-            >
-              {isOnline ? '● LIVE ONLINE' : '○ OFFLINE'}
-            </span>
-            {targetUser.favoriteGame && (
-              <span className="p-1 rounded-lg bg-black/60 border border-white/15" title="Favorite Game">
-                <GameBadgeIcon gameType={targetUser.favoriteGame} className="w-4 h-4" />
+            <div className="absolute top-2.5 left-3 flex items-center gap-1.5">
+              <span
+                className={`px-2 py-0.5 rounded-full text-[10px] font-bold backdrop-blur-md border ${
+                  isOnline
+                    ? 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                    : 'bg-black/60 border-white/15 text-slate-300'
+                }`}
+              >
+                {isOnline ? '● LIVE ONLINE' : '○ OFFLINE'}
               </span>
-            )}
-          </div>
-
-          <button
-            type="button"
-            onClick={onClose}
-            className="absolute top-2.5 right-2.5 w-8 h-8 rounded-lg bg-black/65 hover:bg-black/85 border border-white/15 text-slate-200 flex items-center justify-center cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-
-        {/* Scrollable Profile Body */}
-        <div className="px-5 pb-5 -mt-10 relative z-10 space-y-3.5 overflow-y-auto">
-          {/* Avatar + Identity */}
-          <div className="flex items-end gap-3.5">
-            <AvatarWithFrame
-              avatarUrl={targetUser.avatarUrl}
-              frameId={targetUser.frameId}
-              frames={frames}
-              displayName={targetUser.displayName}
-              size="lg"
-              status={isOnline ? 'online' : 'offline'}
-            />
-            <div className="min-w-0 pb-0.5 flex-1">
-              <div className="flex items-center gap-1.5">
-                <h3 className="text-base font-display font-bold text-white truncate">
-                  {targetUser.displayName}
-                </h3>
-                <RankTierIcon tier={targetUser.rank || 'silver'} className="w-5 h-5 shrink-0" />
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 mt-1">
-                <button
-                  type="button"
-                  onClick={handleCopyGameId}
-                  className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-[11px] font-mono font-bold text-amber-300 cursor-pointer"
-                >
-                  <span>{targetUser.gameId}</span>
-                  {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                </button>
-                <span className="text-[11px] font-semibold text-slate-300">
-                  {targetUser.rank || 'Silver'}
+              {targetUser.favoriteGame && (
+                <span className="p-1 rounded-lg bg-black/60 border border-white/15" title="Favorite Game">
+                  <GameBadgeIcon gameType={targetUser.favoriteGame} className="w-4 h-4" />
                 </span>
-              </div>
+              )}
+            </div>
+
+            <div className="absolute top-2.5 right-2.5 flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => setShareOpen(true)}
+                className="px-2.5 h-8 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 cursor-pointer"
+                title="Share Profile"
+              >
+                <Share2 className="w-3.5 h-3.5" />
+                <span>Share</span>
+              </button>
+              <button
+                type="button"
+                onClick={onClose}
+                className="w-8 h-8 rounded-lg bg-black/65 hover:bg-black/85 border border-white/15 text-slate-200 flex items-center justify-center cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
             </div>
           </div>
 
-          {/* Player Bio Box */}
-          <div className="p-3 rounded-xl bg-[#070b14]/90 border border-white/10">
-            <div className="text-[10px] uppercase tracking-wider font-bold text-amber-400/80 mb-1">
-              {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio)' : 'Player Bio'}
-            </div>
-            <p className="text-xs text-slate-200 leading-relaxed">
-              {targetUser.bio && targetUser.bio.trim()
-                ? targetUser.bio
-                : lang === 'my'
-                ? 'Vanguard Arena တွင် ယှဉ်ပြိုင်နေသော ကစားသမားတစ်ဦးဖြစ်ပါသည်။'
-                : 'Competing live in Vanguard Arena.'}
-            </p>
-          </div>
-
-          {/* Stats Strip */}
-          <div className="grid grid-cols-5 gap-1.5 text-center bg-[#070b14] p-2.5 rounded-xl border border-white/10 text-xs">
-            <div>
-              <div className="text-[10px] text-slate-400">XP</div>
-              <div className="font-mono font-bold text-amber-400">{targetUser.xp || 0}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-400">Win</div>
-              <div className="font-mono font-bold text-emerald-400">{targetUser.wins || 0}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-400">Loss</div>
-              <div className="font-mono font-bold text-rose-400">{targetUser.losses || 0}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-400">Draw</div>
-              <div className="font-mono font-bold text-sky-400">{targetUser.draws || 0}</div>
-            </div>
-            <div>
-              <div className="text-[10px] text-slate-400">WR%</div>
-              <div className="font-mono font-bold text-white">{winRate}%</div>
-            </div>
-          </div>
-
-          {/* Tournament Gifts & Trophies Showcase */}
-          {gifts.length > 0 && (
-            <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-[#0b101d] to-amber-500/10 border border-amber-400/30 space-y-2">
-              <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
-                <Award className="w-3.5 h-3.5" />
-                <span>
-                  {lang === 'my' ? `ဆုတံဆိပ်နှင့် လက်ဆောင်များ (${gifts.length})` : `Trophies & Gifts (${gifts.length})`}
-                </span>
-              </div>
-              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
-                {gifts.map((g) => (
-                  <div
-                    key={g.id}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#070b14] border border-amber-400/30 flex items-center gap-2 shrink-0"
-                    title={g.note || g.tournamentTitle}
+          <div className="px-5 pb-5 -mt-10 relative z-10 space-y-3.5 overflow-y-auto">
+            <div className="flex items-end gap-3.5">
+              <AvatarWithFrame
+                avatarUrl={targetUser.avatarUrl}
+                frameId={targetUser.frameId}
+                frames={frames}
+                displayName={targetUser.displayName}
+                size="lg"
+                status={isOnline ? 'online' : 'offline'}
+              />
+              <div className="min-w-0 pb-0.5 flex-1">
+                <div className="flex items-center gap-1.5">
+                  <h3 className="text-base font-display font-bold text-white truncate">
+                    {targetUser.displayName}
+                  </h3>
+                  <RankTierIcon tier={targetUser.rank || 'silver'} className="w-5 h-5 shrink-0" />
+                </div>
+                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                  <button
+                    type="button"
+                    onClick={handleCopyGameId}
+                    className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/35 text-[11px] font-mono font-bold text-amber-300 cursor-pointer"
                   >
-                    <GiftTrophyIcon iconId={g.iconId} className="w-6 h-6" />
-                    <div>
-                      <div className="text-[10px] font-bold text-white leading-tight">
-                        {lang === 'my' ? g.nameMy : g.name}
+                    <span>{targetUser.gameId}</span>
+                    {copiedId ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <span className="text-[11px] font-semibold text-slate-300">{targetUser.rank || 'Silver'}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Bio */}
+            <div className="p-3 rounded-xl bg-[#070b14]/90 border border-white/10">
+              <div className="text-[10px] uppercase tracking-wider font-bold text-amber-400/80 mb-1">
+                {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio)' : 'Player Bio'}
+              </div>
+              <p className="text-xs text-slate-200 leading-relaxed">
+                {targetUser.bio && targetUser.bio.trim()
+                  ? targetUser.bio
+                  : lang === 'my'
+                  ? 'Vanguard Arena တွင် ယှဉ်ပြိုင်နေသော ကစားသမားတစ်ဦးဖြစ်ပါသည်။'
+                  : 'Competing live in Vanguard Arena.'}
+              </p>
+            </div>
+
+            {/* Stats */}
+            <div className="grid grid-cols-5 gap-1.5 text-center bg-[#070b14] p-2.5 rounded-xl border border-white/10 text-xs">
+              <div>
+                <div className="text-[10px] text-slate-400">XP</div>
+                <div className="font-mono font-bold text-amber-400">{targetUser.xp || 0}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400">Win</div>
+                <div className="font-mono font-bold text-emerald-400">{targetUser.wins || 0}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400">Loss</div>
+                <div className="font-mono font-bold text-rose-400">{targetUser.losses || 0}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400">Draw</div>
+                <div className="font-mono font-bold text-sky-400">{targetUser.draws || 0}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400">WR%</div>
+                <div className="font-mono font-bold text-white">{winRate}%</div>
+              </div>
+            </div>
+
+            {/* Trophies */}
+            {gifts.length > 0 && (
+              <div className="p-3 rounded-xl bg-gradient-to-r from-amber-500/10 via-[#0b101d] to-amber-500/10 border border-amber-400/30 space-y-2">
+                <div className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                  <Award className="w-3.5 h-3.5" />
+                  <span>
+                    {lang === 'my' ? `ဆုတံဆိပ်နှင့် လက်ဆောင်များ (${gifts.length})` : `Trophies & Gifts (${gifts.length})`}
+                  </span>
+                </div>
+                <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                  {gifts.map((g) => (
+                    <div
+                      key={g.id}
+                      className="px-2.5 py-1.5 rounded-xl bg-[#070b14] border border-amber-400/30 flex items-center gap-2 shrink-0"
+                    >
+                      <GiftTrophyIcon iconId={g.iconId} className="w-6 h-6" />
+                      <div>
+                        <div className="text-[10px] font-bold text-white leading-tight">
+                          {lang === 'my' ? g.nameMy : g.name}
+                        </div>
+                        {g.placement && (
+                          <div className="text-[9px] font-mono text-amber-400 uppercase">{g.placement} Place</div>
+                        )}
                       </div>
-                      {g.placement && (
-                        <div className="text-[9px] font-mono text-amber-400 uppercase">{g.placement} Place</div>
-                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {!isSelf && (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={handleToggleFriend}
+                    className={`h-10 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
+                      isFriend ? 'bg-white/10 text-slate-200 border border-white/15' : 'cyber-cta-gold text-slate-950'
+                    }`}
+                  >
+                    {isFriend ? <UserMinus className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
+                    <span>
+                      {isFriend
+                        ? lang === 'my' ? 'မိတ်ဆွေဖြုတ်မည်' : 'Unfriend'
+                        : lang === 'my' ? 'မိတ်ဆွေထည့်မည်' : 'Add Friend'}
+                    </span>
+                  </button>
+
+                  <button
+                    type="button"
+                    disabled={isBlocked}
+                    onClick={() => {
+                      onClose();
+                      if (onOpenChatWith) onOpenChatWith(targetUser.id);
+                    }}
+                    className="h-10 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 disabled:opacity-40 border border-sky-400/40 text-xs font-bold text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    <span>{lang === 'my' ? 'Chat ဖွင့်မည်' : 'Open Chat'}</span>
+                  </button>
+                </div>
+
+                {!isBlocked && (
+                  <form onSubmit={handleQuickDm} className="flex gap-2">
+                    <input
+                      type="text"
+                      value={dmText}
+                      onChange={(e) => setDmText(e.target.value)}
+                      placeholder={lang === 'my' ? `${targetUser.displayName} ထံ စာတိုပို့မည်...` : 'Send quick message...'}
+                      className="flex-1 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <button
+                      type="submit"
+                      disabled={sendingDm || !dmText.trim()}
+                      className="px-3.5 h-10 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </form>
+                )}
+
+                <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/10">
+                  <button
+                    type="button"
+                    disabled={isBlocked}
+                    onClick={() => setDuelPickerOpen((v) => !v)}
+                    className="h-9 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 disabled:opacity-40 text-[11px] font-bold text-indigo-200 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Swords className="w-3.5 h-3.5" />
+                    <span>{lang === 'my' ? 'စိန်ခေါ်မည်' : 'Duel'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleToggleBlock}
+                    className={`h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
+                      isBlocked
+                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/35'
+                        : 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30'
+                    }`}
+                  >
+                    {isBlocked ? <ShieldCheck className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
+                    <span>{isBlocked ? 'Unblock' : 'Block'}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => setReportOpen((v) => !v)}
+                    className="h-9 rounded-xl bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-slate-300 flex items-center justify-center gap-1 cursor-pointer"
+                  >
+                    <Flag className="w-3.5 h-3.5 text-amber-400" />
+                    <span>Report</span>
+                  </button>
+                </div>
+
+                {duelPickerOpen && !isBlocked && (
+                  <div className="p-2.5 rounded-xl bg-[#070b14] border border-indigo-400/35 space-y-2">
+                    <div className="text-[10px] font-bold text-indigo-300">
+                      {lang === 'my' ? 'စိန်ခေါ်လိုသော ဂိမ်းရွေးချယ်ပါ:' : 'Choose Game to Duel:'}
+                    </div>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(
+                        [
+                          { id: 'connect4', label: 'Connect 4' },
+                          { id: 'tictactoe', label: 'Tic-Tac-Toe' },
+                          { id: 'rps', label: 'RPS' },
+                          { id: 'sakarhtar', label: lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz' },
+                        ] as Array<{ id: GameType; label: string }>
+                      ).map((g) => (
+                        <button
+                          key={g.id}
+                          type="button"
+                          onClick={() => {
+                            onClose();
+                            onChallenge(targetUser.id, g.id);
+                          }}
+                          className="p-2 rounded-lg bg-[#10182b] hover:bg-indigo-500/25 border border-white/10 text-[11px] font-bold text-white flex items-center gap-2 cursor-pointer"
+                        >
+                          <GameBadgeIcon gameType={g.id} className="w-5 h-5" />
+                          <span className="truncate">{g.label}</span>
+                        </button>
+                      ))}
                     </div>
                   </div>
-                ))}
+                )}
+
+                {reportOpen && (
+                  <form onSubmit={handleSubmitReport} className="p-3 rounded-xl bg-[#070b14] border border-rose-500/30 space-y-2">
+                    <input
+                      type="text"
+                      required
+                      value={reportReason}
+                      onChange={(e) => setReportReason(e.target.value)}
+                      placeholder={lang === 'my' ? 'တိုင်ကြားလိုသည့် အကြောင်းရင်း...' : 'Reason for reporting...'}
+                      className="w-full h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white"
+                    />
+                    <button
+                      type="submit"
+                      className="w-full h-8 rounded-lg bg-rose-500 text-white font-bold text-xs cursor-pointer"
+                    >
+                      {lang === 'my' ? 'Admin ထံ Report ပို့မည်' : 'Submit Report'}
+                    </button>
+                  </form>
+                )}
               </div>
-            </div>
-          )}
+            )}
+          </div>
+        </motion.div>
+      </div>
 
-          {/* Action Buttons for Other Players */}
-          {!isSelf && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={handleToggleFriend}
-                  className={`h-10 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 cursor-pointer ${
-                    isFriend
-                      ? 'bg-white/10 text-slate-200 border border-white/15'
-                      : 'cyber-cta-gold text-slate-950'
-                  }`}
-                >
-                  {isFriend ? <UserMinus className="w-4 h-4" /> : <UserPlus className="w-4 h-4" />}
-                  <span>
-                    {isFriend
-                      ? lang === 'my' ? 'မိတ်ဆွေဖြုတ်မည်' : 'Unfriend'
-                      : lang === 'my' ? 'မိတ်ဆွေထည့်မည်' : 'Add Friend'}
-                  </span>
-                </button>
-
-                <button
-                  type="button"
-                  disabled={isBlocked}
-                  onClick={() => {
-                    onClose();
-                    if (onOpenChatWith) onOpenChatWith(targetUser.id);
-                  }}
-                  className="h-10 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 disabled:opacity-40 border border-sky-400/40 text-xs font-bold text-sky-200 flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  <span>{lang === 'my' ? 'Chat ဖွင့်မည်' : 'Open Chat'}</span>
-                </button>
-              </div>
-
-              {/* Quick Inline Direct Message */}
-              {!isBlocked && (
-                <form onSubmit={handleQuickDm} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={dmText}
-                    onChange={(e) => setDmText(e.target.value)}
-                    placeholder={
-                      lang === 'my' ? `${targetUser.displayName} ထံ စာတိုပို့မည်...` : 'Send quick message...'
-                    }
-                    className="flex-1 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
-                  />
-                  <button
-                    type="submit"
-                    disabled={sendingDm || !dmText.trim()}
-                    className="px-3.5 h-10 rounded-xl bg-amber-500 hover:bg-amber-400 disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
-                  >
-                    <Send className="w-3.5 h-3.5" />
-                  </button>
-                </form>
-              )}
-
-              {/* Challenge / Block / Report Row */}
-              <div className="grid grid-cols-3 gap-2 pt-1 border-t border-white/10">
-                <button
-                  type="button"
-                  disabled={isBlocked}
-                  onClick={() => setDuelPickerOpen((v) => !v)}
-                  className="h-9 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/30 disabled:opacity-40 text-[11px] font-bold text-indigo-200 flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Swords className="w-3.5 h-3.5" />
-                  <span>{lang === 'my' ? 'စိန်ခေါ်မည်' : 'Duel'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={handleToggleBlock}
-                  className={`h-9 rounded-xl text-[11px] font-bold flex items-center justify-center gap-1 cursor-pointer ${
-                    isBlocked
-                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400/35'
-                      : 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30'
-                  }`}
-                >
-                  {isBlocked ? <ShieldCheck className="w-3.5 h-3.5" /> : <Ban className="w-3.5 h-3.5" />}
-                  <span>{isBlocked ? 'Unblock' : 'Block'}</span>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setReportOpen((v) => !v)}
-                  className="h-9 rounded-xl bg-white/5 hover:bg-white/10 text-[11px] font-semibold text-slate-300 flex items-center justify-center gap-1 cursor-pointer"
-                >
-                  <Flag className="w-3.5 h-3.5 text-amber-400" />
-                  <span>Report</span>
-                </button>
-              </div>
-
-              {/* Multi-Game Challenge Picker */}
-              {duelPickerOpen && !isBlocked && (
-                <div className="p-2.5 rounded-xl bg-[#070b14] border border-indigo-400/35 space-y-2">
-                  <div className="text-[10px] font-bold text-indigo-300">
-                    {lang === 'my' ? 'စိန်ခေါ်လိုသော ဂိမ်းရွေးချယ်ပါ:' : 'Choose Game to Duel:'}
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {(
-                      [
-                        { id: 'connect4', label: 'Connect 4' },
-                        { id: 'tictactoe', label: 'Tic-Tac-Toe' },
-                        { id: 'rps', label: 'RPS' },
-                        { id: 'sakarhtar', label: lang === 'my' ? 'ဉာဏ်စမ်းပဟေဠိ' : 'Wise Owl Quiz' },
-                      ] as Array<{ id: GameType; label: string }>
-                    ).map((g) => (
-                      <button
-                        key={g.id}
-                        type="button"
-                        onClick={() => {
-                          onClose();
-                          onChallenge(targetUser.id, g.id);
-                        }}
-                        className="p-2 rounded-lg bg-[#10182b] hover:bg-indigo-500/25 border border-white/10 text-[11px] font-bold text-white flex items-center gap-2 cursor-pointer"
-                      >
-                        <GameBadgeIcon gameType={g.id} className="w-5 h-5" />
-                        <span className="truncate">{g.label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {reportOpen && (
-                <form
-                  onSubmit={handleSubmitReport}
-                  className="p-3 rounded-xl bg-[#070b14] border border-rose-500/30 space-y-2"
-                >
-                  <input
-                    type="text"
-                    required
-                    value={reportReason}
-                    onChange={(e) => setReportReason(e.target.value)}
-                    placeholder={lang === 'my' ? 'တိုင်ကြားလိုသည့် အကြောင်းရင်း...' : 'Reason for reporting...'}
-                    className="w-full h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white"
-                  />
-                  <button
-                    type="submit"
-                    className="w-full h-8 rounded-lg bg-rose-500 text-white font-bold text-xs cursor-pointer"
-                  >
-                    {lang === 'my' ? 'Admin ထံ Report ပို့မည်' : 'Submit Report'}
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-        </div>
-      </motion.div>
-    </div>
+      {shareOpen && (
+        <ShareProfileModal
+          lang={lang}
+          player={targetUser}
+          frames={frames}
+          onClose={() => setShareOpen(false)}
+          onNotify={onNotify}
+        />
+      )}
+    </>
   );
 };
