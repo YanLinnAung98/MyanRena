@@ -52,6 +52,11 @@ interface UseArenaSocketOptions {
   onKicked: (reason: string) => void;
 }
 
+interface Connect4Result {
+  winner: 'P1' | 'P2' | 'DRAW';
+  winningCells: Array<[number, number]>;
+}
+
 const DISMISSED_NOTIS_KEY = 'vanguard_dismissed_notis_v1';
 
 function readDismissedNotiIds(): Set<string> {
@@ -106,18 +111,76 @@ function pickSmartTTTMove(board: Array<string | null>, difficulty: string): numb
   return empty[Math.floor(Math.random() * empty.length)];
 }
 
-function checkConnect4Winner(grid: Array<Array<string | null>>): 'P1' | 'P2' | 'DRAW' | null {
+function checkConnect4Winner(grid: Array<Array<string | null>>): Connect4Result | null {
   for (let r = 0; r < 6; r++) {
     for (let c = 0; c < 7; c++) {
       const v = grid[r]?.[c];
       if (!v) continue;
-      if (c <= 3 && v === grid[r][c + 1] && v === grid[r][c + 2] && v === grid[r][c + 3]) return v as 'P1' | 'P2';
-      if (r <= 2 && v === grid[r + 1][c] && v === grid[r + 2][c] && v === grid[r + 3][c]) return v as 'P1' | 'P2';
-      if (r <= 2 && c <= 3 && v === grid[r + 1][c + 1] && v === grid[r + 2][c + 2] && v === grid[r + 3][c + 3]) return v as 'P1' | 'P2';
-      if (r <= 2 && c >= 3 && v === grid[r + 1][c - 1] && v === grid[r + 2][c - 2] && v === grid[r + 3][c - 3]) return v as 'P1' | 'P2';
+
+      if (c <= 3 && v === grid[r][c + 1] && v === grid[r][c + 2] && v === grid[r][c + 3]) {
+        return {
+          winner: v as 'P1' | 'P2',
+          winningCells: [[r, c], [r, c + 1], [r, c + 2], [r, c + 3]],
+        };
+      }
+      if (r <= 2 && v === grid[r + 1][c] && v === grid[r + 2][c] && v === grid[r + 3][c]) {
+        return {
+          winner: v as 'P1' | 'P2',
+          winningCells: [[r, c], [r + 1, c], [r + 2, c], [r + 3, c]],
+        };
+      }
+      if (r <= 2 && c <= 3 && v === grid[r + 1][c + 1] && v === grid[r + 2][c + 2] && v === grid[r + 3][c + 3]) {
+        return {
+          winner: v as 'P1' | 'P2',
+          winningCells: [[r, c], [r + 1, c + 1], [r + 2, c + 2], [r + 3, c + 3]],
+        };
+      }
+      if (r <= 2 && c >= 3 && v === grid[r + 1][c - 1] && v === grid[r + 2][c - 2] && v === grid[r + 3][c - 3]) {
+        return {
+          winner: v as 'P1' | 'P2',
+          winningCells: [[r, c], [r + 1, c - 1], [r + 2, c - 2], [r + 3, c - 3]],
+        };
+      }
     }
   }
-  return grid.every((row) => row.every((cell) => cell === null)) ? 'DRAW' : null;
+  const isFull = grid.every((row) => row.every((cell) => cell !== null));
+  return isFull ? { winner: 'DRAW', winningCells: [] } : null;
+}
+
+function pickConnect4BotCol(grid: Array<Array<string | null>>, difficulty: string): number {
+  const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => grid[0][c] === null);
+  if (validCols.length === 0) return -1;
+
+  const simulateDrop = (col: number, disc: 'P1' | 'P2') => {
+    const copy = grid.map((r) => [...r]);
+    for (let r = 5; r >= 0; r--) {
+      if (copy[r][col] === null) {
+        copy[r][col] = disc;
+        return copy;
+      }
+    }
+    return null;
+  };
+
+  // 1. နိုင်မည့်အကွက်ရှိလျှင် ချက်ချင်းယူမည်
+  for (const col of validCols) {
+    const sim = simulateDrop(col, 'P2');
+    if (sim && checkConnect4Winner(sim)?.winner === 'P2') return col;
+  }
+
+  // 2. User နိုင်တော့မည့်အကွက်ကို ပိတ်မည်
+  if (difficulty !== 'easy') {
+    for (const col of validCols) {
+      const sim = simulateDrop(col, 'P1');
+      if (sim && checkConnect4Winner(sim)?.winner === 'P1') return col;
+    }
+  }
+
+  // 3. အလယ်ကော်လံများကို ဦးစားပေးရွေးမည်
+  const preferred = [3, 2, 4, 1, 5, 0, 6].filter((c) => validCols.includes(c));
+  if (difficulty === 'hard' && Math.random() > 0.25) return preferred[0];
+  if (difficulty === 'medium' && Math.random() > 0.55) return preferred[0];
+  return validCols[Math.floor(Math.random() * validCols.length)];
 }
 
 export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
@@ -129,8 +192,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [notifications, setNotifications] = useState<ArenaNotification[]>([]);
   const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
 
-  // Admin-Controlled System Flags (Includes Hide Admin Account from Users)
-  const [hideAdminFromUsers, setHideAdminFromUsers] = useState<boolean>(true);
+  // Live Admin-Controlled System State
   const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState<string>(
     'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။'
@@ -149,7 +211,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [tournaments, setTournaments] = useState<any[]>([]);
   const [openRooms, setOpenRooms] = useState<any[]>([]);
   const [activeMatch, setActiveMatch] = useState<any | null>(null);
-  const [botThinking, setBotThinking] = useState<boolean>(false);
   const [currentRoom, setCurrentRoom] = useState<any | null>(null);
   const [matchChat, setMatchChat] = useState<any[]>([]);
   const [roomChat, setRoomChat] = useState<any[]>([]);
@@ -164,22 +225,22 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const queueTimerRef = useRef<number | null>(null);
   const queueRoomIdRef = useRef<string | null>(null);
-  const botTimerRef = useRef<number | null>(null);
-  const botThinkingRef = useRef<boolean>(false);
+  const botTimersRef = useRef<number[]>([]);
   const xpAwardedMatchRef = useRef<string | null>(null);
   const alertedNotiIdsRef = useRef<Set<string>>(new Set());
   const sessionStartedAtRef = useRef<number>(Date.now());
   const xpRulesRef = useRef(xpRules);
   xpRulesRef.current = xpRules;
 
-  const cancelBotTimer = useCallback(() => {
-    if (botTimerRef.current) {
-      window.clearTimeout(botTimerRef.current);
-      botTimerRef.current = null;
-    }
-    botThinkingRef.current = false;
-    setBotThinking(false);
+  const clearBotTimers = useCallback(() => {
+    botTimersRef.current.forEach((id) => window.clearTimeout(id));
+    botTimersRef.current = [];
   }, []);
+
+  useEffect(() => {
+    if (!activeMatch) clearBotTimers();
+    return () => clearBotTimers();
+  }, [activeMatch?.id, clearBotTimers]);
 
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
@@ -222,10 +283,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
       if (matchId && xpAwardedMatchRef.current === matchId) return;
       if (matchId) xpAwardedMatchRef.current = matchId;
-
-      if (outcome === 'win') soundEngine.playWin();
-      else if (outcome === 'loss') soundEngine.playCry();
-      else soundEngine.playNotify();
 
       const player = resolveCurrentPlayer();
       if (!player) return;
@@ -311,6 +368,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
     const handleBeforeUnload = () => pushHeartbeat(false);
     window.addEventListener('beforeunload', handleBeforeUnload);
+
     return () => {
       window.clearInterval(intervalId);
       window.removeEventListener('beforeunload', handleBeforeUnload);
@@ -352,7 +410,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           const newest = unreadPopups[0];
           if (!alertedNotiIdsRef.current.has(newest.id)) {
             alertedNotiIdsRef.current.add(newest.id);
-            soundEngine.playNotify();
+            soundEngine.playNotify?.();
             pushToast('info', `📢 ${newest.title}: ${newest.message}`);
           }
         }
@@ -442,9 +500,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const cfg = snap.data() as any;
-        if (typeof cfg.hideAdminFromUsers === 'boolean') {
-          setHideAdminFromUsers(cfg.hideAdminFromUsers);
-        }
         setMaintenanceMode(Boolean(cfg.maintenanceMode));
         if (cfg.maintenanceMessage) setMaintenanceMessage(cfg.maintenanceMessage);
         if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
@@ -679,7 +734,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setActiveMatch(match);
   }, [resolveCurrentPlayer]);
 
-  // 6. Unified Move Handler (Includes 1.5s Bot Thinking Delay for TTT & Connect 4 + Rich SFX!)
+  // 6. Unified Move Handler
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
@@ -692,9 +747,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       const next = JSON.parse(JSON.stringify(activeMatch));
       next.gameType = gType;
 
-      // --- A. TIC-TAC-TOE (With Scratch Sound & 1.5s Bot Thinking) ---
       if (gType === 'tictactoe') {
-        if (!isPvp && botThinkingRef.current) return;
         const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
         const idx = typeof move === 'number' ? move : move?.index ?? -1;
         if (idx < 0 || idx > 8 || board[idx] !== null) return;
@@ -703,10 +756,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           if (next.turnUserId !== me?.id) return;
           board[idx] = me?.id === p1.id ? 'X' : 'O';
           next.tttBoard = board;
-          next.lastMove = { actor: me?.id === p1.id ? 'p1' : 'p2', index: idx, ts: Date.now() };
           next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
-          soundEngine.playScratch();
-
           const outcome = checkTTTWinner(board);
           if (outcome) {
             next.status = 'finished';
@@ -721,102 +771,67 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Player Move Immediately
         board[idx] = 'X';
+        let outcome = checkTTTWinner(board);
+        if (!outcome) {
+          const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
+          if (botPick >= 0) {
+            board[botPick] = 'O';
+            outcome = checkTTTWinner(board);
+          }
+        }
         next.tttBoard = board;
-        next.lastMove = { actor: 'p1', index: idx, ts: Date.now() };
-        soundEngine.playScratch();
-
-        const p1Outcome = checkTTTWinner(board);
-        if (p1Outcome) {
+        if (outcome) {
           next.status = 'finished';
-          if (p1Outcome === 'DRAW') {
+          if (outcome === 'DRAW') {
             next.isDraw = true;
             applyXpDelta('draw', next.id);
           } else {
-            next.winnerId = p1.id;
-            next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
-            applyXpDelta('win', next.id);
+            const p1Won = outcome === 'X';
+            next.winnerId = p1Won ? p1.id : p2.id;
+            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
+            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
           }
-          setActiveMatch(next);
-          return;
         }
-
-        // Bot Thinks for 1.5 Seconds (1500ms) Before Playing
-        next.turnUserId = p2.id;
         setActiveMatch(next);
-        botThinkingRef.current = true;
-        setBotThinking(true);
-        soundEngine.playThinking();
-
-        const matchIdSnap = next.id;
-        botTimerRef.current = window.setTimeout(() => {
-          botThinkingRef.current = false;
-          setBotThinking(false);
-          setActiveMatch((curr: any) => {
-            if (!curr || curr.id !== matchIdSnap || curr.status === 'finished') return curr;
-            const bCopy = [...(curr.tttBoard || Array(9).fill(null))];
-            const botPick = pickSmartTTTMove(bCopy, curr.difficulty || 'medium');
-            if (botPick < 0) return curr;
-            bCopy[botPick] = 'O';
-            soundEngine.playScratch();
-
-            const updated = {
-              ...curr,
-              tttBoard: bCopy,
-              turnUserId: p1.id,
-              lastMove: { actor: 'p2', index: botPick, ts: Date.now() },
-              scores: { ...(curr.scores || {}) },
-            };
-
-            const botOutcome = checkTTTWinner(bCopy);
-            if (botOutcome) {
-              updated.status = 'finished';
-              if (botOutcome === 'DRAW') {
-                updated.isDraw = true;
-                applyXpDelta('draw', updated.id);
-              } else {
-                updated.winnerId = p2.id;
-                updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
-                applyXpDelta('loss', updated.id);
-              }
-            }
-            return updated;
-          });
-        }, 1500);
         return;
       }
 
-      // --- B. CONNECT 4 (With Drop Bounce Sound & 1.5s Bot Thinking) ---
       if (gType === 'connect4') {
-        if (!isPvp && botThinkingRef.current) return;
         const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
         const col = typeof move === 'number' ? move : move?.col ?? -1;
         if (col < 0 || col > 6) return;
 
+        // ကလေးငယ် စဥ်းစားနေချိန် (သို့) အနီပြားချနေချိန်တွင် User ထပ်နှိပ်မရအောင် ပိတ်ထားမည်
+        if (!isPvp && (next.botPhase === 'thinking' || next.botPhase === 'dropping')) return;
         if (isPvp && next.turnUserId !== me?.id) return;
+
         const myDisc = isPvp ? (me?.id === p1.id ? 'P1' : 'P2') : 'P1';
 
-        let placed = false;
+        let placedRow = -1;
         for (let r = 5; r >= 0; r--) {
           if (grid[r][col] === null) {
             grid[r][col] = myDisc;
-            placed = true;
+            placedRow = r;
             break;
           }
         }
-        if (!placed) return;
-        soundEngine.playDrop();
+        if (placedRow === -1) return;
 
+        (soundEngine as any).playClick?.();
+
+        // PvP Mode
         if (isPvp) {
           next.c4Board = grid;
+          next.lastMove = { row: placedRow, col, disc: myDisc };
           next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
-          const outcome = checkConnect4Winner(grid);
-          if (outcome) {
+          const result = checkConnect4Winner(grid);
+          if (result) {
             next.status = 'finished';
-            if (outcome === 'DRAW') next.isDraw = true;
+            next.winningCells = result.winningCells;
+            if (result.winner === 'DRAW') next.isDraw = true;
             else {
-              next.winnerId = outcome === 'P1' ? p1.id : p2.id;
+              next.winnerId = result.winner === 'P1' ? p1.id : p2.id;
               next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
             }
           }
@@ -825,15 +840,22 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
+        // Bot (ကလေးငယ်) Mode
         next.c4Board = grid;
-        const p1Outcome = checkConnect4Winner(grid);
-        if (p1Outcome) {
+        next.lastMove = { row: placedRow, col, disc: 'P1' };
+
+        const userOutcome = checkConnect4Winner(grid);
+        if (userOutcome) {
           next.status = 'finished';
-          if (p1Outcome === 'DRAW') {
+          next.winningCells = userOutcome.winningCells;
+          if (userOutcome.winner === 'DRAW') {
             next.isDraw = true;
+            next.botPhase = 'idle';
             applyXpDelta('draw', next.id);
           } else {
+            // User နိုင်သွားပြီ -> ကလေးငယ် ငိုမည်
             next.winnerId = p1.id;
+            next.botPhase = 'crying';
             next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
             applyXpDelta('win', next.id);
           }
@@ -841,60 +863,80 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // Bot Thinks for 1.5 Seconds (1500ms) Before Dropping Disc
+        // အဆင့် (၁): ကလေးငယ် ခဏစဥ်းစားမည်
         next.turnUserId = p2.id;
+        next.botPhase = 'thinking';
+        next.botTargetCol = null;
         setActiveMatch(next);
-        botThinkingRef.current = true;
-        setBotThinking(true);
-        soundEngine.playThinking();
 
-        const matchIdSnap = next.id;
-        botTimerRef.current = window.setTimeout(() => {
-          botThinkingRef.current = false;
-          setBotThinking(false);
-          setActiveMatch((curr: any) => {
-            if (!curr || curr.id !== matchIdSnap || curr.status === 'finished') return curr;
-            const gCopy: Array<Array<string | null>> = curr.c4Board.map((r: any) => [...r]);
-            const validCols = [0, 1, 2, 3, 4, 5, 6].filter((c) => gCopy[0][c] === null);
-            if (validCols.length === 0) return curr;
+        const botCol = pickConnect4BotCol(grid, next.difficulty || 'medium');
+        if (botCol === -1) return;
 
-            const botCol =
-              curr.difficulty === 'hard' && validCols.includes(3) && Math.random() > 0.35
-                ? 3
-                : validCols[Math.floor(Math.random() * validCols.length)];
-            for (let r = 5; r >= 0; r--) {
-              if (gCopy[r][botCol] === null) {
-                gCopy[r][botCol] = 'P2';
-                break;
-              }
-            }
-            soundEngine.playDrop();
+        const thinkDelay = 900 + Math.floor(Math.random() * 550);
 
-            const updated = {
-              ...curr,
-              c4Board: gCopy,
-              turnUserId: p1.id,
-              scores: { ...(curr.scores || {}) },
+        const t1 = window.setTimeout(() => {
+          // အဆင့် (၂): အနီဝိုင်းပြားကို ကိုင်ပြီး ရွေးထားသည့် ကော်လံပေါ်သို့ ရွှေ့မည်
+          setActiveMatch((prev: any) => {
+            if (!prev || prev.status === 'finished') return prev;
+            return {
+              ...prev,
+              botPhase: 'dropping',
+              botTargetCol: botCol,
             };
-            const botOutcome = checkConnect4Winner(gCopy);
-            if (botOutcome) {
-              updated.status = 'finished';
-              if (botOutcome === 'DRAW') {
-                updated.isDraw = true;
-                applyXpDelta('draw', updated.id);
-              } else {
-                updated.winnerId = p2.id;
-                updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
-                applyXpDelta('loss', updated.id);
-              }
-            }
-            return updated;
           });
-        }, 1500);
+
+          const t2 = window.setTimeout(() => {
+            // အဆင့် (၃): အနီဝိုင်းပြားကို ဘုတ်ထဲသို့ ချမည်
+            setActiveMatch((prev: any) => {
+              if (!prev || prev.status === 'finished') return prev;
+              const updated = JSON.parse(JSON.stringify(prev));
+              const nextGrid: Array<Array<string | null>> = updated.c4Board.map((r: any) => [...r]);
+
+              let botRow = -1;
+              for (let r = 5; r >= 0; r--) {
+                if (nextGrid[r][botCol] === null) {
+                  nextGrid[r][botCol] = 'P2';
+                  botRow = r;
+                  break;
+                }
+              }
+              if (botRow === -1) return prev;
+
+              (soundEngine as any).playClick?.();
+              updated.c4Board = nextGrid;
+              updated.lastMove = { row: botRow, col: botCol, disc: 'P2' };
+              updated.botTargetCol = null;
+
+              const botOutcome = checkConnect4Winner(nextGrid);
+              if (botOutcome) {
+                updated.status = 'finished';
+                updated.winningCells = botOutcome.winningCells;
+                if (botOutcome.winner === 'DRAW') {
+                  updated.isDraw = true;
+                  updated.botPhase = 'idle';
+                  applyXpDelta('draw', updated.id);
+                } else {
+                  // Bot နိုင်သွားပြီ (User ရှုံးပြီ) -> ကလေးငယ် ပျော်နေမည်
+                  updated.winnerId = p2.id;
+                  updated.botPhase = 'happy';
+                  updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
+                  applyXpDelta('loss', updated.id);
+                }
+              } else {
+                updated.botPhase = 'idle';
+                updated.turnUserId = p1.id;
+              }
+              return updated;
+            });
+          }, 520);
+
+          botTimersRef.current.push(t2);
+        }, thinkDelay);
+
+        botTimersRef.current.push(t1);
         return;
       }
 
-      // --- C. ROCK, PAPER, SCISSORS (With Head-Bonk SFX!) ---
       if (gType === 'rps') {
         const myChoice = String(move?.choice || move || 'rock').toLowerCase();
 
@@ -911,12 +953,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
                 (c1 === 'scissors' && c2 === 'paper');
               roundWinnerId = p1Beats ? p1.id : p2.id;
             }
-            if (roundWinnerId) {
-              next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
-              soundEngine.playBonk();
-            } else {
-              soundEngine.playClick();
-            }
+            if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
             next.rpsLastRound = { p1Choice: c1, p2Choice: c2, winnerId: roundWinnerId };
             next.rpsPicks = {};
             next.round = (next.round || 1) + 1;
@@ -942,12 +979,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             (myChoice === 'scissors' && bChoice === 'paper');
           roundWinnerId = beats ? p1.id : p2.id;
         }
-        if (roundWinnerId) {
-          next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
-          soundEngine.playBonk();
-        } else {
-          soundEngine.playClick();
-        }
+        if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
         next.rpsLastRound = { p1Choice: myChoice, p2Choice: bChoice, winnerId: roundWinnerId };
         next.round = (next.round || 1) + 1;
 
@@ -962,15 +994,11 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
-      // --- D. WISE OWL QUIZ (With Correct Chime & Head-Bonk SFX!) ---
       if (gType === 'sakarhtar') {
         const riddles = next.riddles?.length ? next.riddles : QUIZ_BANK_100;
         const idx = next.riddleIndex || 0;
         const current = riddles[idx] || riddles[0];
         const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
-
-        if (chosen === current.answerIndex) soundEngine.playCorrect();
-        else soundEngine.playBonk();
 
         if (isPvp && me?.id) {
           next.roundAnswers = next.roundAnswers || {};
@@ -1021,25 +1049,22 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const forfeitMatch = useCallback(async () => {
-    cancelBotTimer();
+    clearBotTimers();
     if (!activeMatch) return;
     const me = resolveCurrentPlayer();
     const other = (activeMatch.players || []).find((p: any) => p.id !== me?.id) || { id: 'aegis_bot' };
-    const finished = { ...activeMatch, status: 'finished', winnerId: other.id };
+    const finished = {
+      ...activeMatch,
+      status: 'finished',
+      winnerId: other.id,
+      botPhase: normalizeGameId(activeMatch.gameType) === 'connect4' ? 'happy' : activeMatch.botPhase,
+    };
     setActiveMatch(finished);
     applyXpDelta('loss', activeMatch.id);
     if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
       await setDoc(doc(db, 'matches', activeMatch.id), stripUndefined(finished)).catch(() => {});
     }
-  }, [activeMatch, cancelBotTimer, resolveCurrentPlayer, applyXpDelta]);
-
-  const setActiveMatchSafe = useCallback(
-    (m: any | null) => {
-      cancelBotTimer();
-      setActiveMatch(m);
-    },
-    [cancelBotTimer]
-  );
+  }, [activeMatch, clearBotTimers, resolveCurrentPlayer, applyXpDelta]);
 
   const sendMatchChat = useCallback(
     async (text: string) => {
@@ -1070,10 +1095,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const sendChallenge = useCallback(
     (_targetUserId: string, gameType: GameType) => {
       const player = resolveCurrentPlayer();
-      setActiveMatchSafe(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
+      setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
       setSocialRefreshTick((n) => n + 1);
     },
-    [resolveCurrentPlayer, setActiveMatchSafe]
+    [resolveCurrentPlayer]
   );
 
   const respondChallenge = useCallback((_challengeId: string, accept: boolean) => {
@@ -1094,7 +1119,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     notifications,
     unreadNotiCount,
     markAllNotificationsRead,
-    hideAdminFromUsers,
     maintenanceMode,
     maintenanceMessage,
     xpRules,
@@ -1106,8 +1130,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     tournaments,
     openRooms,
     activeMatch,
-    setActiveMatch: setActiveMatchSafe,
-    botThinking,
+    setActiveMatch,
     currentRoom,
     setCurrentRoom,
     matchChat,
