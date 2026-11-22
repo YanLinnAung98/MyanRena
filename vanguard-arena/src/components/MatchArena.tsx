@@ -5,7 +5,11 @@ import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Language, UserProfile } from '../types.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
-import { Connect4Board } from './Connect4Board.tsx';
+import {
+  Connect4Board,
+  getConnect4BotName,
+  KID_BOT_AVATAR_DATA_URI,
+} from './Connect4Board.tsx';
 import {
   VillageRpsScene,
   VillageTicTacToeScene,
@@ -46,12 +50,23 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const gType = normalizeGameId(match.gameType);
   const players: any[] = match.players || [currentUser];
   const p1 = players[0] || currentUser;
-  const p2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
+  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
+  const isPvp = Boolean(match.isRealtimePvp && players.length >= 2);
+
+  // 4-Row Bot Match တွင် မောင်ဖိုးသား၏ Profile ပုံနှင့် နာမည်ကို သုံးမည်
+  const p2 =
+    gType === 'connect4' && !isPvp
+      ? {
+          ...rawP2,
+          displayName: getConnect4BotName(lang, match.difficulty || 'medium'),
+          avatarUrl: KID_BOT_AVATAR_DATA_URI,
+        }
+      : rawP2;
+
   const p1Score = match.scores?.[p1.id] ?? 0;
   const p2Score = match.scores?.[p2.id] ?? 0;
   const isFinished = match.status === 'finished';
   const didWin = match.winnerId === currentUser.id;
-  const isPvp = Boolean(match.isRealtimePvp && players.length >= 2);
   const isMyTurn = (!isPvp && !botThinking) || (isPvp && match.turnUserId === currentUser.id);
 
   const handleChatSubmit = (e: React.FormEvent) => {
@@ -100,7 +115,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
 
         <div className="flex items-center gap-2 min-w-0">
           <div className="text-right min-w-0">
-            <div className="text-xs font-bold text-white truncate max-w-[85px] sm:max-w-[140px]">
+            <div className="text-xs font-bold text-white truncate max-w-[95px] sm:max-w-[160px]">
               {p2.displayName}
             </div>
             <motion.div
@@ -136,7 +151,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           />
         )}
 
-        {/* 2. 3D CONNECT 4 ON TABLE WITH ANIMATED KID OPPONENT */}
+        {/* 2. 3D CONNECT 4 WITH MG PHO THAR */}
         {gType === 'connect4' && (
           <Connect4Board
             lang={lang}
@@ -237,7 +252,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         </div>
       )}
 
-      {/* Match Result Banner (Bottom Floating Bar so Users can Watch the Kids Dance & Cry!) */}
+      {/* Match Result Banner (Non-Connect4 Games) */}
       {isFinished && gType !== 'connect4' && (
         <motion.div
           initial={{ y: 40, opacity: 0 }}
