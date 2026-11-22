@@ -22,23 +22,25 @@ export function getTicTacToeBotName(lang: Language, difficulty = 'medium'): stri
   return 'Ma Pu Tu';
 }
 
+// GitHub Repository ရှိ public/assets/ မှ တိုက်ရိုက်ယူမည် (404 လုံးဝမတက်စေရန်)
 const RAW_BASE = 'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets';
-const BASE_PREFIX = (import.meta.env.BASE_URL || '/MyanRena/').replace(/\/?$/, '/');
+const CDN_BASE = 'https://cdn.jsdelivr.net/gh/YanLinnAung98/MyanRena@main/public/assets';
 
-function getAssetUrls(filename: string): string[] {
+export const TTT_BG_DIRECT_URL = `${RAW_BASE}/ttt-village-bg.jpg`;
+export const TTT_KID_BOT_AVATAR_DATA_URI = `${RAW_BASE}/ttt-girl-idle.jpg`;
+
+function getDirectCandidates(baseName: string): string[] {
   return [
-    `${BASE_PREFIX}assets/${filename}`,
-    `/MyanRena/assets/${filename}`,
-    `${RAW_BASE}/${filename}`,
+    `${RAW_BASE}/${baseName}.jpg`,
+    `${RAW_BASE}/${baseName}.jpeg`,
+    `${CDN_BASE}/${baseName}.jpg`,
+    `${CDN_BASE}/${baseName}.jpeg`,
   ];
 }
 
-// Bot Profile ပုံအတွက် မပုတု ပုံအစစ် (Fallback SVG ပါတွဲထားသည်)
-export const TTT_KID_BOT_AVATAR_DATA_URI = `${BASE_PREFIX}assets/ttt-girl-idle.jpg`;
-
-// အပြင်ဘက် အဖြူရောင်နောက်ခံကို အလိုအလျောက် ဖျက်ပေးမည့် Canvas Flood-Fill Cache
+// Transparent Sprite Cache + Duplicate Request Guard
 const transparentCache = new Map<string, string>();
-let preloadedBgUrl: string | null = null;
+const inFlightCache = new Map<string, Promise<string | null>>();
 
 function loadImage(url: string, withCors: boolean): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -50,131 +52,131 @@ function loadImage(url: string, withCors: boolean): Promise<HTMLImageElement> {
   });
 }
 
-async function resolveWorkingUrl(filename: string): Promise<string | null> {
-  const candidates = getAssetUrls(filename);
-  for (const url of candidates) {
-    try {
-      await loadImage(url, false);
-      return url;
-    } catch {
-      // try next candidate
-    }
+function loadTransparentSprite(baseName: string): Promise<string | null> {
+  if (transparentCache.has(baseName)) {
+    return Promise.resolve(transparentCache.get(baseName)!);
   }
-  return null;
-}
-
-async function loadTransparentSprite(filename: string): Promise<string | null> {
-  if (transparentCache.has(filename)) {
-    return transparentCache.get(filename)!;
+  if (inFlightCache.has(baseName)) {
+    return inFlightCache.get(baseName)!;
   }
 
-  const candidates = getAssetUrls(filename);
-  for (const url of candidates) {
-    try {
-      const img = await loadImage(url, true);
-      const maxDim = 512;
-      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
-      const w = Math.max(1, Math.round(img.naturalWidth * scale));
-      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+  const task = (async () => {
+    const candidates = getDirectCandidates(baseName);
+    for (const url of candidates) {
+      try {
+        const img = await loadImage(url, true);
+        const maxDim = 512;
+        const scale = Math.min(
+          1,
+          maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1)
+        );
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
 
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return url;
-
-      ctx.drawImage(img, 0, 0, w, h);
-      const imgData = ctx.getImageData(0, 0, w, h);
-      const data = imgData.data;
-
-      // 4 ထောင့်မှစတင်ပြီး အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
-      const visited = new Uint8Array(w * h);
-      const queue = new Int32Array(w * h);
-      let head = 0;
-      let tail = 0;
-
-      const isNearWhite = (idx4: number) => {
-        const r = data[idx4];
-        const g = data[idx4 + 1];
-        const b = data[idx4 + 2];
-        const maxC = Math.max(r, g, b);
-        const minC = Math.min(r, g, b);
-        return r > 228 && g > 228 && b > 228 && maxC - minC < 26;
-      };
-
-      const pushIfBg = (x: number, y: number) => {
-        const p = y * w + x;
-        if (visited[p]) return;
-        const idx4 = p * 4;
-        if (isNearWhite(idx4)) {
-          visited[p] = 1;
-          queue[tail++] = p;
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          transparentCache.set(baseName, url);
+          return url;
         }
-      };
 
-      for (let x = 0; x < w; x++) {
-        pushIfBg(x, 0);
-        pushIfBg(x, h - 1);
-      }
-      for (let y = 0; y < h; y++) {
-        pushIfBg(0, y);
-        pushIfBg(w - 1, y);
-      }
+        ctx.drawImage(img, 0, 0, w, h);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const data = imgData.data;
 
-      while (head < tail) {
-        const p = queue[head++];
-        const idx4 = p * 4;
-        data[idx4 + 3] = 0;
+        // အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
+        const visited = new Uint8Array(w * h);
+        const queue = new Int32Array(w * h);
+        let head = 0;
+        let tail = 0;
 
-        const x = p % w;
-        const y = (p - x) / w;
+        const isNearWhite = (idx4: number) => {
+          const r = data[idx4];
+          const g = data[idx4 + 1];
+          const b = data[idx4 + 2];
+          const maxC = Math.max(r, g, b);
+          const minC = Math.min(r, g, b);
+          return r > 228 && g > 228 && b > 228 && maxC - minC < 26;
+        };
 
-        if (x > 0) pushIfBg(x - 1, y);
-        if (x < w - 1) pushIfBg(x + 1, y);
-        if (y > 0) pushIfBg(x, y - 1);
-        if (y < h - 1) pushIfBg(x, y + 1);
-      }
-
-      // အနားသတ်လေးများ ညက်ညောစေရန် 1px Soft Feather
-      for (let y = 1; y < h - 1; y++) {
-        for (let x = 1; x < w - 1; x++) {
+        const pushIfBg = (x: number, y: number) => {
           const p = y * w + x;
+          if (visited[p]) return;
           const idx4 = p * 4;
-          if (data[idx4 + 3] === 0) continue;
-          const hasTransparentNeighbor =
-            data[(p - 1) * 4 + 3] === 0 ||
-            data[(p + 1) * 4 + 3] === 0 ||
-            data[(p - w) * 4 + 3] === 0 ||
-            data[(p + w) * 4 + 3] === 0;
-          if (hasTransparentNeighbor) {
-            const avg = (data[idx4] + data[idx4 + 1] + data[idx4 + 2]) / 3;
-            if (avg > 205) {
-              data[idx4 + 3] = Math.round(data[idx4 + 3] * 0.35);
+          if (isNearWhite(idx4)) {
+            visited[p] = 1;
+            queue[tail++] = p;
+          }
+        };
+
+        for (let x = 0; x < w; x++) {
+          pushIfBg(x, 0);
+          pushIfBg(x, h - 1);
+        }
+        for (let y = 0; y < h; y++) {
+          pushIfBg(0, y);
+          pushIfBg(w - 1, y);
+        }
+
+        while (head < tail) {
+          const p = queue[head++];
+          const idx4 = p * 4;
+          data[idx4 + 3] = 0;
+
+          const x = p % w;
+          const y = (p - x) / w;
+
+          if (x > 0) pushIfBg(x - 1, y);
+          if (x < w - 1) pushIfBg(x + 1, y);
+          if (y > 0) pushIfBg(x, y - 1);
+          if (y < h - 1) pushIfBg(x, y + 1);
+        }
+
+        // 1px Soft Feather
+        for (let y = 1; y < h - 1; y++) {
+          for (let x = 1; x < w - 1; x++) {
+            const p = y * w + x;
+            const idx4 = p * 4;
+            if (data[idx4 + 3] === 0) continue;
+            const hasTransparentNeighbor =
+              data[(p - 1) * 4 + 3] === 0 ||
+              data[(p + 1) * 4 + 3] === 0 ||
+              data[(p - w) * 4 + 3] === 0 ||
+              data[(p + w) * 4 + 3] === 0;
+            if (hasTransparentNeighbor) {
+              const avg = (data[idx4] + data[idx4 + 1] + data[idx4 + 2]) / 3;
+              if (avg > 205) {
+                data[idx4 + 3] = Math.round(data[idx4 + 3] * 0.35);
+              }
             }
           }
         }
-      }
 
-      ctx.putImageData(imgData, 0, 0);
-      const resultUri = canvas.toDataURL('image/png');
-      transparentCache.set(filename, resultUri);
-      return resultUri;
-    } catch {
-      // try next candidate
+        ctx.putImageData(imgData, 0, 0);
+        const resultUri = canvas.toDataURL('image/png');
+        transparentCache.set(baseName, resultUri);
+        return resultUri;
+      } catch {
+        // try next candidate
+      }
     }
-  }
-  return null;
+    return null;
+  })();
+
+  inFlightCache.set(baseName, task);
+  return task;
 }
 
-// App စဖွင့်ကတည်းက ပုံများကို ကြိုတင် Preload လုပ်ထားမည် (ဂိမ်းဝင်ချိန် ချက်ချင်းပေါ်ရန်)
+// App စဖွင့်ကတည်းက တစ်ကြိမ်သာ Preload လုပ်ထားမည်
 if (typeof window !== 'undefined') {
-  resolveWorkingUrl('ttt-village-bg.jpg').then((u) => {
-    if (u) preloadedBgUrl = u;
-  });
-  void loadTransparentSprite('ttt-boy.jpg');
-  void loadTransparentSprite('ttt-girl-idle.jpg');
-  void loadTransparentSprite('ttt-girl-dance.jpg');
-  void loadTransparentSprite('ttt-girl-cry.jpg');
+  const preloadBg = new Image();
+  preloadBg.src = TTT_BG_DIRECT_URL;
+  void loadTransparentSprite('ttt-boy');
+  void loadTransparentSprite('ttt-girl-idle');
+  void loadTransparentSprite('ttt-girl-dance');
+  void loadTransparentSprite('ttt-girl-cry');
 }
 
 interface TicTacToeBoardProps {
@@ -227,34 +229,28 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
 
-  const [bgSrc, setBgSrc] = useState<string | null>(preloadedBgUrl);
+  const bgCandidates = getDirectCandidates('ttt-village-bg');
+  const [bgIdx, setBgIdx] = useState(0);
+
   const [sprites, setSprites] = useState<{
     boy: string | null;
     girlIdle: string | null;
     girlDance: string | null;
     girlCry: string | null;
   }>({
-    boy: transparentCache.get('ttt-boy.jpg') || null,
-    girlIdle: transparentCache.get('ttt-girl-idle.jpg') || null,
-    girlDance: transparentCache.get('ttt-girl-dance.jpg') || null,
-    girlCry: transparentCache.get('ttt-girl-cry.jpg') || null,
+    boy: transparentCache.get('ttt-boy') || null,
+    girlIdle: transparentCache.get('ttt-girl-idle') || null,
+    girlDance: transparentCache.get('ttt-girl-dance') || null,
+    girlCry: transparentCache.get('ttt-girl-cry') || null,
   });
 
   useEffect(() => {
     let active = true;
-    if (!preloadedBgUrl) {
-      resolveWorkingUrl('ttt-village-bg.jpg').then((u) => {
-        if (active && u) {
-          preloadedBgUrl = u;
-          setBgSrc(u);
-        }
-      });
-    }
     Promise.all([
-      loadTransparentSprite('ttt-boy.jpg'),
-      loadTransparentSprite('ttt-girl-idle.jpg'),
-      loadTransparentSprite('ttt-girl-dance.jpg'),
-      loadTransparentSprite('ttt-girl-cry.jpg'),
+      loadTransparentSprite('ttt-boy'),
+      loadTransparentSprite('ttt-girl-idle'),
+      loadTransparentSprite('ttt-girl-dance'),
+      loadTransparentSprite('ttt-girl-cry'),
     ]).then(([boy, girlIdle, girlDance, girlCry]) => {
       if (active) setSprites({ boy, girlIdle, girlDance, girlCry });
     });
@@ -343,31 +339,24 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       : sprites.girlIdle;
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none bg-[#12161f]">
-      {/* FULL-SCREEN VILLAGE BACKGROUND (PC + Phone နှစ်မျိုးလုံး အပြည့်မြင်ရမည်) */}
-      {bgSrc && (
-        <motion.img
-          src={bgSrc}
-          alt="Village Dirt Ground"
-          data-repaired="1"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.25 }}
-          className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center"
-        />
-      )}
-
-      {/* ပုံ Load မပြီးမီ ခေတ္တပြမည့် ချောမွေ့သော Loader (ပုံဟောင်း မဖျပ်အောင်) */}
-      {!bgSrc && (
-        <div className="absolute inset-0 flex items-center justify-center bg-[#0b101b]">
-          <div className="w-8 h-8 rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin" />
-        </div>
-      )}
+    <div className="relative w-full h-full overflow-hidden select-none bg-[#2a1e12]">
+      {/* FULL-SCREEN VILLAGE BACKGROUND */}
+      <img
+        src={bgCandidates[Math.min(bgIdx, bgCandidates.length - 1)]}
+        alt="Village Dirt Ground"
+        data-repaired="1"
+        onError={() => {
+          if (bgIdx + 1 < bgCandidates.length) {
+            setBgIdx((i) => i + 1);
+          }
+        }}
+        className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center"
+      />
 
       {/* Subtle Vignette for Top/Bottom UI Readability */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/50" />
 
-      {/* FLOATING STATUS PILL (Below Top Scoreboard) */}
+      {/* FLOATING STATUS PILL */}
       <div className="absolute top-16 sm:top-20 inset-x-3 z-30 flex justify-center pointer-events-none">
         <motion.div
           key={statusText()}
@@ -387,7 +376,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </motion.div>
       </div>
 
-      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone အားလုံးတွင် ကလေး ၂ ယောက် + 3x3 ဘုတ် အချိုးညီညီ မြင်ရမည်) */}
+      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone အပြည့်) */}
       <div className="relative z-20 w-full h-full flex items-center justify-center px-1 sm:px-6 pt-12 pb-14">
         <div className="w-full max-w-[980px] flex items-center justify-center gap-0.5 sm:gap-4 lg:gap-8">
           {/* === 1. LEFT CHARACTER: USER BOY === */}
@@ -408,7 +397,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               }}
               className="relative w-full aspect-square flex items-center justify-center"
             >
-              {/* Natural Ground Shadow */}
               <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
               {sprites.boy && (
                 <img
@@ -490,7 +478,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 
           {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
           <div className="pointer-events-none relative w-[25%] sm:w-[24%] max-w-[230px] flex flex-col items-center justify-center shrink-0">
-            {/* Thought / Win / Cry Speech Bubble */}
             <AnimatePresence>
               {botMood === 'thinking' && (
                 <motion.div
@@ -526,7 +513,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               )}
             </AnimatePresence>
 
-            {/* Dancing Sparkles */}
             {botMood === 'dancing' && (
               <div className="pointer-events-none absolute -inset-3 z-30">
                 {[
@@ -546,7 +532,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               </div>
             )}
 
-            {/* Rolling Cry Dust Puffs */}
             {botMood === 'rolling_cry' && (
               <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-5 z-10">
                 {[0, 1, 2].map((i) => (
@@ -597,7 +582,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               }}
               className="relative w-full aspect-square flex items-center justify-center"
             >
-              {/* Natural Ground Shadow */}
               <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
               {girlActiveSrc && (
                 <img
@@ -612,7 +596,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </div>
       </div>
 
-      {/* RESULT OVERLAY BAR (Above Bottom Chat/Forfeit Bar) */}
+      {/* RESULT OVERLAY BAR */}
       <AnimatePresence>
         {isFinished && (
           <motion.div
