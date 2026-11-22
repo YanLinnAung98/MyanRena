@@ -22,90 +22,108 @@ export function getTicTacToeBotName(lang: Language, difficulty = 'medium'): stri
   return 'Ma Pu Tu';
 }
 
-// GitHub Repository ရှိ public/assets/ မှ တိုက်ရိုက်ယူမည် (404 လုံးဝမတက်စေရန်)
-const RAW_BASE = 'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets';
-const CDN_BASE = 'https://cdn.jsdelivr.net/gh/YanLinnAung98/MyanRena@main/public/assets';
+// Bot Profile ပုံ (မပုတု - 404 လုံးဝမတက်စေရန် Embedded High-Detail SVG)
+const MA_PU_TU_AVATAR_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <defs>
+    <radialGradient id="mptBg" cx="50%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#fde68a"/>
+      <stop offset="100%" stop-color="#b45309"/>
+    </radialGradient>
+    <radialGradient id="mptSkin" cx="42%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffdec2"/>
+      <stop offset="100%" stop-color="#d99a6c"/>
+    </radialGradient>
+    <linearGradient id="mptHair" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#3b2820"/>
+      <stop offset="100%" stop-color="#17110e"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" rx="60" fill="url(#mptBg)"/>
+  <circle cx="88" cy="54" r="16" fill="url(#mptHair)"/>
+  <circle cx="88" cy="54" r="5" fill="#f43f5e"/>
+  <path d="M20 120 C24 90, 42 82, 60 82 C78 82, 96 90, 100 120 Z" fill="#f59e0b"/>
+  <path d="M34 86 L60 112 L86 86" stroke="#e11d48" stroke-width="8" fill="none" stroke-linejoin="round"/>
+  <path d="M36 86 L60 110 L84 86" stroke="#fde047" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
+  <circle cx="60" cy="57" r="29" fill="url(#mptSkin)"/>
+  <path d="M30 56 C30 24, 90 24, 90 56 C82 38, 68 35, 60 40 C52 35, 38 38, 30 56 Z" fill="url(#mptHair)"/>
+  <path d="M40 34 Q54 27 68 32" stroke="#6b4a3a" stroke-width="2" fill="none" opacity="0.6"/>
+  <ellipse cx="42" cy="66" rx="8" ry="4.5" fill="#fef3c7" opacity="0.88"/>
+  <ellipse cx="78" cy="66" rx="8" ry="4.5" fill="#fef3c7" opacity="0.88"/>
+  <ellipse cx="48" cy="57" rx="4.6" ry="5" fill="#231712"/>
+  <ellipse cx="72" cy="57" rx="4.6" ry="5" fill="#231712"/>
+  <circle cx="46.5" cy="55" r="1.7" fill="#ffffff"/>
+  <circle cx="70.5" cy="55" r="1.7" fill="#ffffff"/>
+  <path d="M42 49 Q48 46 53 48" stroke="#2a1b14" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M67 48 Q72 46 78 49" stroke="#2a1b14" stroke-width="2" fill="none" stroke-linecap="round"/>
+  <path d="M52 70 Q60 77 68 70" stroke="#9f1239" stroke-width="2.6" fill="none" stroke-linecap="round"/>
+</svg>
+`.trim();
 
-export const TTT_BG_DIRECT_URL = `${RAW_BASE}/ttt-village-bg.jpg`;
-export const TTT_KID_BOT_AVATAR_DATA_URI = `${RAW_BASE}/ttt-girl-idle.jpg`;
+export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIComponent(
+  MA_PU_TU_AVATAR_SVG
+)}`;
 
-function getDirectCandidates(baseName: string): string[] {
-  return [
-    `${RAW_BASE}/${baseName}.jpg`,
-    `${RAW_BASE}/${baseName}.jpeg`,
-    `${CDN_BASE}/${baseName}.jpg`,
-    `${CDN_BASE}/${baseName}.jpeg`,
-  ];
+// Same-Origin GitHub Pages / Vite Asset URLs (Timeout လုံးဝမဖြစ်စေရန်)
+function getLocalAssetUrl(filename: string): string {
+  if (typeof window !== 'undefined') {
+    const pathname = window.location.pathname;
+    if (pathname.startsWith('/MyanRena')) {
+      return `/MyanRena/assets/${filename}`;
+    }
+  }
+  const base = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
+  return `${base}assets/${filename}`;
 }
 
-// Transparent Sprite Cache + Duplicate Request Guard
-const transparentCache = new Map<string, string>();
-const inFlightCache = new Map<string, Promise<string | null>>();
+const BG_URL = getLocalAssetUrl('ttt-village-bg.jpg');
 
-function loadImage(url: string, withCors: boolean): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
+// Optional Uploaded Character Sprites (public/assets/ ထဲ တင်ထားပါက အဖြူနောက်ခံဖျက်ပြီး သုံးမည်)
+const spriteCache = new Map<string, string | null>();
+const spritePromises = new Map<string, Promise<string | null>>();
+
+function loadOptionalSprite(filename: string): Promise<string | null> {
+  if (spriteCache.has(filename)) return Promise.resolve(spriteCache.get(filename)!);
+  if (spritePromises.has(filename)) return spritePromises.get(filename)!;
+
+  const task = new Promise<string | null>((resolve) => {
     const img = new Image();
-    if (withCors) img.crossOrigin = 'anonymous';
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load ${url}`));
-    img.src = url;
-  });
-}
-
-function loadTransparentSprite(baseName: string): Promise<string | null> {
-  if (transparentCache.has(baseName)) {
-    return Promise.resolve(transparentCache.get(baseName)!);
-  }
-  if (inFlightCache.has(baseName)) {
-    return inFlightCache.get(baseName)!;
-  }
-
-  const task = (async () => {
-    const candidates = getDirectCandidates(baseName);
-    for (const url of candidates) {
+    img.onload = () => {
       try {
-        const img = await loadImage(url, true);
-        const maxDim = 512;
-        const scale = Math.min(
-          1,
-          maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1)
-        );
+        const maxDim = 480;
+        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
         const w = Math.max(1, Math.round(img.naturalWidth * scale));
         const h = Math.max(1, Math.round(img.naturalHeight * scale));
-
         const canvas = document.createElement('canvas');
         canvas.width = w;
         canvas.height = h;
         const ctx = canvas.getContext('2d');
         if (!ctx) {
-          transparentCache.set(baseName, url);
-          return url;
+          spriteCache.set(filename, img.src);
+          resolve(img.src);
+          return;
         }
-
         ctx.drawImage(img, 0, 0, w, h);
         const imgData = ctx.getImageData(0, 0, w, h);
         const data = imgData.data;
 
-        // အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
+        // 4 ထောင့်မှစတင်၍ အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
         const visited = new Uint8Array(w * h);
         const queue = new Int32Array(w * h);
         let head = 0;
         let tail = 0;
 
-        const isNearWhite = (idx4: number) => {
-          const r = data[idx4];
-          const g = data[idx4 + 1];
-          const b = data[idx4 + 2];
-          const maxC = Math.max(r, g, b);
-          const minC = Math.min(r, g, b);
-          return r > 228 && g > 228 && b > 228 && maxC - minC < 26;
+        const isNearWhite = (i4: number) => {
+          const r = data[i4];
+          const g = data[i4 + 1];
+          const b = data[i4 + 2];
+          return r > 226 && g > 226 && b > 226 && Math.max(r, g, b) - Math.min(r, g, b) < 28;
         };
 
         const pushIfBg = (x: number, y: number) => {
           const p = y * w + x;
           if (visited[p]) return;
-          const idx4 = p * 4;
-          if (isNearWhite(idx4)) {
+          if (isNearWhite(p * 4)) {
             visited[p] = 1;
             queue[tail++] = p;
           }
@@ -122,61 +140,39 @@ function loadTransparentSprite(baseName: string): Promise<string | null> {
 
         while (head < tail) {
           const p = queue[head++];
-          const idx4 = p * 4;
-          data[idx4 + 3] = 0;
-
+          data[p * 4 + 3] = 0;
           const x = p % w;
           const y = (p - x) / w;
-
           if (x > 0) pushIfBg(x - 1, y);
           if (x < w - 1) pushIfBg(x + 1, y);
           if (y > 0) pushIfBg(x, y - 1);
           if (y < h - 1) pushIfBg(x, y + 1);
         }
 
-        // 1px Soft Feather
-        for (let y = 1; y < h - 1; y++) {
-          for (let x = 1; x < w - 1; x++) {
-            const p = y * w + x;
-            const idx4 = p * 4;
-            if (data[idx4 + 3] === 0) continue;
-            const hasTransparentNeighbor =
-              data[(p - 1) * 4 + 3] === 0 ||
-              data[(p + 1) * 4 + 3] === 0 ||
-              data[(p - w) * 4 + 3] === 0 ||
-              data[(p + w) * 4 + 3] === 0;
-            if (hasTransparentNeighbor) {
-              const avg = (data[idx4] + data[idx4 + 1] + data[idx4 + 2]) / 3;
-              if (avg > 205) {
-                data[idx4 + 3] = Math.round(data[idx4 + 3] * 0.35);
-              }
-            }
-          }
-        }
-
         ctx.putImageData(imgData, 0, 0);
-        const resultUri = canvas.toDataURL('image/png');
-        transparentCache.set(baseName, resultUri);
-        return resultUri;
+        const uri = canvas.toDataURL('image/png');
+        spriteCache.set(filename, uri);
+        resolve(uri);
       } catch {
-        // try next candidate
+        spriteCache.set(filename, null);
+        resolve(null);
       }
-    }
-    return null;
-  })();
+    };
+    img.onerror = () => {
+      spriteCache.set(filename, null);
+      resolve(null);
+    };
+    img.src = getLocalAssetUrl(filename);
+  });
 
-  inFlightCache.set(baseName, task);
+  spritePromises.set(filename, task);
   return task;
 }
 
-// App စဖွင့်ကတည်းက တစ်ကြိမ်သာ Preload လုပ်ထားမည်
+// App စဖွင့်ကတည်းက နောက်ခံပုံကို ကြိုတင် Preload လုပ်ထားမည် (ပုံဟောင်း မဖျပ်အောင်)
 if (typeof window !== 'undefined') {
-  const preloadBg = new Image();
-  preloadBg.src = TTT_BG_DIRECT_URL;
-  void loadTransparentSprite('ttt-boy');
-  void loadTransparentSprite('ttt-girl-idle');
-  void loadTransparentSprite('ttt-girl-dance');
-  void loadTransparentSprite('ttt-girl-cry');
+  const preBg = new Image();
+  preBg.src = BG_URL;
 }
 
 interface TicTacToeBoardProps {
@@ -229,28 +225,26 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
 
-  const bgCandidates = getDirectCandidates('ttt-village-bg');
-  const [bgIdx, setBgIdx] = useState(0);
-
+  const [bgReady, setBgReady] = useState(false);
   const [sprites, setSprites] = useState<{
     boy: string | null;
     girlIdle: string | null;
     girlDance: string | null;
     girlCry: string | null;
   }>({
-    boy: transparentCache.get('ttt-boy') || null,
-    girlIdle: transparentCache.get('ttt-girl-idle') || null,
-    girlDance: transparentCache.get('ttt-girl-dance') || null,
-    girlCry: transparentCache.get('ttt-girl-cry') || null,
+    boy: spriteCache.get('ttt-boy.jpg') ?? null,
+    girlIdle: spriteCache.get('ttt-girl-idle.jpg') ?? null,
+    girlDance: spriteCache.get('ttt-girl-dance.jpg') ?? null,
+    girlCry: spriteCache.get('ttt-girl-cry.jpg') ?? null,
   });
 
   useEffect(() => {
     let active = true;
     Promise.all([
-      loadTransparentSprite('ttt-boy'),
-      loadTransparentSprite('ttt-girl-idle'),
-      loadTransparentSprite('ttt-girl-dance'),
-      loadTransparentSprite('ttt-girl-cry'),
+      loadOptionalSprite('ttt-boy.jpg'),
+      loadOptionalSprite('ttt-girl-idle.jpg'),
+      loadOptionalSprite('ttt-girl-dance.jpg'),
+      loadOptionalSprite('ttt-girl-cry.jpg'),
     ]).then(([boy, girlIdle, girlDance, girlCry]) => {
       if (active) setSprites({ boy, girlIdle, girlDance, girlCry });
     });
@@ -331,7 +325,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       : 'Your Turn (X) — Tap a dirt square to scratch';
   };
 
-  const girlActiveSrc =
+  const girlSpriteSrc =
     botMood === 'dancing'
       ? sprites.girlDance || sprites.girlIdle
       : botMood === 'rolling_cry'
@@ -339,22 +333,26 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       : sprites.girlIdle;
 
   return (
-    <div className="relative w-full h-full overflow-hidden select-none bg-[#2a1e12]">
-      {/* FULL-SCREEN VILLAGE BACKGROUND */}
+    <div
+      className="relative w-full h-full overflow-hidden select-none"
+      style={{
+        background:
+          'radial-gradient(ellipse at 50% 50%, #c69f6c 0%, #8e6c44 55%, #3d4a26 100%)',
+      }}
+    >
+      {/* FULL-SCREEN VILLAGE BACKGROUND (PC + Phone အပြည့်) */}
       <img
-        src={bgCandidates[Math.min(bgIdx, bgCandidates.length - 1)]}
+        src={BG_URL}
         alt="Village Dirt Ground"
         data-repaired="1"
-        onError={() => {
-          if (bgIdx + 1 < bgCandidates.length) {
-            setBgIdx((i) => i + 1);
-          }
-        }}
-        className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center"
+        onLoad={() => setBgReady(true)}
+        className={`pointer-events-none absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
+          bgReady ? 'opacity-100' : 'opacity-0'
+        }`}
       />
 
-      {/* Subtle Vignette for Top/Bottom UI Readability */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/50" />
+      {/* Subtle Vignette for Top/Bottom Bar Readability */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/45" />
 
       {/* FLOATING STATUS PILL */}
       <div className="absolute top-16 sm:top-20 inset-x-3 z-30 flex justify-center pointer-events-none">
@@ -376,11 +374,11 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </motion.div>
       </div>
 
-      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone အပြည့်) */}
+      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone နှစ်မျိုးလုံး အချိုးညီညီ အပြည့်မြင်ရမည်) */}
       <div className="relative z-20 w-full h-full flex items-center justify-center px-1 sm:px-6 pt-12 pb-14">
-        <div className="w-full max-w-[980px] flex items-center justify-center gap-0.5 sm:gap-4 lg:gap-8">
+        <div className="w-full max-w-[1040px] flex items-center justify-center gap-0.5 sm:gap-5 lg:gap-10">
           {/* === 1. LEFT CHARACTER: USER BOY === */}
-          <div className="pointer-events-none relative w-[25%] sm:w-[24%] max-w-[230px] flex flex-col items-center justify-center shrink-0">
+          <div className="pointer-events-none relative w-[26%] sm:w-[25%] max-w-[240px] flex flex-col items-center justify-center shrink-0">
             <motion.div
               animate={
                 userWon
@@ -389,7 +387,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
                   ? { x: [0, 12, 0] }
                   : botWon
                   ? { y: [0, 3, 0] }
-                  : { y: [0, -3, 0] }
+                  : { y: [0, -2.5, 0] }
               }
               transition={{
                 repeat: userWon ? Infinity : 0,
@@ -397,28 +395,34 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               }}
               className="relative w-full aspect-square flex items-center justify-center"
             >
-              <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
-              {sprites.boy && (
+              <div className="absolute bottom-[10%] w-[70%] h-[20%] rounded-full bg-black/35 blur-md" />
+              {sprites.boy ? (
                 <img
                   src={sprites.boy}
                   alt="Player Boy"
                   data-repaired="1"
                   className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
                 />
+              ) : (
+                <PaintedBoyCharacter
+                  isScratching={activeScratch?.side === 'user'}
+                  isHappy={userWon}
+                  isSad={botWon}
+                />
               )}
             </motion.div>
           </div>
 
           {/* === 2. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
-          <div className="relative w-[48%] sm:w-[44%] max-w-[360px] aspect-square shrink-0">
+          <div className="relative w-[46%] sm:w-[42%] max-w-[370px] aspect-square shrink-0">
             <svg
               viewBox="0 0 300 300"
-              className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_2px_rgba(255,235,200,0.45)]"
+              className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_2px_rgba(255,235,200,0.48)]"
             >
-              <path d="M100 10 Q97 150 102 290" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
-              <path d="M200 12 Q203 150 198 288" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
-              <path d="M10 100 Q150 97 290 102" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
-              <path d="M12 200 Q150 204 288 198" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+              <path d="M100 10 Q97 150 102 290" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
+              <path d="M200 12 Q203 150 198 288" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
+              <path d="M10 100 Q150 97 290 102" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
+              <path d="M12 200 Q150 204 288 198" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
 
               {winLine && (
                 <motion.line
@@ -477,7 +481,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           </div>
 
           {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
-          <div className="pointer-events-none relative w-[25%] sm:w-[24%] max-w-[230px] flex flex-col items-center justify-center shrink-0">
+          <div className="pointer-events-none relative w-[26%] sm:w-[25%] max-w-[240px] flex flex-col items-center justify-center shrink-0">
             <AnimatePresence>
               {botMood === 'thinking' && (
                 <motion.div
@@ -557,13 +561,13 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
                   ? {
                       x: [-14, 14, -12, 12, -14],
                       y: [8, 14, 6, 14, 8],
-                      rotate: [-26, 26, -22, 22, -26],
+                      rotate: [-28, 28, -24, 24, -28],
                     }
                   : botMood === 'thinking'
                   ? { rotate: [-5, 5, -5] }
                   : botMood === 'bot_scratching'
                   ? { x: [0, -12, 0] }
-                  : { y: [0, -3, 0] }
+                  : { y: [0, -2.5, 0] }
               }
               transition={{
                 repeat:
@@ -582,14 +586,16 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               }}
               className="relative w-full aspect-square flex items-center justify-center"
             >
-              <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
-              {girlActiveSrc && (
+              <div className="absolute bottom-[10%] w-[70%] h-[20%] rounded-full bg-black/35 blur-md" />
+              {girlSpriteSrc ? (
                 <img
-                  src={girlActiveSrc}
+                  src={girlSpriteSrc}
                   alt="Ma Pu Tu"
                   data-repaired="1"
                   className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
                 />
+              ) : (
+                <PaintedMaPuTuCharacter mood={botMood} />
               )}
             </motion.div>
           </div>
@@ -662,6 +668,252 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   );
 };
 
+/* ============================================================================
+ * Painted 2D Anime Style Fallback Characters (ပန်းချီလက်ရာနှင့် လိုက်ဖက်အောင်)
+ * ============================================================================ */
+const PaintedBoyCharacter: React.FC<{
+  isScratching: boolean;
+  isHappy: boolean;
+  isSad: boolean;
+}> = ({ isScratching, isHappy, isSad }) => (
+  <svg viewBox="0 0 200 200" className="relative w-full h-full drop-shadow-[0_12px_14px_rgba(30,18,8,0.48)]">
+    <defs>
+      <radialGradient id="boySkin" cx="40%" cy="35%" r="65%">
+        <stop offset="0%" stopColor="#ffdfc2" />
+        <stop offset="100%" stopColor="#d99768" />
+      </radialGradient>
+      <linearGradient id="boyShirt" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#5b9df0" />
+        <stop offset="60%" stopColor="#3574c7" />
+        <stop offset="100%" stopColor="#1e4d8f" />
+      </linearGradient>
+      <linearGradient id="boyHair" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stopColor="#463024" />
+        <stop offset="100%" stopColor="#1c120d" />
+      </linearGradient>
+    </defs>
+
+    {/* Crossed Legs & Shorts */}
+    <path
+      d="M52 146 C52 126, 128 124, 134 150 C138 166, 98 176, 68 168 C54 164, 52 154, 52 146 Z"
+      fill="#263c5e"
+      stroke="#15233a"
+      strokeWidth="3"
+    />
+    {/* Bare Feet */}
+    <ellipse cx="128" cy="158" rx="14" ry="8" transform="rotate(-12 128 158)" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
+    <ellipse cx="92" cy="172" rx="12" ry="7" transform="rotate(14 92 172)" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
+
+    {/* Blue T-Shirt Torso */}
+    <path
+      d="M46 138 C44 98, 72 86, 98 88 C118 90, 126 112, 122 140 C104 148, 66 150, 46 138 Z"
+      fill="url(#boyShirt)"
+      stroke="#193b6b"
+      strokeWidth="3"
+    />
+    {/* Shirt Fold Highlight */}
+    <path d="M62 104 Q76 118 68 136" stroke="#85bdfc" strokeWidth="3" fill="none" opacity="0.45" strokeLinecap="round" />
+
+    {/* Right Arm + Wooden Twig Stick */}
+    {!isScratching && (
+      <g>
+        <path
+          d="M92 110 C112 128, 132 132, 148 138"
+          stroke="url(#boySkin)"
+          strokeWidth="15"
+          strokeLinecap="round"
+          fill="none"
+        />
+        <path
+          d="M92 110 C112 128, 132 132, 148 138"
+          stroke="#6e4429"
+          strokeWidth="2.2"
+          strokeLinecap="round"
+          fill="none"
+          opacity="0.4"
+        />
+        <path d="M140 130 L176 156" stroke="#5c3a21" strokeWidth="6" strokeLinecap="round" />
+        <path d="M142 131 L174 155" stroke="#8a5a36" strokeWidth="2.2" strokeLinecap="round" />
+        <circle cx="147" cy="138" r="8" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
+      </g>
+    )}
+
+    {/* Head */}
+    <circle cx="102" cy="68" r="36" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2.6" />
+    {/* Ear */}
+    <circle cx="72" cy="76" r="8" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2.2" />
+    {/* Natural Messy Anime Hair */}
+    <path
+      d="M66 74 C60 40, 86 24, 112 28 C134 31, 144 48, 138 64 C130 50, 118 48, 108 54 C98 48, 86 54, 80 68 C74 72, 68 76, 66 74 Z"
+      fill="url(#boyHair)"
+      stroke="#140c08"
+      strokeWidth="2.5"
+    />
+    <path d="M84 38 Q104 32 122 40" stroke="#6e4d3b" strokeWidth="3" fill="none" opacity="0.55" strokeLinecap="round" />
+
+    {/* Face Features */}
+    <ellipse cx="118" cy="81" rx="6" ry="3.5" fill="#f4846c" opacity="0.38" />
+    {isHappy ? (
+      <path d="M114 70 Q122 62 129 70" stroke="#1e130e" strokeWidth="3.2" fill="none" strokeLinecap="round" />
+    ) : (
+      <>
+        <ellipse cx="121" cy="71" rx="4.5" ry="5.5" fill="#1e130e" />
+        <circle cx="122.5" cy="69" r="1.8" fill="#ffffff" />
+      </>
+    )}
+    <path d="M114 59 Q122 56 129 60" stroke="#2a1a12" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+    {isSad ? (
+      <path d="M118 90 Q124 85 130 89" stroke="#7c3f26" strokeWidth="2.6" fill="none" strokeLinecap="round" />
+    ) : (
+      <path d="M117 87 Q124 93 131 87" stroke="#7c3f26" strokeWidth="2.6" fill="none" strokeLinecap="round" />
+    )}
+  </svg>
+);
+
+const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
+  const isDancing = mood === 'dancing';
+  const isCry = mood === 'rolling_cry';
+  const isThinking = mood === 'thinking';
+  const isScratching = mood === 'bot_scratching';
+
+  return (
+    <svg viewBox="0 0 200 200" className="relative w-full h-full drop-shadow-[0_12px_14px_rgba(30,18,8,0.48)]">
+      <defs>
+        <radialGradient id="girlSkin" cx="55%" cy="35%" r="65%">
+          <stop offset="0%" stopColor="#ffe1c7" />
+          <stop offset="100%" stopColor="#d9996a" />
+        </radialGradient>
+        <linearGradient id="girlBlouse" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#facc15" />
+          <stop offset="100%" stopColor="#ea580c" />
+        </linearGradient>
+        <linearGradient id="girlSkirt" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#f43f5e" />
+          <stop offset="100%" stopColor="#9f1239" />
+        </linearGradient>
+        <linearGradient id="girlHair" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#3e2a20" />
+          <stop offset="100%" stopColor="#140d0a" />
+        </linearGradient>
+      </defs>
+
+      {/* Hair Bun Behind Head */}
+      <circle cx="136" cy="74" r="15" fill="url(#girlHair)" stroke="#120b08" strokeWidth="2.5" />
+      <circle cx="133" cy="73" r="4.5" fill="#fb7185" />
+
+      {/* Traditional Patterned Myanmar Longyi / Dress */}
+      <path
+        d="M54 146 C58 122, 134 122, 144 148 C150 166, 114 176, 82 172 C58 169, 50 158, 54 146 Z"
+        fill="url(#girlSkirt)"
+        stroke="#6b0f26"
+        strokeWidth="3"
+      />
+      <path d="M62 146 Q100 162 138 146" stroke="#fde047" strokeWidth="4" fill="none" strokeDasharray="7 4" />
+      <path d="M66 158 Q100 172 132 158" stroke="#fbbf24" strokeWidth="3" fill="none" />
+
+      {/* Bare Feet */}
+      <ellipse cx="68" cy="158" rx="13" ry="7.5" transform="rotate(14 68 158)" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2" />
+      <ellipse cx="104" cy="172" rx="12" ry="7" transform="rotate(-10 104 172)" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2" />
+
+      {/* Traditional Yellow/Red Patterned Blouse */}
+      <path
+        d="M78 136 C74 106, 86 90, 108 90 C130 90, 142 108, 138 138 C122 146, 94 146, 78 136 Z"
+        fill="url(#girlBlouse)"
+        stroke="#8c2d0c"
+        strokeWidth="2.8"
+      />
+      <path d="M88 96 L108 122 L128 96" stroke="#e11d48" strokeWidth="7" fill="none" strokeLinejoin="round" />
+      <path d="M90 96 L108 120 L126 96" stroke="#fef08a" strokeWidth="2" fill="none" strokeDasharray="4 3" />
+
+      {/* Arms by Mood */}
+      {isDancing ? (
+        <>
+          <path d="M84 106 Q56 78 44 52" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+          <path d="M132 106 Q156 76 168 50" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+        </>
+      ) : isCry ? (
+        <>
+          <path d="M84 108 Q52 94 42 74" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+          <path d="M132 108 Q160 94 170 76" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+        </>
+      ) : isThinking ? (
+        <path d="M88 112 Q68 102 74 88" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+      ) : !isScratching ? (
+        <g>
+          <path d="M88 112 Q68 128 54 138" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
+          <path d="M60 132 L26 156" stroke="#5c3a21" strokeWidth="5.5" strokeLinecap="round" />
+          <circle cx="55" cy="138" r="7.5" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2" />
+        </g>
+      ) : null}
+
+      {/* Head */}
+      <circle cx="98" cy="66" r="35" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2.5" />
+      {/* Hair Top + Neat Parting */}
+      <path
+        d="M64 62 C64 28, 128 24, 134 62 C126 74, 118 54, 102 48 C86 44, 72 52, 64 62 Z"
+        fill="url(#girlHair)"
+        stroke="#140c08"
+        strokeWidth="2.5"
+      />
+      <path d="M80 38 Q98 31 118 40" stroke="#755341" strokeWidth="2.8" fill="none" opacity="0.55" strokeLinecap="round" />
+
+      {/* Thanaka Cheeks */}
+      <ellipse cx="75" cy="78" rx="8.5" ry="5" fill="#fef3c7" opacity="0.88" />
+      <ellipse cx="106" cy="79" rx="8" ry="4.5" fill="#fef3c7" opacity="0.85" />
+
+      {/* Eyes & Tears */}
+      {isDancing ? (
+        <>
+          <path d="M72 68 Q78 60 85 68" stroke="#1e130e" strokeWidth="3.2" fill="none" strokeLinecap="round" />
+          <path d="M96 68 Q103 60 110 68" stroke="#1e130e" strokeWidth="3.2" fill="none" strokeLinecap="round" />
+        </>
+      ) : isCry ? (
+        <>
+          <path d="M72 64 L84 70 L72 74" stroke="#1e130e" strokeWidth="3" fill="none" strokeLinecap="round" />
+          <path d="M110 64 L98 70 L110 74" stroke="#1e130e" strokeWidth="3" fill="none" strokeLinecap="round" />
+          <motion.ellipse
+            cx="68"
+            cy="78"
+            rx="5"
+            ry="3.5"
+            fill="#38bdf8"
+            animate={{ x: [-2, -16], y: [0, 12], opacity: [1, 0] }}
+            transition={{ repeat: Infinity, duration: 0.6 }}
+          />
+          <motion.ellipse
+            cx="114"
+            cy="78"
+            rx="5"
+            ry="3.5"
+            fill="#7dd3fc"
+            animate={{ x: [2, 16], y: [0, 12], opacity: [1, 0] }}
+            transition={{ repeat: Infinity, duration: 0.6, delay: 0.25 }}
+          />
+        </>
+      ) : (
+        <>
+          <ellipse cx="78" cy="69" rx="4.5" ry="5.5" fill="#1e130e" />
+          <circle cx="76.8" cy="67" r="1.7" fill="#ffffff" />
+          <ellipse cx="102" cy="69" rx="4.5" ry="5.5" fill="#1e130e" />
+          <circle cx="100.8" cy="67" r="1.7" fill="#ffffff" />
+        </>
+      )}
+
+      {/* Mouth */}
+      {isDancing ? (
+        <path d="M80 84 Q90 95 100 84 Z" fill="#be123c" stroke="#7f1d1d" strokeWidth="1.5" />
+      ) : isCry ? (
+        <ellipse cx="90" cy="87" rx="8" ry="6" fill="#9f1239" stroke="#4c0519" strokeWidth="2" />
+      ) : (
+        <path d="M82 85 Q90 91 98 85" stroke="#881337" strokeWidth="2.5" fill="none" strokeLinecap="round" />
+      )}
+    </svg>
+  );
+};
+
+/* ============================================================================
+ * Dirt Scratched X, O, Dust Burst & Stick-Scratching Hand
+ * ============================================================================ */
 const DirtScratchedX: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   <svg viewBox="0 0 80 80" className="w-[74%] h-[74%] overflow-visible">
     <motion.path
