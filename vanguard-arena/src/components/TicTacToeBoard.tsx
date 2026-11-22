@@ -55,12 +55,9 @@ export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIC
 )}`;
 
 const BG_CANDIDATES = [
-  './assets/ttt-village-bg.jpg',
-  './assets/ttt-village-bg.jpeg',
-  './assets/ttt-village-bg.png',
-  './ttt-village-bg.jpg',
-  './ttt-village-bg.jpeg',
-  './ttt-village-bg.png',
+  '/MyanRena/assets/ttt-village-bg.jpg',
+  `${import.meta.env.BASE_URL || './'}assets/ttt-village-bg.jpg`,
+  'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets/ttt-village-bg.jpg',
 ];
 
 interface TicTacToeBoardProps {
@@ -216,11 +213,12 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         className="relative w-full max-w-[680px] aspect-[4/3] rounded-3xl overflow-hidden border-2 border-amber-700/60 shadow-[0_22px_50px_rgba(0,0,0,0.75)]"
         style={{ backgroundColor: '#8f6e49' }}
       >
-        {/* ကျေးလက်နောက်ခံပုံ (jpg / jpeg / png အလိုအလျောက် ရှာဖွေပြသမည်) */}
+        {/* ကျေးလက်နောက်ခံပုံ (GitHub Pages + Raw GitHub Fallback) */}
         {!bgFailedAll && (
           <img
             src={bgList[bgIndex]}
             alt="Village Dirt Ground"
+            data-repaired="1"
             onError={() => {
               if (bgIndex + 1 < bgList.length) {
                 setBgIndex((i) => i + 1);
@@ -232,8 +230,8 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           />
         )}
 
-        {/* အလင်းအမှောင် အနည်းငယ်သာ ညှိပေးမည် (နောက်ခံပုံကို မဖုံးအောင်) */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-950/15 via-transparent to-emerald-950/15" />
+        {/* အလင်းအမှောင် အနည်းငယ်သာ ညှိပေးမည် */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-950/10 via-transparent to-emerald-950/10" />
 
         {/* LEFT CHARACTER: USER (အင်္ကျီအပြာ ကောင်လေး) */}
         <div className="pointer-events-none absolute left-[6%] sm:left-[9%] top-[33%] w-[22%] sm:w-[21%] z-20">
