@@ -11,8 +11,12 @@ import {
   KID_BOT_AVATAR_DATA_URI,
 } from './Connect4Board.tsx';
 import {
+  TicTacToeBoard,
+  getTicTacToeBotName,
+  TTT_KID_BOT_AVATAR_DATA_URI,
+} from './TicTacToeBoard.tsx';
+import {
   VillageRpsScene,
-  VillageTicTacToeScene,
   WiseOwlTreeQuizScene,
 } from './VillageScenes3D.tsx';
 
@@ -38,7 +42,6 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   currentUser,
   frames,
   chatMessages,
-  botThinking = false,
   onMove,
   onForfeit,
   onSendChat,
@@ -53,7 +56,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
   const isPvp = Boolean(match.isRealtimePvp && players.length >= 2);
 
-  // 4-Row Bot Match တွင် မောင်ဖိုးသား၏ Profile ပုံနှင့် နာမည်ကို သုံးမည်
+  // 4-Row တွင် မောင်ဖိုးသား၊ Tic-Tac-Toe တွင် မပုတု၏ Profile ပုံနှင့် နာမည်ကို သုံးမည်
   const p2 =
     gType === 'connect4' && !isPvp
       ? {
@@ -61,13 +64,18 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           displayName: getConnect4BotName(lang, match.difficulty || 'medium'),
           avatarUrl: KID_BOT_AVATAR_DATA_URI,
         }
+      : gType === 'tictactoe' && !isPvp
+      ? {
+          ...rawP2,
+          displayName: getTicTacToeBotName(lang, match.difficulty || 'medium'),
+          avatarUrl: TTT_KID_BOT_AVATAR_DATA_URI,
+        }
       : rawP2;
 
   const p1Score = match.scores?.[p1.id] ?? 0;
   const p2Score = match.scores?.[p2.id] ?? 0;
   const isFinished = match.status === 'finished';
   const didWin = match.winnerId === currentUser.id;
-  const isMyTurn = (!isPvp && !botThinking) || (isPvp && match.turnUserId === currentUser.id);
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -107,7 +115,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           {gType === 'connect4'
             ? '၄ လုံးတန်း 3D'
             : gType === 'tictactoe'
-            ? 'ကွပ်ပျစ် Tic-Tac-Toe'
+            ? 'ကျေးလက် Tic-Tac-Toe'
             : gType === 'rps'
             ? `ကျေးလက် RPS (Bo${match.bestOf || 3})`
             : 'ဉာဏ်စမ်းပဟေဠိ'}
@@ -137,17 +145,16 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         </div>
       </div>
 
-      {/* Centered 3D Game Stage */}
+      {/* Centered Game Stage */}
       <div className="flex-1 min-h-0 flex items-center justify-center py-1">
-        {/* 1. VILLAGE KUT-PYIT TIC-TAC-TOE */}
+        {/* 1. VILLAGE DIRT TIC-TAC-TOE WITH MA PU TU */}
         {gType === 'tictactoe' && (
-          <VillageTicTacToeScene
+          <TicTacToeBoard
             lang={lang}
             match={match}
-            currentUser={currentUser}
-            isMyTurn={isMyTurn}
-            botThinking={botThinking}
+            currentUserId={currentUser.id}
             onCellClick={(idx) => onMove({ index: idx })}
+            onLeaveFinished={onLeaveFinished}
           />
         )}
 
@@ -170,13 +177,13 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             currentUser={currentUser}
             isPvp={isPvp}
             onPick={(choice) => {
-              soundEngine.playClash();
+              (soundEngine as any).playClash?.();
               onMove({ choice });
             }}
           />
         )}
 
-        {/* 4. WISE OWL TREE QUIZ WITH SEATED KIDS & HEAD BONK */}
+        {/* 4. WISE OWL TREE QUIZ */}
         {gType === 'sakarhtar' && (
           <WiseOwlTreeQuizScene
             lang={lang}
@@ -252,8 +259,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         </div>
       )}
 
-      {/* Match Result Banner (Non-Connect4 Games) */}
-      {isFinished && gType !== 'connect4' && (
+      {/* Match Result Banner (Non-Connect4 & Non-TicTacToe Games) */}
+      {isFinished && gType !== 'connect4' && gType !== 'tictactoe' && (
         <motion.div
           initial={{ y: 40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
