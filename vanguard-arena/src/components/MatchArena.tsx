@@ -5,6 +5,7 @@ import { normalizeGameId } from '../lib/serverlessApi.ts';
 import type { Language, UserProfile } from '../types.ts';
 import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
+import { Connect4Board } from './Connect4Board.tsx';
 import {
   VillageRpsScene,
   VillageTicTacToeScene,
@@ -41,7 +42,6 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
 }) => {
   const [chatOpen, setChatOpen] = React.useState(false);
   const [chatText, setChatText] = React.useState('');
-  const [hoverCol, setHoverCol] = React.useState<number>(3);
 
   const gType = normalizeGameId(match.gameType);
   const players: any[] = match.players || [currentUser];
@@ -136,72 +136,15 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           />
         )}
 
-        {/* 2. 3D CONNECT 4 WITH 1.5s BOT THINKING */}
+        {/* 2. 3D CONNECT 4 ON TABLE WITH ANIMATED KID OPPONENT */}
         {gType === 'connect4' && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.94 }}
-            animate={{ opacity: 1, scale: 1 }}
-            style={{ perspective: 1000 }}
-            className="w-full max-w-[345px] sm:max-w-[400px] space-y-1.5"
-          >
-            <div className="text-center text-xs font-bold text-amber-300">
-              {isFinished
-                ? lang === 'my' ? 'ပွဲပြီးဆုံးပါပြီ' : 'Match Finished'
-                : botThinking
-                ? lang === 'my' ? '💭 Aegis Bot စဉ်းစားနေပါသည် (1.5s)...' : '💭 Bot is thinking...'
-                : isMyTurn
-                ? lang === 'my' ? 'သင့်အလှည့် — ကော်လံတစ်ခု နှိပ်ချပါ' : 'Your Turn — Drop disc'
-                : lang === 'my' ? 'ပြိုင်ဘက် အလှည့်စောင့်နေပါသည်...' : "Opponent's Turn..."}
-            </div>
-
-            <div className="grid grid-cols-7 gap-1.5 px-2.5 h-6">
-              {[0, 1, 2, 3, 4, 5, 6].map((colIdx) => (
-                <div key={colIdx} className="flex items-center justify-center">
-                  {hoverCol === colIdx && isMyTurn && !isFinished && !botThinking && (
-                    <motion.span
-                      layoutId="c4HoverDisc"
-                      className="w-5 h-5 rounded-full bg-gradient-to-br from-amber-200 to-amber-500 shadow-[0_0_12px_#fbbf24]"
-                    />
-                  )}
-                </div>
-              ))}
-            </div>
-
-            <motion.div
-              animate={{ rotateX: 5 }}
-              className="p-2.5 rounded-2xl bg-gradient-to-b from-blue-800 via-blue-900 to-blue-950 border-2 border-blue-400/50 shadow-[0_20px_40px_rgba(30,64,175,0.45)] grid grid-cols-7 gap-1.5"
-            >
-              {(match.c4Board || Array.from({ length: 6 }, () => Array(7).fill(null))).map(
-                (row: Array<string | null>, rIdx: number) =>
-                  row.map((cell, cIdx) => (
-                    <button
-                      key={`${rIdx}-${cIdx}`}
-                      type="button"
-                      disabled={isFinished || !isMyTurn || botThinking}
-                      onMouseEnter={() => setHoverCol(cIdx)}
-                      onClick={() => {
-                        setHoverCol(cIdx);
-                        onMove({ col: cIdx });
-                      }}
-                      className="aspect-square rounded-full bg-[#070b13] border border-blue-300/25 p-0.5 flex items-center justify-center cursor-pointer overflow-hidden shadow-inner"
-                    >
-                      {cell && (
-                        <motion.span
-                          initial={{ y: -(rIdx + 1) * 44 }}
-                          animate={{ y: 0 }}
-                          transition={{ type: 'spring', stiffness: 360, damping: 18 }}
-                          className={`w-full h-full rounded-full ${
-                            cell === 'P1'
-                              ? 'bg-gradient-to-br from-amber-200 via-amber-400 to-amber-600 shadow-[0_0_12px_#f59e0b]'
-                              : 'bg-gradient-to-br from-rose-300 via-rose-500 to-rose-700 shadow-[0_0_12px_#f43f5e]'
-                          }`}
-                        />
-                      )}
-                    </button>
-                  ))
-              )}
-            </motion.div>
-          </motion.div>
+          <Connect4Board
+            lang={lang}
+            match={match}
+            currentUserId={currentUser.id}
+            onDropColumn={(col) => onMove({ col })}
+            onLeaveFinished={onLeaveFinished}
+          />
         )}
 
         {/* 3. VILLAGE RPS 3D WITH HEAD BONK */}
@@ -295,7 +238,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       )}
 
       {/* Match Result Banner (Bottom Floating Bar so Users can Watch the Kids Dance & Cry!) */}
-      {isFinished && (
+      {isFinished && gType !== 'connect4' && (
         <motion.div
           initial={{ y: 40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
