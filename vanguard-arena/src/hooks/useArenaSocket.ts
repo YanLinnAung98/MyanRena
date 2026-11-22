@@ -1,30 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  arrayUnion,
   collection,
-  deleteDoc,
   doc,
-  getDoc,
-  getDocs,
+  limit,
   onSnapshot,
+  orderBy,
+  query,
   setDoc,
-  updateDoc,
 } from 'firebase/firestore';
-import { getShuffledQuizSet, QUIZ_BANK_100 } from '../data/quizBank100.ts';
-import { db, firebaseInitError, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
+import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
+import { db, isFirebaseConfigured } from '../lib/firebase.ts';
 import {
-  broadcastLocalSync,
   buildPlayableMatch,
-  getPatchedLandingContent,
   normalizeGameId,
-  readActiveSessionUser,
   readServerlessStore,
-  saveActiveSessionUser,
-  SYNC_CHANNEL_NAME,
   writeServerlessStore,
 } from '../lib/serverlessApi.ts';
-import { detectClientDevice } from '../utils/deviceDetector.ts';
-import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
 import type {
   GameType,
@@ -34,17 +25,6 @@ import type {
   UserProfile,
 } from '../types.ts';
 
-export interface ArenaNotification {
-  id: string;
-  targetUserId: string;
-  title: string;
-  message: string;
-  type: 'broadcast' | 'message' | 'warning';
-  senderName: string;
-  createdAtMs: number;
-  read?: boolean;
-}
-
 interface UseArenaSocketOptions {
   token: string | null;
   lang: Language;
@@ -52,63 +32,22 @@ interface UseArenaSocketOptions {
   onKicked: (reason: string) => void;
 }
 
+const DEFAULT_FRAMES = [
+  { id: 'bronze', name: 'Bronze Vanguard', minXp: 0 },
+  { id: 'silver', name: 'Silver Striker', minXp: 1000 },
+  { id: 'gold', name: 'Gold Champion', minXp: 1300 },
+  { id: 'diamond', name: 'Diamond Sovereign', minXp: 1800 },
+  { id: 'legend', name: 'Legend Mythic', minXp: 2500 },
+];
+
+function stripUndefined<T>(obj: T): T {
+  return JSON.parse(JSON.stringify(obj));
+}
+
+// --- Connect 4 Helpers ---
 interface Connect4Result {
   winner: 'P1' | 'P2' | 'DRAW';
   winningCells: Array<[number, number]>;
-}
-
-const DISMISSED_NOTIS_KEY = 'vanguard_dismissed_notis_v1';
-
-function readDismissedNotiIds(): Set<string> {
-  try {
-    const raw = localStorage.getItem(DISMISSED_NOTIS_KEY);
-    return new Set(raw ? JSON.parse(raw) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function addDismissedNotiId(id: string) {
-  try {
-    const set = readDismissedNotiIds();
-    set.add(id);
-    localStorage.setItem(DISMISSED_NOTIS_KEY, JSON.stringify(Array.from(set).slice(-100)));
-  } catch {}
-}
-
-function checkTTTWinner(board: Array<string | null>): 'X' | 'O' | 'DRAW' | null {
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  for (const [a, b, c] of lines) {
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a] as 'X' | 'O';
-  }
-  return board.every((c) => c !== null) ? 'DRAW' : null;
-}
-
-function pickSmartTTTMove(board: Array<string | null>, difficulty: string): number {
-  const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
-  if (empty.length === 0) return -1;
-  if (difficulty === 'easy') return empty[Math.floor(Math.random() * empty.length)];
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  for (const mark of ['O', 'X']) {
-    for (const [a, b, c] of lines) {
-      const vals = [board[a], board[b], board[c]];
-      if (vals.filter((v) => v === mark).length === 2 && vals.includes(null)) {
-        if (board[a] === null) return a;
-        if (board[b] === null) return b;
-        if (board[c] === null) return c;
-      }
-    }
-  }
-  if (difficulty === 'hard' && board[4] === null) return 4;
-  return empty[Math.floor(Math.random() * empty.length)];
 }
 
 function checkConnect4Winner(grid: Array<Array<string | null>>): Connect4Result | null {
@@ -143,6 +82,7 @@ function checkConnect4Winner(grid: Array<Array<string | null>>): Connect4Result 
       }
     }
   }
+
   const isFull = grid.every((row) => row.every((cell) => cell !== null));
   return isFull ? { winner: 'DRAW', winningCells: [] } : null;
 }
@@ -162,13 +102,11 @@ function pickConnect4BotCol(grid: Array<Array<string | null>>, difficulty: strin
     return null;
   };
 
-  // 1. နိုင်မည့်အကွက်ရှိလျှင် ချက်ချင်းယူမည်
   for (const col of validCols) {
     const sim = simulateDrop(col, 'P2');
     if (sim && checkConnect4Winner(sim)?.winner === 'P2') return col;
   }
 
-  // 2. User နိုင်တော့မည့်အကွက်ကို ပိတ်မည်
   if (difficulty !== 'easy') {
     for (const col of validCols) {
       const sim = simulateDrop(col, 'P1');
@@ -176,36 +114,82 @@ function pickConnect4BotCol(grid: Array<Array<string | null>>, difficulty: strin
     }
   }
 
-  // 3. အလယ်ကော်လံများကို ဦးစားပေးရွေးမည်
   const preferred = [3, 2, 4, 1, 5, 0, 6].filter((c) => validCols.includes(c));
   if (difficulty === 'hard' && Math.random() > 0.25) return preferred[0];
-  if (difficulty === 'medium' && Math.random() > 0.55) return preferred[0];
   return validCols[Math.floor(Math.random() * validCols.length)];
+}
+
+// --- Tic Tac Toe Helpers ---
+const TTT_WIN_LINES: Array<[number, number, number]> = [
+  [0, 1, 2],
+  [3, 4, 5],
+  [6, 7, 8],
+  [0, 3, 6],
+  [1, 4, 7],
+  [2, 5, 8],
+  [0, 4, 8],
+  [2, 4, 6],
+];
+
+function checkTTTWinner(board: Array<string | null>): 'X' | 'O' | 'DRAW' | null {
+  for (const [a, b, c] of TTT_WIN_LINES) {
+    if (board[a] && board[a] === board[b] && board[a] === board[c]) {
+      return board[a] as 'X' | 'O';
+    }
+  }
+  return board.every((cell) => cell !== null) ? 'DRAW' : null;
+}
+
+function pickSmartTTTMove(board: Array<string | null>, difficulty: string): number {
+  const empty = board
+    .map((v, i) => (v === null ? i : -1))
+    .filter((i) => i !== -1);
+  if (empty.length === 0) return -1;
+
+  if (difficulty === 'easy' && Math.random() < 0.6) {
+    return empty[Math.floor(Math.random() * empty.length)];
+  }
+
+  // Bot နိုင်မည့်အကွက် ရှာမည်
+  for (const idx of empty) {
+    const sim = [...board];
+    sim[idx] = 'O';
+    if (checkTTTWinner(sim) === 'O') return idx;
+  }
+
+  // User နိုင်တော့မည့်အကွက် ပိတ်မည်
+  for (const idx of empty) {
+    const sim = [...board];
+    sim[idx] = 'X';
+    if (checkTTTWinner(sim) === 'X') return idx;
+  }
+
+  // အလယ်ကွက်နှင့် ထောင့်ကွက်များ ဦးစားပေးမည်
+  if (difficulty === 'hard') {
+    if (board[4] === null) return 4;
+    const corners = [0, 2, 6, 8].filter((i) => board[i] === null);
+    if (corners.length > 0) return corners[Math.floor(Math.random() * corners.length)];
+  }
+
+  return empty[Math.floor(Math.random() * empty.length)];
+}
+
+function computeRankFromXp(xp: number): string {
+  if (xp >= 2500) return 'Legend';
+  if (xp >= 1800) return 'Diamond';
+  if (xp >= 1300) return 'Gold';
+  if (xp >= 1000) return 'Silver';
+  return 'Bronze';
 }
 
 export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
   const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
-  const [cloudError, setCloudError] = useState<string | null>(firebaseInitError);
-  const [pingMs, setPingMs] = useState<number>(20);
-  const [landingContent, setLandingContent] = useState<LandingContent>(() => getPatchedLandingContent());
+  const [pingMs, setPingMs] = useState<number>(24);
+  const [landingContent, setLandingContent] = useState<LandingContent>(DEFAULT_LANDING_CONTENT);
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
-  const [notifications, setNotifications] = useState<ArenaNotification[]>([]);
-  const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
-
-  // Live Admin-Controlled System State
-  const [maintenanceMode, setMaintenanceMode] = useState<boolean>(false);
-  const [maintenanceMessage, setMaintenanceMessage] = useState<string>(
-    'Vanguard Arena ကို အဆင့်မြှင့်တင် ပြုပြင်နေပါသည်။ ခေတ္တစောင့်ဆိုင်းပေးပါ။'
-  );
+  const [frames] = useState<any[]>(DEFAULT_FRAMES);
   const [featureLocks, setFeatureLocks] = useState<Record<string, boolean>>({});
-  const [xpRules, setXpRules] = useState({ winXp: 75, drawXp: 25, lossXp: -20, quizCountPerMatch: 10 });
-  const [matchmakingSettings, setMatchmakingSettings] = useState<any>({
-    maxWaitSec: 30,
-    botFallbackSec: 8,
-    xpRange: 400,
-    defaultTurnTime: 20,
-  });
-
+  const [matchmakingSettings, setMatchmakingSettings] = useState<any>({ maxWaitSec: 30, xpRange: 400 });
   const [onlinePlayers, setOnlinePlayers] = useState<UserProfile[]>([]);
   const [leaderboard, setLeaderboard] = useState<UserProfile[]>([]);
   const [tournaments, setTournaments] = useState<any[]>([]);
@@ -218,23 +202,20 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const [queueStatus, setQueueStatus] = useState<any | null>(null);
   const [sakarQuickCount, setSakarQuickCount] = useState<number>(1);
   const [pendingChallenge, setPendingChallenge] = useState<any | null>(null);
-  const [pendingWarnings, setPendingWarnings] = useState<{ id: string; title?: string; reason: string }[]>([]);
+  const [pendingWarnings, setPendingWarnings] = useState<{ id: string; reason: string }[]>([]);
   const [socialRefreshTick, setSocialRefreshTick] = useState<number>(0);
   const [incomingDMs] = useState<any[]>([]);
   const [toasts, setToasts] = useState<{ id: string; level: string; message: string }[]>([]);
+  const [botThinking, setBotThinking] = useState<boolean>(false);
 
-  const queueTimerRef = useRef<number | null>(null);
-  const queueRoomIdRef = useRef<string | null>(null);
   const botTimersRef = useRef<number[]>([]);
-  const xpAwardedMatchRef = useRef<string | null>(null);
-  const alertedNotiIdsRef = useRef<Set<string>>(new Set());
-  const sessionStartedAtRef = useRef<number>(Date.now());
-  const xpRulesRef = useRef(xpRules);
-  xpRulesRef.current = xpRules;
+  const awardedMatchesRef = useRef<Set<string>>(new Set());
+  const currentUserRef = useRef<UserProfile | null>(null);
 
   const clearBotTimers = useCallback(() => {
     botTimersRef.current.forEach((id) => window.clearTimeout(id));
     botTimersRef.current = [];
+    setBotThinking(false);
   }, []);
 
   useEffect(() => {
@@ -245,286 +226,91 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const pushToast = useCallback((level: string, message: string) => {
     const id = `toast_${Date.now()}_${Math.random()}`;
     setToasts((prev) => [...prev, { id, level, message }]);
-    setTimeout(() => {
+    window.setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4200);
+    }, 3500);
   }, []);
 
-  const resolveCurrentPlayer = useCallback(() => {
-    const store = readServerlessStore();
-    if (token === 'admin-token') return store.users.admin_yanlinnaung;
-    const saved = readActiveSessionUser();
-    if (saved) return saved;
-    if (token) {
-      const uid = token.replace(/^token_/, '').replace(/^local_/, '');
-      if (store.users[uid]) return store.users[uid];
-    }
-    return null;
-  }, [token]);
-
-  const dismissWarningLocal = useCallback(async (notiId: string) => {
-    addDismissedNotiId(notiId);
-    setPendingWarnings((prev) => prev.filter((w) => w.id !== notiId));
-    setNotifications((prev) => prev.map((n) => (n.id === notiId ? { ...n, read: true } : n)));
-    if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'notifications', notiId), { read: true }).catch(() => {});
-    }
+  const dismissWarningLocal = useCallback((warningId: string) => {
+    setPendingWarnings((prev) => prev.filter((w) => w.id !== warningId));
   }, []);
-
-  const markAllNotificationsRead = useCallback(() => {
-    notifications.forEach((n) => addDismissedNotiId(n.id));
-    setPendingWarnings([]);
-    setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }, [notifications]);
 
   const setAdminSocketMode = useCallback((_mode: 'admin' | 'lobby') => {}, []);
 
   const applyXpDelta = useCallback(
-    async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
-      if (matchId && xpAwardedMatchRef.current === matchId) return;
-      if (matchId) xpAwardedMatchRef.current = matchId;
+    (result: 'win' | 'loss' | 'draw', matchId?: string) => {
+      if (matchId && awardedMatchesRef.current.has(matchId)) return;
+      if (matchId) awardedMatchesRef.current.add(matchId);
 
-      const player = resolveCurrentPlayer();
-      if (!player) return;
+      const delta = result === 'win' ? 75 : result === 'draw' ? 25 : -20;
+      const store = readServerlessStore();
+      const uid =
+        currentUserRef.current?.id ||
+        (token === 'admin-token'
+          ? 'admin_yanlinnaung'
+          : (token || '').replace(/^token_/, '')) ||
+        'admin_yanlinnaung';
 
-      const rules = xpRulesRef.current;
-      const delta =
-        outcome === 'win' ? rules.winXp : outcome === 'draw' ? rules.drawXp : rules.lossXp;
-      const nextXp = Math.max(0, (player.xp || 1000) + delta);
-      const nextRank =
-        nextXp >= 2500
-          ? 'Legend'
-          : nextXp >= 1900
-          ? 'Diamond'
-          : nextXp >= 1300
-          ? 'Gold'
-          : nextXp >= 1000
-          ? 'Silver'
-          : 'Bronze';
+      const existing = store.users[uid] || currentUserRef.current;
+      if (!existing) return;
 
-      const updated = stripUndefined({
-        ...player,
-        xp: nextXp,
-        rank: nextRank,
-        wins: (player.wins || 0) + (outcome === 'win' ? 1 : 0),
-        losses: (player.losses || 0) + (outcome === 'loss' ? 1 : 0),
-        draws: (player.draws || 0) + (outcome === 'draw' ? 1 : 0),
-        lastSeenMs: Date.now(),
-      });
+      const updated: any = {
+        ...existing,
+        xp: Math.max(0, (existing.xp || 0) + delta),
+        wins: (existing.wins || 0) + (result === 'win' ? 1 : 0),
+        losses: (existing.losses || 0) + (result === 'loss' ? 1 : 0),
+        draws: (existing.draws || 0) + (result === 'draw' ? 1 : 0),
+      };
+      updated.rank = computeRankFromXp(updated.xp);
 
-      saveActiveSessionUser(updated);
+      store.users[uid] = updated;
+      writeServerlessStore(store);
+      currentUserRef.current = updated;
       onUserUpdate(updated);
 
-      if (isFirebaseConfigured && db && updated.id) {
-        await setDoc(doc(db, 'users', updated.id), updated, { merge: true }).catch(() => {});
+      if (isFirebaseConfigured && db) {
+        setDoc(doc(db, 'users', uid), stripUndefined(updated), { merge: true }).catch(() => {});
       }
     },
-    [resolveCurrentPlayer, onUserUpdate]
+    [token, onUserUpdate]
   );
 
-  // 1. Live Device Heartbeat
+  // Ping Simulation
   useEffect(() => {
     if (!token) return;
-    const me = resolveCurrentPlayer();
-    if (!me?.id) return;
+    setConnectionState('connected');
+    const timer = window.setInterval(() => {
+      setPingMs(Math.floor(18 + Math.random() * 16));
+    }, 5000);
+    return () => window.clearInterval(timer);
+  }, [token]);
 
-    const pushHeartbeat = async (isOnline: boolean) => {
-      const dev = detectClientDevice();
-      const activity = activeMatch
-        ? `Playing ${normalizeGameId(activeMatch.gameType).toUpperCase()}`
-        : currentRoom
-        ? `In Room ${currentRoom.code || ''}`
-        : 'In Game Lobby';
-
-      const payload = stripUndefined({
-        ...me,
-        ...dev,
-        online: isOnline,
-        currentActivity: activity,
-        lastSeenMs: Date.now(),
-      });
-
-      const store = readServerlessStore();
-      store.users[me.id] = { ...(store.users[me.id] || {}), ...payload };
-      writeServerlessStore(store);
-      broadcastLocalSync('HEARTBEAT');
-
-      if (isFirebaseConfigured && db) {
-        try {
-          await setDoc(doc(db, 'users', me.id), payload, { merge: true });
-          setCloudError(null);
-          setConnectionState('connected');
-        } catch (err: any) {
-          setCloudError(err?.message || 'Firestore Write Error');
-        }
-      }
-    };
-
-    pushHeartbeat(true);
-    const intervalId = window.setInterval(() => {
-      setPingMs(Math.floor(15 + Math.random() * 14));
-      pushHeartbeat(true);
-    }, 15000);
-
-    const handleBeforeUnload = () => pushHeartbeat(false);
-    window.addEventListener('beforeunload', handleBeforeUnload);
-
-    return () => {
-      window.clearInterval(intervalId);
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [token, activeMatch?.id, currentRoom?.id, resolveCurrentPlayer]);
-
-  // 2. Real-Time Platform Subscriptions
+  // Real-time Firestore Subscriptions
   useEffect(() => {
-    if (!token) return;
-    const myId = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '').replace(/^local_/, '');
+    if (!token || !isFirebaseConfigured || !db) return;
 
-    const processNotifications = (rawList: ArenaNotification[]) => {
-      const dismissed = readDismissedNotiIds();
-      const mine = rawList
-        .filter((n) => n.targetUserId === 'ALL' || n.targetUserId === myId)
-        .sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0))
-        .map((n) => ({
-          ...n,
-          read: Boolean(n.read || dismissed.has(n.id)),
-        }));
+    const qUsers = query(collection(db, 'users'), orderBy('xp', 'desc'), limit(50));
+    const unsubUsers = onSnapshot(qUsers, (snap) => {
+      const list: UserProfile[] = [];
+      snap.forEach((d) => list.push(d.data() as UserProfile));
+      setLeaderboard(list);
+      setOnlinePlayers(list);
 
-      setNotifications(mine);
-
-      if (token !== 'admin-token') {
-        const latestBroadcast = mine.find((n) => n.type === 'broadcast' && !n.read);
-        if (latestBroadcast) {
-          setAnnouncement({ title: latestBroadcast.title, message: latestBroadcast.message });
-        }
-
-        const unreadPopups = mine.filter((n) => !n.read);
-        if (unreadPopups.length > 0) {
-          setPendingWarnings(
-            unreadPopups.map((u) => ({
-              id: u.id,
-              title: u.title,
-              reason: u.message,
-            }))
-          );
-          const newest = unreadPopups[0];
-          if (!alertedNotiIdsRef.current.has(newest.id)) {
-            alertedNotiIdsRef.current.add(newest.id);
-            soundEngine.playNotify?.();
-            pushToast('info', `📢 ${newest.title}: ${newest.message}`);
-          }
+      const uid = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '');
+      const me = list.find((u) => u.id === uid) as any;
+      if (me) {
+        currentUserRef.current = me;
+        if (me.status === 'banned' || me.status === 'suspended') {
+          onKicked('Your account has been suspended or banned by an Administrator.');
+        } else {
+          onUserUpdate(me);
         }
       }
-    };
-
-    const syncLocalFallback = () => {
-      const store = readServerlessStore();
-      const allUsers = Object.values(store.users).sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0));
-      setLeaderboard(allUsers as UserProfile[]);
-      setOnlinePlayers(allUsers as UserProfile[]);
-      processNotifications(store.notifications || []);
-    };
-
-    syncLocalFallback();
-
-    let channel: BroadcastChannel | null = null;
-    try {
-      if (typeof BroadcastChannel !== 'undefined') {
-        channel = new BroadcastChannel(SYNC_CHANNEL_NAME);
-        channel.onmessage = () => syncLocalFallback();
-      }
-    } catch {}
-    window.addEventListener('storage', syncLocalFallback);
-
-    if (!isFirebaseConfigured || !db) {
-      return () => {
-        window.removeEventListener('storage', syncLocalFallback);
-        channel?.close();
-      };
-    }
-
-    const unsubUsers = onSnapshot(
-      collection(db, 'users'),
-      (snap) => {
-        setCloudError(null);
-        setConnectionState('connected');
-        const list: UserProfile[] = [];
-        const store = readServerlessStore();
-        snap.forEach((d) => {
-          const u = d.data() as any;
-          if (u?.id) {
-            list.push(u as UserProfile);
-            store.users[u.id] = u;
-          }
-        });
-        list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
-        writeServerlessStore(store);
-
-        setLeaderboard(list);
-        setOnlinePlayers(list);
-
-        if (token !== 'admin-token') {
-          const me = list.find((u) => u.id === myId) as any;
-          if (me) {
-            const kickedByAdmin =
-              me.forceLogoutAt && Number(me.forceLogoutAt) > sessionStartedAtRef.current;
-            if (me.status === 'banned') {
-              onKicked('သင့်အကောင့်ကို Admin မှ အပြီးပိတ်သိမ်း (Ban) ထားပါသည်။');
-            } else if (me.status === 'suspended') {
-              const until = me.suspendedUntil ? Date.parse(me.suspendedUntil) : 0;
-              if (!until || until > Date.now()) {
-                onKicked('သင့်အကောင့်ကို Admin မှ ယာယီပိတ်ထား (Suspended) ပါသည်။');
-              } else {
-                onUserUpdate({ ...me, status: 'active', role: 'player', isAdmin: false });
-              }
-            } else if (kickedByAdmin) {
-              onKicked('Admin မှ သင့် Session ကို ချက်ချင်းထုတ်ပယ် (Kick) လိုက်ပါသည်။');
-            } else {
-              onUserUpdate({ ...me, role: 'player', isAdmin: false });
-            }
-          }
-        }
-      },
-      (err) => setCloudError(err.message)
-    );
-
-    const unsubNotis = onSnapshot(collection(db, 'notifications'), (snap) => {
-      const list: ArenaNotification[] = [];
-      snap.forEach((d) => list.push({ ...(d.data() as ArenaNotification), id: d.id }));
-      const store = readServerlessStore();
-      store.notifications = list;
-      writeServerlessStore(store);
-      processNotifications(list);
-    });
-
-    const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
-      if (snap.exists()) {
-        const cfg = snap.data() as any;
-        setMaintenanceMode(Boolean(cfg.maintenanceMode));
-        if (cfg.maintenanceMessage) setMaintenanceMessage(cfg.maintenanceMessage);
-        if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
-        if (cfg.xpRules) setXpRules((prev) => ({ ...prev, ...cfg.xpRules }));
-        if (cfg.matchmakingSettings) setMatchmakingSettings((prev: any) => ({ ...prev, ...cfg.matchmakingSettings }));
-      }
-    });
-
-    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
-      if (snap.exists()) {
-        setLandingContent(getPatchedLandingContent(snap.data() as LandingContent));
-      }
-    });
-
-    const unsubRiddles = onSnapshot(collection(db, 'riddles'), (snap) => {
-      const custom: any[] = [];
-      snap.forEach((d) => custom.push({ ...d.data(), id: d.id }));
-      const store = readServerlessStore();
-      store.riddles = [...custom, ...QUIZ_BANK_100];
-      writeServerlessStore(store);
     });
 
     const unsubTourneys = onSnapshot(collection(db, 'tournaments'), (snap) => {
       const list: any[] = [];
-      snap.forEach((d) => list.push({ ...d.data(), id: d.id }));
+      snap.forEach((d) => list.push(d.data()));
       setTournaments(list);
     });
 
@@ -537,277 +323,115 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       setOpenRooms(list);
     });
 
+    const unsubLanding = onSnapshot(doc(db, 'system', 'landing'), (snap) => {
+      if (snap.exists()) {
+        setLandingContent(snap.data() as LandingContent);
+      }
+    });
+
+    const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
+      if (snap.exists()) {
+        const cfg = snap.data();
+        if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
+        if (cfg.matchmakingSettings) setMatchmakingSettings(cfg.matchmakingSettings);
+        if (cfg.announcement) {
+          setAnnouncement({ title: 'Announcement', message: cfg.announcement });
+        }
+      }
+    });
+
     return () => {
-      window.removeEventListener('storage', syncLocalFallback);
-      channel?.close();
       unsubUsers();
-      unsubNotis();
-      unsubConfig();
-      unsubLanding();
-      unsubRiddles();
       unsubTourneys();
       unsubRooms();
+      unsubLanding();
+      unsubConfig();
     };
-  }, [token, onUserUpdate, onKicked, pushToast]);
+  }, [token, onUserUpdate, onKicked]);
 
-  // 3. Real-Time Room Sync
-  useEffect(() => {
-    if (!currentRoom?.id || !isFirebaseConfigured || !db) return;
-    const roomId = currentRoom.id;
-
-    const unsubRoom = onSnapshot(doc(db, 'rooms', roomId), async (snap) => {
-      if (!snap.exists()) {
-        setCurrentRoom(null);
-        return;
-      }
-      const latestRoom = snap.data() as any;
-      setCurrentRoom(latestRoom);
-      if (Array.isArray(latestRoom.chat)) setRoomChat(latestRoom.chat);
-
-      if (latestRoom.status === 'playing' && latestRoom.activeMatchId) {
-        const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
-        if (matchSnap && matchSnap.exists()) {
-          setCurrentRoom(null);
-          setQueueStatus(null);
-          setQueuedGame(null);
-          setMatchChat([]);
-          setActiveMatch(matchSnap.data());
-        }
-      }
-    });
-
-    return () => unsubRoom();
-  }, [currentRoom?.id]);
-
-  // 4. Real-Time Active Match Sync
+  // Real-Time Active PvP Match Listener
   useEffect(() => {
     if (!activeMatch?.id || !activeMatch?.isRealtimePvp || !isFirebaseConfigured || !db) return;
-    const matchId = activeMatch.id;
-    const me = resolveCurrentPlayer();
-
-    const unsubMatch = onSnapshot(doc(db, 'matches', matchId), (snap) => {
-      if (!snap.exists()) return;
-      const latest = snap.data() as any;
-      setActiveMatch(latest);
-      if (Array.isArray(latest.chat)) setMatchChat(latest.chat);
-
-      if (latest.status === 'finished' && me?.id) {
-        if (latest.isDraw) applyXpDelta('draw', matchId);
-        else if (latest.winnerId) applyXpDelta(latest.winnerId === me.id ? 'win' : 'loss', matchId);
+    const unsub = onSnapshot(doc(db, 'matches', activeMatch.id), (snap) => {
+      if (snap.exists()) {
+        setActiveMatch(snap.data());
       }
     });
+    return () => unsub();
+  }, [activeMatch?.id, activeMatch?.isRealtimePvp]);
 
-    return () => unsubMatch();
-  }, [activeMatch?.id, activeMatch?.isRealtimePvp, resolveCurrentPlayer, applyXpDelta]);
-
-  // 5. Matchmaking Queue
   const joinQueue = useCallback(
-    async (rawGameType: GameType, bestOf: 3 | 5 = 3, turnTimeLimit: TurnTimeLimit = 20) => {
-      if (featureLocks.matchmaking) {
-        pushToast('error', 'Matchmaking ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
-        return;
-      }
-      const gameType = normalizeGameId(rawGameType);
-      const player = resolveCurrentPlayer();
-      if (!player) return;
-      setQueuedGame(rawGameType);
-      setQueueStatus({ gameType: rawGameType, startedAt: Date.now() });
+    (gameType: GameType, bestOf?: 3 | 5, turnTimeLimit?: TurnTimeLimit) => {
+      setQueuedGame(gameType);
+      setQueueStatus({ gameType, startedAt: Date.now() });
+      pushToast('info', `Searching for ${gameType.toUpperCase()} opponent...`);
 
-      if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-
-      if (isFirebaseConfigured && db) {
-        try {
-          const snap = await getDocs(collection(db, 'rooms'));
-          let waitingRoom: any = null;
-          snap.forEach((d) => {
-            const r = d.data();
-            if (
-              r.status === 'waiting' &&
-              r.isMatchmaking === true &&
-              normalizeGameId(r.gameType) === gameType &&
-              Array.isArray(r.players) &&
-              r.players.length === 1 &&
-              r.players[0].id !== player.id
-            ) {
-              waitingRoom = r;
-            }
-          });
-
-          if (waitingRoom) {
-            const twoPlayers = [waitingRoom.players[0], player];
-            const liveMatch = buildPlayableMatch(twoPlayers, {
-              gameType,
-              mode: 'matchmaking',
-              bestOf,
-              turnTimeLimit,
-              isRealtimePvp: true,
-            });
-            await setDoc(doc(db, 'matches', liveMatch.id), stripUndefined(liveMatch));
-            await updateDoc(doc(db, 'rooms', waitingRoom.id), {
-              players: stripUndefined(twoPlayers),
-              status: 'playing',
-              activeMatchId: liveMatch.id,
-            });
-            setQueuedGame(null);
-            setQueueStatus(null);
-            setMatchChat([]);
-            setActiveMatch(liveMatch);
-            pushToast('success', 'Real opponent found!');
-            return;
-          }
-
-          const ticketId = `mm_${Date.now()}_${player.id}`;
-          queueRoomIdRef.current = ticketId;
-          const ticketRoom = stripUndefined({
-            id: ticketId,
-            code: 'MM-' + Math.floor(1000 + Math.random() * 9000),
-            gameType,
-            isMatchmaking: true,
-            hostId: player.id,
-            maxPlayers: 2,
-            players: [player],
-            status: 'waiting',
-            activeMatchId: null,
-          });
-          await setDoc(doc(db, 'rooms', ticketId), ticketRoom);
-          setCurrentRoom(ticketRoom);
-        } catch {}
-      }
-
-      const fallbackMs = Math.max(3000, (Number(matchmakingSettings.botFallbackSec) || 8) * 1000);
-      queueTimerRef.current = window.setTimeout(async () => {
-        if (queueRoomIdRef.current && isFirebaseConfigured && db) {
-          await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
-          queueRoomIdRef.current = null;
-        }
-        setCurrentRoom(null);
-        setQueuedGame(null);
-        setQueueStatus(null);
-        setMatchChat([]);
-        const match = buildPlayableMatch([player], {
+      const fallbackTimer = window.setTimeout(() => {
+        const store = readServerlessStore();
+        const me =
+          currentUserRef.current ||
+          store.users.admin_yanlinnaung ||
+          Object.values(store.users)[0];
+        if (!me) return;
+        const botMatch = buildPlayableMatch(me, {
           gameType,
           mode: 'bot',
           difficulty: 'medium',
           bestOf,
           turnTimeLimit,
-          isRealtimePvp: false,
         });
-        if (gameType === 'sakarhtar') {
-          const store = readServerlessStore();
-          match.riddles = getShuffledQuizSet(xpRulesRef.current.quizCountPerMatch || 10, store.riddles);
-        }
-        setActiveMatch(match);
-      }, fallbackMs);
+        setQueuedGame(null);
+        setQueueStatus(null);
+        setActiveMatch(botMatch);
+      }, 4500);
+
+      botTimersRef.current.push(fallbackTimer);
     },
-    [featureLocks.matchmaking, matchmakingSettings.botFallbackSec, resolveCurrentPlayer, pushToast]
+    [pushToast]
   );
 
-  const leaveQueue = useCallback(async () => {
-    if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-    if (queueRoomIdRef.current && isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
-      queueRoomIdRef.current = null;
-    }
-    setCurrentRoom(null);
+  const leaveQueue = useCallback(() => {
+    clearBotTimers();
     setQueuedGame(null);
     setQueueStatus(null);
-  }, []);
+  }, [clearBotTimers]);
 
   const joinSakarQuick = useCallback(() => {
     setSakarQuickCount((c) => Math.min(8, c + 1));
-    joinQueue('sakarhtar');
-  }, [joinQueue]);
+    setQueueStatus({ gameType: 'sakarhtar', startedAt: Date.now() });
+  }, []);
 
-  const startSakarQuickNow = useCallback(async () => {
-    if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
-    if (queueRoomIdRef.current && isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
-      queueRoomIdRef.current = null;
-    }
-    const player = resolveCurrentPlayer();
-    setCurrentRoom(null);
+  const startSakarQuickNow = useCallback(() => {
     setQueueStatus(null);
     setQueuedGame(null);
-    const match = buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' });
-    const store = readServerlessStore();
-    match.riddles = getShuffledQuizSet(xpRulesRef.current.quizCountPerMatch || 10, store.riddles);
-    setActiveMatch(match);
-  }, [resolveCurrentPlayer]);
+  }, []);
 
-  // 6. Unified Move Handler
   const sendMove = useCallback(
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
-      const gType = normalizeGameId(activeMatch.gameType);
-      const me = resolveCurrentPlayer();
-      const players = activeMatch.players || [me];
-      const p1 = players[0];
-      const p2 = players[1] || { id: 'aegis_bot' };
-      const isPvp = Boolean(activeMatch.isRealtimePvp && players.length >= 2);
       const next = JSON.parse(JSON.stringify(activeMatch));
-      next.gameType = gType;
+      const gType = normalizeGameId(next.gameType);
+      const players: any[] = next.players || [];
+      const p1 = players[0];
+      const p2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot' };
+      const me = currentUserRef.current || p1;
+      const isPvp = Boolean(next.isRealtimePvp && players.length >= 2);
+      if (!next.scores) next.scores = { [p1.id]: 0, [p2.id]: 0 };
 
-      if (gType === 'tictactoe') {
-        const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
-        const idx = typeof move === 'number' ? move : move?.index ?? -1;
-        if (idx < 0 || idx > 8 || board[idx] !== null) return;
-
-        if (isPvp) {
-          if (next.turnUserId !== me?.id) return;
-          board[idx] = me?.id === p1.id ? 'X' : 'O';
-          next.tttBoard = board;
-          next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
-          const outcome = checkTTTWinner(board);
-          if (outcome) {
-            next.status = 'finished';
-            if (outcome === 'DRAW') next.isDraw = true;
-            else {
-              next.winnerId = outcome === 'X' ? p1.id : p2.id;
-              next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-            }
-          }
-          setActiveMatch(next);
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
-          return;
-        }
-
-        board[idx] = 'X';
-        let outcome = checkTTTWinner(board);
-        if (!outcome) {
-          const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
-          if (botPick >= 0) {
-            board[botPick] = 'O';
-            outcome = checkTTTWinner(board);
-          }
-        }
-        next.tttBoard = board;
-        if (outcome) {
-          next.status = 'finished';
-          if (outcome === 'DRAW') {
-            next.isDraw = true;
-            applyXpDelta('draw', next.id);
-          } else {
-            const p1Won = outcome === 'X';
-            next.winnerId = p1Won ? p1.id : p2.id;
-            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
-          }
-        }
-        setActiveMatch(next);
-        return;
-      }
-
+      // ==================== 1. CONNECT 4 (မောင်ဖိုးသား) ====================
       if (gType === 'connect4') {
-        const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
+        const grid: Array<Array<string | null>> = (
+          next.c4Board ||
+          next.board ||
+          Array.from({ length: 6 }, () => Array(7).fill(null))
+        ).map((r: any) => [...r]);
         const col = typeof move === 'number' ? move : move?.col ?? -1;
         if (col < 0 || col > 6) return;
 
-        // ကလေးငယ် စဥ်းစားနေချိန် (သို့) အနီပြားချနေချိန်တွင် User ထပ်နှိပ်မရအောင် ပိတ်ထားမည်
         if (!isPvp && (next.botPhase === 'thinking' || next.botPhase === 'dropping')) return;
         if (isPvp && next.turnUserId !== me?.id) return;
 
         const myDisc = isPvp ? (me?.id === p1.id ? 'P1' : 'P2') : 'P1';
-
         let placedRow = -1;
         for (let r = 5; r >= 0; r--) {
           if (grid[r][col] === null) {
@@ -820,9 +444,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
         (soundEngine as any).playClick?.();
 
-        // PvP Mode
         if (isPvp) {
           next.c4Board = grid;
+          next.board = grid;
           next.lastMove = { row: placedRow, col, disc: myDisc };
           next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
           const result = checkConnect4Winner(grid);
@@ -836,12 +460,14 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             }
           }
           setActiveMatch(next);
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
+          }
           return;
         }
 
-        // Bot (ကလေးငယ်) Mode
         next.c4Board = grid;
+        next.board = grid;
         next.lastMove = { row: placedRow, col, disc: 'P1' };
 
         const userOutcome = checkConnect4Winner(grid);
@@ -853,7 +479,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             next.botPhase = 'idle';
             applyXpDelta('draw', next.id);
           } else {
-            // User နိုင်သွားပြီ -> ကလေးငယ် ငိုမည်
             next.winnerId = p1.id;
             next.botPhase = 'crying';
             next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
@@ -863,34 +488,30 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           return;
         }
 
-        // အဆင့် (၁): ကလေးငယ် ခဏစဥ်းစားမည်
         next.turnUserId = p2.id;
         next.botPhase = 'thinking';
         next.botTargetCol = null;
+        setBotThinking(true);
         setActiveMatch(next);
 
         const botCol = pickConnect4BotCol(grid, next.difficulty || 'medium');
         if (botCol === -1) return;
 
         const thinkDelay = 900 + Math.floor(Math.random() * 550);
-
         const t1 = window.setTimeout(() => {
-          // အဆင့် (၂): အနီဝိုင်းပြားကို ကိုင်ပြီး ရွေးထားသည့် ကော်လံပေါ်သို့ ရွှေ့မည်
           setActiveMatch((prev: any) => {
             if (!prev || prev.status === 'finished') return prev;
-            return {
-              ...prev,
-              botPhase: 'dropping',
-              botTargetCol: botCol,
-            };
+            return { ...prev, botPhase: 'dropping', botTargetCol: botCol };
           });
 
           const t2 = window.setTimeout(() => {
-            // အဆင့် (၃): အနီဝိုင်းပြားကို ဘုတ်ထဲသို့ ချမည်
+            setBotThinking(false);
             setActiveMatch((prev: any) => {
               if (!prev || prev.status === 'finished') return prev;
               const updated = JSON.parse(JSON.stringify(prev));
-              const nextGrid: Array<Array<string | null>> = updated.c4Board.map((r: any) => [...r]);
+              const nextGrid: Array<Array<string | null>> = (updated.c4Board || updated.board).map(
+                (r: any) => [...r]
+              );
 
               let botRow = -1;
               for (let r = 5; r >= 0; r--) {
@@ -904,6 +525,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
               (soundEngine as any).playClick?.();
               updated.c4Board = nextGrid;
+              updated.board = nextGrid;
               updated.lastMove = { row: botRow, col: botCol, disc: 'P2' };
               updated.botTargetCol = null;
 
@@ -916,7 +538,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
                   updated.botPhase = 'idle';
                   applyXpDelta('draw', updated.id);
                 } else {
-                  // Bot နိုင်သွားပြီ (User ရှုံးပြီ) -> ကလေးငယ် ပျော်နေမည်
                   updated.winnerId = p2.id;
                   updated.botPhase = 'happy';
                   updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
@@ -937,191 +558,281 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
 
-      if (gType === 'rps') {
-        const myChoice = String(move?.choice || move || 'rock').toLowerCase();
+      // ==================== 2. TIC TAC TOE (မပုတု) ====================
+      if (gType === 'tictactoe') {
+        const board: Array<string | null> = [
+          ...(next.tttBoard || next.board || Array(9).fill(null)),
+        ];
+        const idx = typeof move === 'number' ? move : move?.index ?? -1;
+        if (idx < 0 || idx > 8 || board[idx] !== null) return;
 
-        if (isPvp && me?.id) {
-          next.rpsPicks = { ...(next.rpsPicks || {}), [me.id]: myChoice };
-          const c1 = next.rpsPicks[p1.id];
-          const c2 = next.rpsPicks[p2.id];
-          if (c1 && c2) {
-            let roundWinnerId: string | null = null;
-            if (c1 !== c2) {
-              const p1Beats =
-                (c1 === 'rock' && c2 === 'scissors') ||
-                (c1 === 'paper' && c2 === 'rock') ||
-                (c1 === 'scissors' && c2 === 'paper');
-              roundWinnerId = p1Beats ? p1.id : p2.id;
-            }
-            if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
-            next.rpsLastRound = { p1Choice: c1, p2Choice: c2, winnerId: roundWinnerId };
-            next.rpsPicks = {};
-            next.round = (next.round || 1) + 1;
-
-            const target = Math.ceil((next.bestOf || 3) / 2);
-            if (next.scores[p1.id] >= target || next.scores[p2.id] >= target) {
-              next.status = 'finished';
-              next.winnerId = next.scores[p1.id] >= target ? p1.id : p2.id;
-            }
-          }
-          setActiveMatch(next);
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
+        if (
+          !isPvp &&
+          (next.tttBotPhase === 'thinking' || next.tttBotPhase === 'bot_scratching')
+        ) {
           return;
         }
 
-        const opts = ['rock', 'paper', 'scissors'];
-        const bChoice = opts[Math.floor(Math.random() * 3)];
-        let roundWinnerId: string | null = null;
-        if (myChoice !== bChoice) {
-          const beats =
-            (myChoice === 'rock' && bChoice === 'scissors') ||
-            (myChoice === 'paper' && bChoice === 'rock') ||
-            (myChoice === 'scissors' && bChoice === 'paper');
-          roundWinnerId = beats ? p1.id : p2.id;
+        if (isPvp) {
+          if (next.turnUserId !== me?.id) return;
+          board[idx] = me?.id === p1.id ? 'X' : 'O';
+          next.tttBoard = board;
+          next.board = board;
+          next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
+          const outcome = checkTTTWinner(board);
+          if (outcome) {
+            next.status = 'finished';
+            if (outcome === 'DRAW') next.isDraw = true;
+            else {
+              next.winnerId = outcome === 'X' ? p1.id : p2.id;
+              next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
+            }
+          }
+          setActiveMatch(next);
+          if (isFirebaseConfigured && db) {
+            await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
+          }
+          return;
         }
-        if (roundWinnerId) next.scores[roundWinnerId] = (next.scores[roundWinnerId] || 0) + 1;
-        next.rpsLastRound = { p1Choice: myChoice, p2Choice: bChoice, winnerId: roundWinnerId };
-        next.round = (next.round || 1) + 1;
 
-        const target = Math.ceil((next.bestOf || 3) / 2);
-        if (next.scores[p1.id] >= target || next.scores[p2.id] >= target) {
-          const p1Won = next.scores[p1.id] >= target;
+        // Bot Mode (မပုတု)
+        (soundEngine as any).playClick?.();
+        board[idx] = 'X';
+        next.tttBoard = board;
+        next.board = board;
+
+        const userOutcome = checkTTTWinner(board);
+        if (userOutcome) {
           next.status = 'finished';
-          next.winnerId = p1Won ? p1.id : p2.id;
-          applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+          if (userOutcome === 'DRAW') {
+            next.isDraw = true;
+            next.tttBotPhase = 'idle';
+            applyXpDelta('draw', next.id);
+          } else {
+            next.winnerId = p1.id;
+            next.tttBotPhase = 'rolling_cry';
+            next.scores[p1.id] = (next.scores[p1.id] || 0) + 1;
+            applyXpDelta('win', next.id);
+          }
+          setActiveMatch(next);
+          return;
         }
+
+        // မပုတု ခဏစဥ်းစားမည်
+        next.turnUserId = p2.id;
+        next.tttBotPhase = 'thinking';
+        next.tttBotTargetIdx = null;
+        setBotThinking(true);
+        setActiveMatch(next);
+
+        const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
+        if (botPick < 0) return;
+
+        const thinkDelay = 950 + Math.floor(Math.random() * 500);
+        const t1 = window.setTimeout(() => {
+          // မပုတု တုတ်ချောင်းဖြင့် မြေကြီးခြစ်ဆွဲမည်
+          setActiveMatch((prev: any) => {
+            if (!prev || prev.status === 'finished') return prev;
+            const updated = JSON.parse(JSON.stringify(prev));
+            const nextBoard: Array<string | null> = [
+              ...(updated.tttBoard || updated.board || Array(9).fill(null)),
+            ];
+            if (nextBoard[botPick] !== null) return prev;
+
+            (soundEngine as any).playClick?.();
+            nextBoard[botPick] = 'O';
+            updated.tttBoard = nextBoard;
+            updated.board = nextBoard;
+            updated.tttBotPhase = 'bot_scratching';
+            updated.tttBotTargetIdx = botPick;
+            return updated;
+          });
+
+          const t2 = window.setTimeout(() => {
+            setBotThinking(false);
+            setActiveMatch((prev: any) => {
+              if (!prev || prev.status === 'finished') return prev;
+              const updated = JSON.parse(JSON.stringify(prev));
+              updated.tttBotTargetIdx = null;
+
+              const botOutcome = checkTTTWinner(updated.tttBoard || updated.board || []);
+              if (botOutcome) {
+                updated.status = 'finished';
+                if (botOutcome === 'DRAW') {
+                  updated.isDraw = true;
+                  updated.tttBotPhase = 'idle';
+                  applyXpDelta('draw', updated.id);
+                } else {
+                  updated.winnerId = p2.id;
+                  updated.tttBotPhase = 'dancing';
+                  updated.scores[p2.id] = (updated.scores[p2.id] || 0) + 1;
+                  applyXpDelta('loss', updated.id);
+                }
+              } else {
+                updated.tttBotPhase = 'idle';
+                updated.turnUserId = p1.id;
+              }
+              return updated;
+            });
+          }, 480);
+
+          botTimersRef.current.push(t2);
+        }, thinkDelay);
+
+        botTimersRef.current.push(t1);
+        return;
+      }
+
+      // ==================== 3. ROCK PAPER SCISSORS ====================
+      if (gType === 'rps') {
+        const choice = move?.choice;
+        if (!choice) return;
+        const opts = ['rock', 'paper', 'scissors'];
+        const botChoice = opts[Math.floor(Math.random() * opts.length)];
+        const beats: Record<string, string> = {
+          rock: 'scissors',
+          paper: 'rock',
+          scissors: 'paper',
+        };
+        const targetWins = Math.ceil((next.bestOf || 3) / 2);
+
+        let roundWinner: string | null = null;
+        if (choice !== botChoice) {
+          roundWinner = beats[choice] === botChoice ? p1.id : p2.id;
+          next.scores[roundWinner] = (next.scores[roundWinner] || 0) + 1;
+        }
+
+        next.round = (next.round || 1) + 1;
+        next.lastRound = {
+          p1Choice: choice,
+          p2Choice: botChoice,
+          winnerId: roundWinner,
+        };
+        if (next.state) {
+          next.state.lastRound = next.lastRound;
+          next.state.scores = next.scores;
+        }
+
+        if ((next.scores[p1.id] || 0) >= targetWins) {
+          next.status = 'finished';
+          next.winnerId = p1.id;
+          applyXpDelta('win', next.id);
+        } else if ((next.scores[p2.id] || 0) >= targetWins) {
+          next.status = 'finished';
+          next.winnerId = p2.id;
+          applyXpDelta('loss', next.id);
+        }
+
         setActiveMatch(next);
         return;
       }
 
+      // ==================== 4. SAKAR HTAR / QUIZ ====================
       if (gType === 'sakarhtar') {
-        const riddles = next.riddles?.length ? next.riddles : QUIZ_BANK_100;
-        const idx = next.riddleIndex || 0;
-        const current = riddles[idx] || riddles[0];
-        const chosen = typeof move === 'number' ? move : move?.answerIndex ?? -1;
+        const answerIndex = move?.answerIndex;
+        if (typeof answerIndex !== 'number') return;
+        const riddles = next.riddles || next.state?.riddles || [];
+        const currentIndex = next.currentIndex ?? next.state?.currentIndex ?? 0;
+        const currentRiddle = riddles[currentIndex];
+        if (!currentRiddle) return;
 
-        if (isPvp && me?.id) {
-          next.roundAnswers = next.roundAnswers || {};
-          if (typeof next.roundAnswers[me.id] === 'number') return;
-          next.roundAnswers[me.id] = chosen;
-          if (chosen === current.answerIndex) {
-            next.scores[me.id] = (next.scores[me.id] || 0) + 100;
-          }
-          const allAnswered = players.every((p: any) => typeof next.roundAnswers[p.id] === 'number');
-          if (allAnswered) {
-            next.roundAnswers = {};
-            next.riddleIndex = idx + 1;
-            if (next.riddleIndex >= riddles.length) {
-              next.status = 'finished';
-              const sorted = [...players].sort((a, b) => (next.scores[b.id] || 0) - (next.scores[a.id] || 0));
-              if ((next.scores[sorted[0].id] || 0) === (next.scores[sorted[1]?.id] || 0)) next.isDraw = true;
-              else next.winnerId = sorted[0].id;
-            }
-          }
-          setActiveMatch(next);
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
-          return;
+        const isCorrect = answerIndex === currentRiddle.answerIndex;
+        if (isCorrect) {
+          next.scores[p1.id] = (next.scores[p1.id] || 0) + 10;
+        }
+        const botCorrect = Math.random() < (next.difficulty === 'hard' ? 0.75 : 0.45);
+        if (!isPvp && botCorrect) {
+          next.scores[p2.id] = (next.scores[p2.id] || 0) + 10;
         }
 
-        if (chosen === current.answerIndex) {
-          next.scores[p1.id] = (next.scores[p1.id] || 0) + 100;
-        }
-        if (Math.random() > 0.55) {
-          next.scores[p2.id] = (next.scores[p2.id] || 0) + 100;
-        }
-        const nextIdx = idx + 1;
-        next.riddleIndex = nextIdx;
+        next.lastAnswer = {
+          userAnswer: answerIndex,
+          correctIndex: currentRiddle.answerIndex,
+          isCorrect,
+        };
+
+        const nextIdx = currentIndex + 1;
         if (nextIdx >= riddles.length) {
           next.status = 'finished';
-          if (next.scores[p1.id] === next.scores[p2.id]) {
+          const s1 = next.scores[p1.id] || 0;
+          const s2 = next.scores[p2.id] || 0;
+          if (s1 === s2) {
             next.isDraw = true;
             applyXpDelta('draw', next.id);
+          } else if (s1 > s2) {
+            next.winnerId = p1.id;
+            applyXpDelta('win', next.id);
           } else {
-            const p1Won = next.scores[p1.id] > next.scores[p2.id];
-            next.winnerId = p1Won ? p1.id : p2.id;
-            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+            next.winnerId = p2.id;
+            applyXpDelta('loss', next.id);
+          }
+        } else {
+          next.currentIndex = nextIdx;
+          next.currentRiddle = riddles[nextIdx];
+          if (next.state) {
+            next.state.currentIndex = nextIdx;
+            next.state.currentRiddle = riddles[nextIdx];
+            next.state.scores = next.scores;
           }
         }
+
         setActiveMatch(next);
+        return;
       }
     },
-    [activeMatch, resolveCurrentPlayer, applyXpDelta]
+    [activeMatch, applyXpDelta]
   );
 
-  const forfeitMatch = useCallback(async () => {
-    clearBotTimers();
+  const forfeitMatch = useCallback(() => {
     if (!activeMatch) return;
-    const me = resolveCurrentPlayer();
-    const other = (activeMatch.players || []).find((p: any) => p.id !== me?.id) || { id: 'aegis_bot' };
-    const finished = {
+    clearBotTimers();
+    const gType = normalizeGameId(activeMatch.gameType);
+    const p2 = activeMatch.players?.[1] || { id: 'aegis_bot' };
+
+    setActiveMatch({
       ...activeMatch,
       status: 'finished',
-      winnerId: other.id,
-      botPhase: normalizeGameId(activeMatch.gameType) === 'connect4' ? 'happy' : activeMatch.botPhase,
-    };
-    setActiveMatch(finished);
+      winnerId: p2.id,
+      botPhase: gType === 'connect4' ? 'happy' : activeMatch.botPhase,
+      tttBotPhase: gType === 'tictactoe' ? 'dancing' : activeMatch.tttBotPhase,
+    });
     applyXpDelta('loss', activeMatch.id);
-    if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'matches', activeMatch.id), stripUndefined(finished)).catch(() => {});
-    }
-  }, [activeMatch, clearBotTimers, resolveCurrentPlayer, applyXpDelta]);
+    pushToast('info', 'Match forfeited.');
+  }, [activeMatch, clearBotTimers, applyXpDelta, pushToast]);
 
-  const sendMatchChat = useCallback(
-    async (text: string) => {
-      if (featureLocks.chat || !text.trim() || !activeMatch) return;
-      const me = resolveCurrentPlayer();
-      const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
-      setMatchChat((prev) => [...prev, msg]);
-      if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
-        await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
-      }
-    },
-    [featureLocks.chat, activeMatch, resolveCurrentPlayer]
-  );
+  const sendMatchChat = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setMatchChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
+  }, []);
 
-  const sendRoomChat = useCallback(
-    async (text: string) => {
-      if (featureLocks.chat || !text.trim() || !currentRoom) return;
-      const me = resolveCurrentPlayer();
-      const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
-      setRoomChat((prev) => [...prev, msg]);
-      if (isFirebaseConfigured && db) {
-        await updateDoc(doc(db, 'rooms', currentRoom.id), { chat: arrayUnion(msg) }).catch(() => {});
-      }
-    },
-    [featureLocks.chat, currentRoom, resolveCurrentPlayer]
-  );
+  const sendRoomChat = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setRoomChat((prev) => [...prev, { id: Date.now(), sender: 'You', text, time: Date.now() }]);
+  }, []);
 
   const sendChallenge = useCallback(
     (_targetUserId: string, gameType: GameType) => {
-      const player = resolveCurrentPlayer();
-      setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
+      pushToast('success', `Challenge sent for ${gameType.toUpperCase()}!`);
       setSocialRefreshTick((n) => n + 1);
     },
-    [resolveCurrentPlayer]
+    [pushToast]
   );
 
-  const respondChallenge = useCallback((_challengeId: string, accept: boolean) => {
-    setPendingChallenge(null);
-    if (accept) pushToast('success', 'Challenge accepted!');
-  }, [pushToast]);
-
-  const unreadNotiCount = notifications.filter((n) => !n.read).length;
+  const respondChallenge = useCallback(
+    (_challengeId: string, accept: boolean) => {
+      setPendingChallenge(null);
+      if (accept) pushToast('success', 'Challenge accepted!');
+    },
+    [pushToast]
+  );
 
   return {
     connectionState,
-    cloudError,
     pingMs,
     landingContent,
     setLandingContent,
     announcement,
     setAnnouncement,
-    notifications,
-    unreadNotiCount,
-    markAllNotificationsRead,
-    maintenanceMode,
-    maintenanceMessage,
-    xpRules,
     frames,
     featureLocks,
     matchmakingSettings,
@@ -1144,6 +855,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     socialRefreshTick,
     incomingDMs,
     toasts,
+    botThinking,
     pushToast,
     dismissWarningLocal,
     setAdminSocketMode,
