@@ -22,7 +22,6 @@ export function getTicTacToeBotName(lang: Language, difficulty = 'medium'): stri
   return 'Ma Pu Tu';
 }
 
-// Bot Profile ပုံ (မြန်မာကလေးမလေး မပုတု SVG Data URI)
 const TTT_KID_AVATAR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
@@ -32,29 +31,21 @@ const TTT_KID_AVATAR_SVG = `
     </radialGradient>
   </defs>
   <rect width="120" height="120" rx="60" fill="url(#bg)"/>
-  <!-- Traditional Dress Shoulders -->
   <path d="M22 120 C24 90, 42 82, 60 82 C78 82, 96 90, 98 120 Z" fill="#e11d48"/>
   <path d="M36 94 Q60 108 84 94" stroke="#facc15" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <!-- Hair Buns -->
   <circle cx="28" cy="48" r="14" fill="#1e1b18"/>
   <circle cx="92" cy="48" r="14" fill="#1e1b18"/>
   <circle cx="28" cy="48" r="5" fill="#fb7185"/>
   <circle cx="92" cy="48" r="5" fill="#fb7185"/>
-  <!-- Head -->
   <circle cx="60" cy="58" r="28" fill="#f7c8a2"/>
-  <!-- Hair Bangs -->
   <path d="M32 54 C34 26, 86 26, 88 54 C78 40, 42 40, 32 54 Z" fill="#1e1b18"/>
-  <!-- Thanaka Cheeks -->
   <ellipse cx="42" cy="66" rx="7" ry="4.5" fill="#fef3c7" opacity="0.9"/>
   <ellipse cx="78" cy="66" rx="7" ry="4.5" fill="#fef3c7" opacity="0.9"/>
-  <!-- Cute Red Dot -->
   <circle cx="60" cy="48" r="2.2" fill="#e11d48"/>
-  <!-- Eyes -->
   <circle cx="48" cy="58" r="4" fill="#1e1b18"/>
   <circle cx="72" cy="58" r="4" fill="#1e1b18"/>
   <circle cx="46.8" cy="56.5" r="1.4" fill="#ffffff"/>
   <circle cx="70.8" cy="56.5" r="1.4" fill="#ffffff"/>
-  <!-- Smile -->
   <path d="M51 69 Q60 77 69 69" stroke="#9f1239" stroke-width="3" fill="none" stroke-linecap="round"/>
 </svg>
 `.trim();
@@ -62,6 +53,15 @@ const TTT_KID_AVATAR_SVG = `
 export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIComponent(
   TTT_KID_AVATAR_SVG
 )}`;
+
+const BG_CANDIDATES = [
+  './assets/ttt-village-bg.jpg',
+  './assets/ttt-village-bg.jpeg',
+  './assets/ttt-village-bg.png',
+  './ttt-village-bg.jpg',
+  './ttt-village-bg.jpeg',
+  './ttt-village-bg.png',
+];
 
 interface TicTacToeBoardProps {
   lang: Language;
@@ -91,7 +91,6 @@ function getWinningLine(board: Array<string | null>): [number, number, number] |
   return null;
 }
 
-// 3x3 ဇယားကွက်ထဲရှိ အကွက်အလိုက် ဗဟို Coordinate (%)
 function getCellCenterPercent(index: number): { x: number; y: number } {
   const row = Math.floor(index / 3);
   const col = index % 3;
@@ -107,7 +106,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   currentUserId,
   onCellClick,
   onLeaveFinished,
-  backgroundUrl = '/assets/ttt-village-bg.jpg',
+  backgroundUrl,
 }) => {
   const board: Array<string | null> = match.tttBoard || Array(9).fill(null);
   const isFinished = match.status === 'finished';
@@ -116,7 +115,10 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
 
-  // User နှိပ်လိုက်သည့်အခါ ခေတ္တတုတ်ချောင်းဖြင့် ခြစ်ပြမည့် Local State
+  const bgList = backgroundUrl ? [backgroundUrl, ...BG_CANDIDATES] : BG_CANDIDATES;
+  const [bgIndex, setBgIndex] = useState(0);
+  const [bgFailedAll, setBgFailedAll] = useState(false);
+
   const [localUserScratchIdx, setLocalUserScratchIdx] = useState<number | null>(null);
 
   useEffect(() => {
@@ -148,7 +150,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
     onCellClick(idx);
   };
 
-  // လက်ရှိ တုတ်ချောင်းဖြင့် ခြစ်နေသည့် အကွက်နှင့် ကစားသမား
   const activeScratch: { side: 'user' | 'bot'; idx: number } | null =
     localUserScratchIdx !== null
       ? { side: 'user', idx: localUserScratchIdx }
@@ -213,26 +214,28 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       {/* Main Village Top-Down Scene Container */}
       <div
         className="relative w-full max-w-[680px] aspect-[4/3] rounded-3xl overflow-hidden border-2 border-amber-700/60 shadow-[0_22px_50px_rgba(0,0,0,0.75)]"
-        style={{
-          backgroundColor: '#8f6e49',
-          backgroundImage: `url('${backgroundUrl}')`,
-          backgroundSize: 'cover',
-          backgroundPosition: 'center',
-        }}
+        style={{ backgroundColor: '#8f6e49' }}
       >
-        {/* ပုံထဲရှိ မူလကလေးနှင့် ဇယားကွက်နေရာကို သဘာဝမြေသားအလွှာဖြင့် ညက်ညောစွာ ဖုံးအုပ်ခြင်း */}
-        <div
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(ellipse 56% 48% at 50% 51%, rgba(196, 157, 108, 0.96) 0%, rgba(182, 142, 95, 0.92) 55%, rgba(164, 125, 81, 0.45) 78%, rgba(140, 104, 65, 0) 100%)',
-          }}
-        />
+        {/* ကျေးလက်နောက်ခံပုံ (jpg / jpeg / png အလိုအလျောက် ရှာဖွေပြသမည်) */}
+        {!bgFailedAll && (
+          <img
+            src={bgList[bgIndex]}
+            alt="Village Dirt Ground"
+            onError={() => {
+              if (bgIndex + 1 < bgList.length) {
+                setBgIndex((i) => i + 1);
+              } else {
+                setBgFailedAll(true);
+              }
+            }}
+            className="pointer-events-none absolute inset-0 w-full h-full object-cover"
+          />
+        )}
 
-        {/* မြေကြီးပေါ်ရှိ သစ်ရွက်အရိပ် အနည်းငယ် */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-950/20 via-transparent to-emerald-950/25" />
+        {/* အလင်းအမှောင် အနည်းငယ်သာ ညှိပေးမည် (နောက်ခံပုံကို မဖုံးအောင်) */}
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-950/15 via-transparent to-emerald-950/15" />
 
-        {/* === 1. LEFT CHARACTER: USER (အင်္ကျီအပြာ ကောင်လေး) === */}
+        {/* LEFT CHARACTER: USER (အင်္ကျီအပြာ ကောင်လေး) */}
         <div className="pointer-events-none absolute left-[6%] sm:left-[9%] top-[33%] w-[22%] sm:w-[21%] z-20">
           <UserBoyCharacter
             isScratching={activeScratch?.side === 'user'}
@@ -241,57 +244,22 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           />
         </div>
 
-        {/* === 2. RIGHT CHARACTER: BOT (မပုတု - မြန်မာကလေးမလေး) === */}
+        {/* RIGHT CHARACTER: BOT (မပုတု) */}
         <div className="pointer-events-none absolute right-[6%] sm:right-[9%] top-[32%] w-[23%] sm:w-[22%] z-20">
-          <BotGirlMaPuTu
-            mood={botMood}
-            lang={lang}
-          />
+          <BotGirlMaPuTu mood={botMood} lang={lang} />
         </div>
 
-        {/* === 3. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
+        {/* CENTER DIRT TIC-TAC-TOE GRID (3x3) */}
         <div className="absolute left-1/2 top-[51%] -translate-x-1/2 -translate-y-1/2 w-[38%] sm:w-[36%] aspect-square z-10">
-          {/* မြေကြီးပေါ် တုတ်ချောင်းဖြင့် ခြစ်ထားသည့် ဇယားမျဉ်း (SVG Dirt Grooves) */}
           <svg
             viewBox="0 0 300 300"
-            className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_1px_rgba(255,235,200,0.45)]"
+            className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_1px_rgba(255,235,200,0.5)]"
           >
-            {/* Vertical Dirt Lines */}
-            <path
-              d="M100 10 Q97 150 102 290"
-              stroke="#5c3d22"
-              strokeWidth="6"
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.88"
-            />
-            <path
-              d="M200 12 Q203 150 198 288"
-              stroke="#5c3d22"
-              strokeWidth="6"
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.88"
-            />
-            {/* Horizontal Dirt Lines */}
-            <path
-              d="M10 100 Q150 97 290 102"
-              stroke="#5c3d22"
-              strokeWidth="6"
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.88"
-            />
-            <path
-              d="M12 200 Q150 204 288 198"
-              stroke="#5c3d22"
-              strokeWidth="6"
-              strokeLinecap="round"
-              fill="none"
-              opacity="0.88"
-            />
+            <path d="M100 10 Q97 150 102 290" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M200 12 Q203 150 198 288" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M10 100 Q150 97 290 102" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M12 200 Q150 204 288 198" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
 
-            {/* အနိုင်ရသည့် ၃ ကွက်တန်း မျဉ်း */}
             {winLine && (
               <motion.line
                 x1={getCellCenterPercent(winLine[0]).x * 3}
@@ -308,7 +276,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
             )}
           </svg>
 
-          {/* Interactive 9 Dirt Cells */}
           <div className="relative z-10 grid grid-cols-3 grid-rows-3 w-full h-full">
             {board.map((cell, idx) => {
               const canClick = !isLocked && cell === null;
@@ -328,15 +295,8 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
                       : 'cursor-default'
                   }`}
                 >
-                  {/* Scratched X or O Mark */}
-                  {cell === 'X' && (
-                    <DirtScratchedX highlight={isWinningCell} />
-                  )}
-                  {cell === 'O' && (
-                    <DirtScratchedO highlight={isWinningCell} />
-                  )}
-
-                  {/* တုတ်ချောင်းခြစ်နေချိန် မြေမှုန့်လွင့်သည့် Dust Burst */}
+                  {cell === 'X' && <DirtScratchedX highlight={isWinningCell} />}
+                  {cell === 'O' && <DirtScratchedO highlight={isWinningCell} />}
                   <AnimatePresence>
                     {isBeingScratched && <DirtDustBurst key={`dust-${idx}`} />}
                   </AnimatePresence>
@@ -345,7 +305,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
             })}
           </div>
 
-          {/* === 4. STICK-SCRATCHING HAND OVERLAY (တုတ်ချောင်းဖြင့် မြေကြီးခြစ်သည့် လက်) === */}
           <AnimatePresence>
             {activeScratch && (
               <StickScratchHandOverlay
@@ -357,7 +316,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           </AnimatePresence>
         </div>
 
-        {/* === 5. RESULT OVERLAY BAR (ပွဲပြီးလျှင် အောက်ခြေတွင် ပြမည် - ကလေးကနေ/ငိုနေတာကို မဖုံးအောင်) === */}
+        {/* RESULT OVERLAY BAR */}
         <AnimatePresence>
           {isFinished && (
             <motion.div
@@ -424,12 +383,8 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   );
 };
 
-/* ============================================================================
- * မြေကြီးပေါ် တုတ်ချောင်းဖြင့် ခြစ်ထားသည့် X နှင့် O
- * ============================================================================ */
 const DirtScratchedX: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   <svg viewBox="0 0 80 80" className="w-[74%] h-[74%] overflow-visible">
-    {/* ခြစ်ရာအရိပ် */}
     <motion.path
       d="M18 18 Q40 42 62 62"
       stroke="#4a2e16"
@@ -450,7 +405,6 @@ const DirtScratchedX: React.FC<{ highlight: boolean }> = ({ highlight }) => (
       animate={{ pathLength: 1 }}
       transition={{ duration: 0.2, delay: 0.16, ease: 'easeOut' }}
     />
-    {/* အတွင်း မြေဖြူခြစ်ကြောင်း */}
     <motion.path
       d="M18 18 Q40 42 62 62"
       stroke={highlight ? '#fef08a' : '#f5e6cc'}
@@ -499,9 +453,6 @@ const DirtScratchedO: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   </svg>
 );
 
-/* ============================================================================
- * တုတ်ချောင်းဖြင့် ခြစ်ချိန် လွင့်ထွက်သည့် မြေမှုန့်များ
- * ============================================================================ */
 const DirtDustBurst: React.FC = () => {
   const particles = [
     { x: -18, y: -14, s: 5 },
@@ -527,20 +478,13 @@ const DirtDustBurst: React.FC = () => {
   );
 };
 
-/* ============================================================================
- * တုတ်ချောင်းကိုင်ထားသည့် ကလေးလက် (အကွက်ပေါ်သို့ လှမ်းထွက်ပြီး ခြစ်ဆွဲမည်)
- * ============================================================================ */
 const StickScratchHandOverlay: React.FC<{
   side: 'user' | 'bot';
   targetIdx: number;
 }> = ({ side, targetIdx }) => {
   const center = getCellCenterPercent(targetIdx);
   const isUser = side === 'user';
-
-  // User ဆိုလျှင် ဘယ်ဘက်မှ၊ Bot ဆိုလျှင် ညာဘက်မှ လှမ်းထွက်လာမည်
   const startOffsetX = isUser ? -95 : 95;
-
-  // X ခြစ်လျှင် ကြက်ခြေခတ်လှုပ်ရှားမှု၊ O ခြစ်လျှင် စက်ဝိုင်းပတ်လှုပ်ရှားမှု
   const scratchMotion = isUser
     ? { x: [0, -10, 10, 10, -10, 0], y: [0, -10, 10, -10, 10, 0] }
     : { x: [0, 10, 0, -10, 0], y: [-10, 0, 10, 0, -10] };
@@ -551,10 +495,7 @@ const StickScratchHandOverlay: React.FC<{
       animate={{ opacity: 1, x: 0, y: 0 }}
       exit={{ opacity: 0, x: startOffsetX * 0.7, transition: { duration: 0.16 } }}
       transition={{ duration: 0.16, ease: 'easeOut' }}
-      style={{
-        left: `${center.x}%`,
-        top: `${center.y}%`,
-      }}
+      style={{ left: `${center.x}%`, top: `${center.y}%` }}
       className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2"
     >
       <motion.div
@@ -568,54 +509,19 @@ const StickScratchHandOverlay: React.FC<{
             isUser ? '-translate-x-10' : 'translate-x-10 scale-x-[-1]'
           }`}
         >
-          {/* ကလေးလက်မောင်း */}
-          <path
-            d="M4 42 Q34 36 58 34"
-            stroke="#f4be95"
-            strokeWidth="15"
-            strokeLinecap="round"
-            fill="none"
-          />
-          {/* အင်္ကျီလက်စ (User: အပြာ / Bot: အနီရွှေ) */}
-          <path
-            d="M2 42 L20 39"
-            stroke={isUser ? '#2563eb' : '#e11d48'}
-            strokeWidth="17"
-            strokeLinecap="round"
-          />
-          {/* တုတ်ချောင်း (Wooden Stick) */}
-          <path
-            d="M52 28 L114 36"
-            stroke="#6b4226"
-            strokeWidth="6.5"
-            strokeLinecap="round"
-          />
-          <path
-            d="M56 29 L112 36"
-            stroke="#8b5a2b"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-          />
-          {/* တုတ်ချောင်းထိပ် မြေကြီးထိသည့်နေရာ */}
+          <path d="M4 42 Q34 36 58 34" stroke="#f4be95" strokeWidth="15" strokeLinecap="round" fill="none" />
+          <path d="M2 42 L20 39" stroke={isUser ? '#2563eb' : '#e11d48'} strokeWidth="17" strokeLinecap="round" />
+          <path d="M52 28 L114 36" stroke="#6b4226" strokeWidth="6.5" strokeLinecap="round" />
+          <path d="M56 29 L112 36" stroke="#8b5a2b" strokeWidth="2.5" strokeLinecap="round" />
           <circle cx="115" cy="36" r="3" fill="#fef3c7" opacity="0.85" />
-          {/* တုတ်ချောင်းကို ဆုပ်ကိုင်ထားသည့် လက်ချောင်းများ */}
           <circle cx="62" cy="33" r="9.5" fill="#f4be95" stroke="#d99a70" strokeWidth="1.5" />
-          <path
-            d="M58 26 Q66 24 70 30"
-            stroke="#d99a70"
-            strokeWidth="2"
-            fill="none"
-            strokeLinecap="round"
-          />
+          <path d="M58 26 Q66 24 70 30" stroke="#d99a70" strokeWidth="2" fill="none" strokeLinecap="round" />
         </svg>
       </motion.div>
     </motion.div>
   );
 };
 
-/* ============================================================================
- * ဘယ်ဘက်ကလေး: User (အင်္ကျီအပြာ ကောင်လေး - Top-Down 2D)
- * ============================================================================ */
 const UserBoyCharacter: React.FC<{
   isScratching: boolean;
   isHappy: boolean;
@@ -631,39 +537,25 @@ const UserBoyCharacter: React.FC<{
         ? { y: [0, 2, 0] }
         : { y: [0, -2, 0] }
     }
-    transition={{
-      repeat: isHappy ? Infinity : 0,
-      duration: isHappy ? 0.55 : 0.38,
-    }}
+    transition={{ repeat: isHappy ? Infinity : 0, duration: isHappy ? 0.55 : 0.38 }}
     className="relative flex flex-col items-center"
   >
     <svg viewBox="0 0 120 120" className="w-full h-auto drop-shadow-[0_10px_10px_rgba(0,0,0,0.4)]">
-      {/* Ground Shadow */}
       <ellipse cx="56" cy="96" rx="34" ry="15" fill="rgba(45,28,12,0.35)" />
-      {/* Seated Legs / Shorts */}
       <ellipse cx="66" cy="84" rx="22" ry="16" fill="#1e3a8a" />
       <circle cx="80" cy="92" r="7" fill="#f4be95" />
       <circle cx="84" cy="76" r="7" fill="#f4be95" />
-      {/* Blue T-Shirt Body */}
       <ellipse cx="48" cy="70" rx="24" ry="26" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="2.5" />
-      {/* Right Arm resting with Stick when idle */}
       {!isScratching && (
         <g>
           <path d="M62 72 Q82 74 92 66" stroke="#f4be95" strokeWidth="10" strokeLinecap="round" fill="none" />
           <path d="M88 68 L108 58" stroke="#6b4226" strokeWidth="4.5" strokeLinecap="round" />
         </g>
       )}
-      {/* Head (Top-Down) */}
       <circle cx="56" cy="46" r="24" fill="#f4be95" stroke="#d99a70" strokeWidth="1.5" />
-      {/* Hair */}
-      <path
-        d="M32 48 C30 22, 74 16, 79 40 C70 30, 56 32, 48 44 C42 46, 36 52, 32 48 Z"
-        fill="#271c15"
-      />
-      {/* Cute Side Eye looking at board */}
+      <path d="M32 48 C30 22, 74 16, 79 40 C70 30, 56 32, 48 44 C42 46, 36 52, 32 48 Z" fill="#271c15" />
       <circle cx="71" cy="49" r="3" fill="#1e1b18" />
       <circle cx="72" cy="48" r="1" fill="#ffffff" />
-      {/* Smile / Sad */}
       {isSad ? (
         <path d="M67 59 Q72 55 76 58" stroke="#9a3412" strokeWidth="2.2" fill="none" strokeLinecap="round" />
       ) : (
@@ -673,9 +565,6 @@ const UserBoyCharacter: React.FC<{
   </motion.div>
 );
 
-/* ============================================================================
- * ညာဘက်ကလေး: Bot (မပုတု - နိုင်ရင် ထခုန်ကမယ် / ရှုံးရင် မြေကြီးပေါ် လူးလှိမ့်ငိုမယ်)
- * ============================================================================ */
 const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, lang }) => {
   const isDancing = mood === 'dancing';
   const isRollingCry = mood === 'rolling_cry';
@@ -684,7 +573,6 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
 
   return (
     <div className="relative flex flex-col items-center">
-      {/* Speech / Thought Bubble */}
       <AnimatePresence>
         {isThinking && (
           <motion.div
@@ -720,7 +608,6 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
         )}
       </AnimatePresence>
 
-      {/* Dancing Sparkles */}
       {isDancing && (
         <div className="pointer-events-none absolute -inset-4 z-30">
           {[
@@ -740,7 +627,6 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
         </div>
       )}
 
-      {/* Rolling Cry Dirt Dust Puffs */}
       {isRollingCry && (
         <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-6">
           {[0, 1, 2].map((i) => (
@@ -754,19 +640,16 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
         </div>
       )}
 
-      {/* Main Character Motion Wrapper */}
       <motion.div
         animate={
           isDancing
             ? {
-                // နိုင်ရင် ထခုန်ပြီး ကနေမယ်
                 y: [0, -26, 0, -22, 0],
                 rotate: [-10, 10, -12, 12, -10],
                 scale: [1, 1.08, 1, 1.06, 1],
               }
             : isRollingCry
             ? {
-                // ရှုံးရင် မြေကြီးပေါ် လူးလှိမ့်ပြီး ငိုနေမယ်
                 x: [-16, 16, -14, 14, -16],
                 y: [10, 16, 8, 16, 10],
                 rotate: [-32, 32, -28, 28, -32],
@@ -785,26 +668,18 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
         className="w-full"
       >
         <svg viewBox="0 0 124 124" className="w-full h-auto drop-shadow-[0_10px_10px_rgba(0,0,0,0.42)]">
-          {/* Ground Shadow */}
           <ellipse cx="64" cy="98" rx="34" ry="15" fill="rgba(45,28,12,0.35)" />
-
-          {/* Traditional Colorful Skirt (ထဘီ) */}
           <ellipse cx="58" cy="82" rx="28" ry="20" fill="#e11d48" stroke="#be123c" strokeWidth="2" />
           <path d="M36 78 Q58 92 80 78" stroke="#facc15" strokeWidth="4" fill="none" />
           <path d="M40 86 Q58 98 76 86" stroke="#38bdf8" strokeWidth="3" fill="none" />
-
-          {/* Yellow/Red Blouse Body */}
           <ellipse cx="70" cy="68" rx="22" ry="20" fill="#f59e0b" stroke="#d97706" strokeWidth="2" />
 
-          {/* Arms by Mood */}
           {isDancing ? (
-            // ထခုန်ကနေချိန် လက်နှစ်ဖက် မြှောက်ထားမည်
             <>
               <path d="M52 62 Q30 38 24 22" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
               <path d="M84 62 Q104 38 110 22" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
             </>
           ) : isRollingCry ? (
-            // လူးလှိမ့်ငိုနေချိန် လက်နှင့်ခြေထောက် ယက်ကန်နေမည်
             <>
               <path d="M48 64 Q26 56 20 72" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
               <path d="M84 64 Q102 52 108 68" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
@@ -812,39 +687,26 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
               <circle cx="82" cy="96" r="7" fill="#f7c8a2" />
             </>
           ) : isThinking ? (
-            // စဥ်းစားနေချိန် မေးစေ့ကို လက်ထောက်ထားမည်
             <path d="M56 70 Q44 62 48 54" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
           ) : !isScratching ? (
-            // ပုံမှန်အချိန် တုတ်ချောင်းကိုင်ထားမည်
             <g>
               <path d="M56 72 Q38 74 30 66" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
               <path d="M34 68 L14 58" stroke="#6b4226" strokeWidth="4.5" strokeLinecap="round" />
             </g>
           ) : null}
 
-          {/* Head */}
           <circle cx="66" cy="46" r="24" fill="#f7c8a2" stroke="#d99a70" strokeWidth="1.5" />
-          {/* Hair + Hair Bun */}
           <circle cx="88" cy="42" r="10" fill="#1e1b18" />
           <circle cx="88" cy="42" r="3.5" fill="#fb7185" />
-          <path
-            d="M44 40 C48 16, 92 20, 90 48 C82 52, 74 44, 68 38 C60 32, 50 32, 44 40 Z"
-            fill="#1e1b18"
-          />
-
-          {/* Thanaka Cheek */}
+          <path d="M44 40 C48 16, 92 20, 90 48 C82 52, 74 44, 68 38 C60 32, 50 32, 44 40 Z" fill="#1e1b18" />
           <ellipse cx="52" cy="52" rx="5.5" ry="3.5" fill="#fef3c7" opacity="0.9" />
-          {/* Cute Forehead Dot */}
           <circle cx="48" cy="43" r="1.8" fill="#e11d48" />
 
-          {/* Eyes & Tears */}
           {isDancing ? (
             <path d="M46 47 Q51 41 56 47" stroke="#1e1b18" strokeWidth="2.8" fill="none" strokeLinecap="round" />
           ) : isRollingCry ? (
             <>
-              {/* ငိုနေသည့် မျက်လုံး > < */}
               <path d="M46 44 L54 48 L46 52" stroke="#1e1b18" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-              {/* မျက်ရည်စက်များ */}
               <motion.circle
                 cx="45"
                 cy="54"
@@ -869,7 +731,6 @@ const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, 
             </>
           )}
 
-          {/* Mouth */}
           {isDancing ? (
             <path d="M46 56 Q52 64 58 56 Z" fill="#be123c" />
           ) : isRollingCry ? (
