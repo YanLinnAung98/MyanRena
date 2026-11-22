@@ -22,43 +22,160 @@ export function getTicTacToeBotName(lang: Language, difficulty = 'medium'): stri
   return 'Ma Pu Tu';
 }
 
-const TTT_KID_AVATAR_SVG = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
-  <defs>
-    <radialGradient id="bg" cx="50%" cy="40%" r="65%">
-      <stop offset="0%" stop-color="#fef08a"/>
-      <stop offset="100%" stop-color="#f59e0b"/>
-    </radialGradient>
-  </defs>
-  <rect width="120" height="120" rx="60" fill="url(#bg)"/>
-  <path d="M22 120 C24 90, 42 82, 60 82 C78 82, 96 90, 98 120 Z" fill="#e11d48"/>
-  <path d="M36 94 Q60 108 84 94" stroke="#facc15" stroke-width="5" fill="none" stroke-linecap="round"/>
-  <circle cx="28" cy="48" r="14" fill="#1e1b18"/>
-  <circle cx="92" cy="48" r="14" fill="#1e1b18"/>
-  <circle cx="28" cy="48" r="5" fill="#fb7185"/>
-  <circle cx="92" cy="48" r="5" fill="#fb7185"/>
-  <circle cx="60" cy="58" r="28" fill="#f7c8a2"/>
-  <path d="M32 54 C34 26, 86 26, 88 54 C78 40, 42 40, 32 54 Z" fill="#1e1b18"/>
-  <ellipse cx="42" cy="66" rx="7" ry="4.5" fill="#fef3c7" opacity="0.9"/>
-  <ellipse cx="78" cy="66" rx="7" ry="4.5" fill="#fef3c7" opacity="0.9"/>
-  <circle cx="60" cy="48" r="2.2" fill="#e11d48"/>
-  <circle cx="48" cy="58" r="4" fill="#1e1b18"/>
-  <circle cx="72" cy="58" r="4" fill="#1e1b18"/>
-  <circle cx="46.8" cy="56.5" r="1.4" fill="#ffffff"/>
-  <circle cx="70.8" cy="56.5" r="1.4" fill="#ffffff"/>
-  <path d="M51 69 Q60 77 69 69" stroke="#9f1239" stroke-width="3" fill="none" stroke-linecap="round"/>
-</svg>
-`.trim();
+const RAW_BASE = 'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets';
+const BASE_PREFIX = (import.meta.env.BASE_URL || '/MyanRena/').replace(/\/?$/, '/');
 
-export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIComponent(
-  TTT_KID_AVATAR_SVG
-)}`;
+function getAssetUrls(filename: string): string[] {
+  return [
+    `${BASE_PREFIX}assets/${filename}`,
+    `/MyanRena/assets/${filename}`,
+    `${RAW_BASE}/${filename}`,
+  ];
+}
 
-const BG_CANDIDATES = [
-  '/MyanRena/assets/ttt-village-bg.jpg',
-  `${import.meta.env.BASE_URL || './'}assets/ttt-village-bg.jpg`,
-  'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets/ttt-village-bg.jpg',
-];
+// Bot Profile ပုံအတွက် မပုတု ပုံအစစ် (Fallback SVG ပါတွဲထားသည်)
+export const TTT_KID_BOT_AVATAR_DATA_URI = `${BASE_PREFIX}assets/ttt-girl-idle.jpg`;
+
+// အပြင်ဘက် အဖြူရောင်နောက်ခံကို အလိုအလျောက် ဖျက်ပေးမည့် Canvas Flood-Fill Cache
+const transparentCache = new Map<string, string>();
+let preloadedBgUrl: string | null = null;
+
+function loadImage(url: string, withCors: boolean): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    if (withCors) img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load ${url}`));
+    img.src = url;
+  });
+}
+
+async function resolveWorkingUrl(filename: string): Promise<string | null> {
+  const candidates = getAssetUrls(filename);
+  for (const url of candidates) {
+    try {
+      await loadImage(url, false);
+      return url;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+async function loadTransparentSprite(filename: string): Promise<string | null> {
+  if (transparentCache.has(filename)) {
+    return transparentCache.get(filename)!;
+  }
+
+  const candidates = getAssetUrls(filename);
+  for (const url of candidates) {
+    try {
+      const img = await loadImage(url, true);
+      const maxDim = 512;
+      const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+      const w = Math.max(1, Math.round(img.naturalWidth * scale));
+      const h = Math.max(1, Math.round(img.naturalHeight * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return url;
+
+      ctx.drawImage(img, 0, 0, w, h);
+      const imgData = ctx.getImageData(0, 0, w, h);
+      const data = imgData.data;
+
+      // 4 ထောင့်မှစတင်ပြီး အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
+      const visited = new Uint8Array(w * h);
+      const queue = new Int32Array(w * h);
+      let head = 0;
+      let tail = 0;
+
+      const isNearWhite = (idx4: number) => {
+        const r = data[idx4];
+        const g = data[idx4 + 1];
+        const b = data[idx4 + 2];
+        const maxC = Math.max(r, g, b);
+        const minC = Math.min(r, g, b);
+        return r > 228 && g > 228 && b > 228 && maxC - minC < 26;
+      };
+
+      const pushIfBg = (x: number, y: number) => {
+        const p = y * w + x;
+        if (visited[p]) return;
+        const idx4 = p * 4;
+        if (isNearWhite(idx4)) {
+          visited[p] = 1;
+          queue[tail++] = p;
+        }
+      };
+
+      for (let x = 0; x < w; x++) {
+        pushIfBg(x, 0);
+        pushIfBg(x, h - 1);
+      }
+      for (let y = 0; y < h; y++) {
+        pushIfBg(0, y);
+        pushIfBg(w - 1, y);
+      }
+
+      while (head < tail) {
+        const p = queue[head++];
+        const idx4 = p * 4;
+        data[idx4 + 3] = 0;
+
+        const x = p % w;
+        const y = (p - x) / w;
+
+        if (x > 0) pushIfBg(x - 1, y);
+        if (x < w - 1) pushIfBg(x + 1, y);
+        if (y > 0) pushIfBg(x, y - 1);
+        if (y < h - 1) pushIfBg(x, y + 1);
+      }
+
+      // အနားသတ်လေးများ ညက်ညောစေရန် 1px Soft Feather
+      for (let y = 1; y < h - 1; y++) {
+        for (let x = 1; x < w - 1; x++) {
+          const p = y * w + x;
+          const idx4 = p * 4;
+          if (data[idx4 + 3] === 0) continue;
+          const hasTransparentNeighbor =
+            data[(p - 1) * 4 + 3] === 0 ||
+            data[(p + 1) * 4 + 3] === 0 ||
+            data[(p - w) * 4 + 3] === 0 ||
+            data[(p + w) * 4 + 3] === 0;
+          if (hasTransparentNeighbor) {
+            const avg = (data[idx4] + data[idx4 + 1] + data[idx4 + 2]) / 3;
+            if (avg > 205) {
+              data[idx4 + 3] = Math.round(data[idx4 + 3] * 0.35);
+            }
+          }
+        }
+      }
+
+      ctx.putImageData(imgData, 0, 0);
+      const resultUri = canvas.toDataURL('image/png');
+      transparentCache.set(filename, resultUri);
+      return resultUri;
+    } catch {
+      // try next candidate
+    }
+  }
+  return null;
+}
+
+// App စဖွင့်ကတည်းက ပုံများကို ကြိုတင် Preload လုပ်ထားမည် (ဂိမ်းဝင်ချိန် ချက်ချင်းပေါ်ရန်)
+if (typeof window !== 'undefined') {
+  resolveWorkingUrl('ttt-village-bg.jpg').then((u) => {
+    if (u) preloadedBgUrl = u;
+  });
+  void loadTransparentSprite('ttt-boy.jpg');
+  void loadTransparentSprite('ttt-girl-idle.jpg');
+  void loadTransparentSprite('ttt-girl-dance.jpg');
+  void loadTransparentSprite('ttt-girl-cry.jpg');
+}
 
 interface TicTacToeBoardProps {
   lang: Language;
@@ -66,7 +183,6 @@ interface TicTacToeBoardProps {
   currentUserId: string;
   onCellClick: (index: number) => void;
   onLeaveFinished: () => void;
-  backgroundUrl?: string;
 }
 
 const WIN_LINES: Array<[number, number, number]> = [
@@ -103,7 +219,6 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   currentUserId,
   onCellClick,
   onLeaveFinished,
-  backgroundUrl,
 }) => {
   const board: Array<string | null> = match.tttBoard || Array(9).fill(null);
   const isFinished = match.status === 'finished';
@@ -112,9 +227,41 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
 
-  const bgList = backgroundUrl ? [backgroundUrl, ...BG_CANDIDATES] : BG_CANDIDATES;
-  const [bgIndex, setBgIndex] = useState(0);
-  const [bgFailedAll, setBgFailedAll] = useState(false);
+  const [bgSrc, setBgSrc] = useState<string | null>(preloadedBgUrl);
+  const [sprites, setSprites] = useState<{
+    boy: string | null;
+    girlIdle: string | null;
+    girlDance: string | null;
+    girlCry: string | null;
+  }>({
+    boy: transparentCache.get('ttt-boy.jpg') || null,
+    girlIdle: transparentCache.get('ttt-girl-idle.jpg') || null,
+    girlDance: transparentCache.get('ttt-girl-dance.jpg') || null,
+    girlCry: transparentCache.get('ttt-girl-cry.jpg') || null,
+  });
+
+  useEffect(() => {
+    let active = true;
+    if (!preloadedBgUrl) {
+      resolveWorkingUrl('ttt-village-bg.jpg').then((u) => {
+        if (active && u) {
+          preloadedBgUrl = u;
+          setBgSrc(u);
+        }
+      });
+    }
+    Promise.all([
+      loadTransparentSprite('ttt-boy.jpg'),
+      loadTransparentSprite('ttt-girl-idle.jpg'),
+      loadTransparentSprite('ttt-girl-dance.jpg'),
+      loadTransparentSprite('ttt-girl-cry.jpg'),
+    ]).then(([boy, girlIdle, girlDance, girlCry]) => {
+      if (active) setSprites({ boy, girlIdle, girlDance, girlCry });
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const [localUserScratchIdx, setLocalUserScratchIdx] = useState<number | null>(null);
 
@@ -188,195 +335,345 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       : 'Your Turn (X) — Tap a dirt square to scratch';
   };
 
+  const girlActiveSrc =
+    botMood === 'dancing'
+      ? sprites.girlDance || sprites.girlIdle
+      : botMood === 'rolling_cry'
+      ? sprites.girlCry || sprites.girlIdle
+      : sprites.girlIdle;
+
   return (
-    <div className="relative w-full max-w-3xl mx-auto flex flex-col items-center justify-center select-none px-2">
-      {/* Status Banner */}
-      <motion.div
-        key={statusText()}
-        initial={{ opacity: 0, y: -6 }}
-        animate={{ opacity: 1, y: 0 }}
-        className={`relative z-30 mb-2 px-4 py-1.5 rounded-full border text-xs sm:text-sm font-bold shadow-lg backdrop-blur-md ${
-          userWon
-            ? 'bg-emerald-950/85 border-emerald-400/60 text-emerald-200'
-            : botWon
-            ? 'bg-rose-950/85 border-rose-400/60 text-rose-200'
-            : botMood === 'thinking' || botMood === 'bot_scratching'
-            ? 'bg-amber-950/85 border-amber-400/60 text-amber-200'
-            : 'bg-stone-950/80 border-amber-300/40 text-amber-200'
-        }`}
-      >
-        {statusText()}
-      </motion.div>
+    <div className="relative w-full h-full overflow-hidden select-none bg-[#12161f]">
+      {/* FULL-SCREEN VILLAGE BACKGROUND (PC + Phone နှစ်မျိုးလုံး အပြည့်မြင်ရမည်) */}
+      {bgSrc && (
+        <motion.img
+          src={bgSrc}
+          alt="Village Dirt Ground"
+          data-repaired="1"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.25 }}
+          className="pointer-events-none absolute inset-0 w-full h-full object-cover object-center"
+        />
+      )}
 
-      {/* Main Village Top-Down Scene Container */}
-      <div
-        className="relative w-full max-w-[680px] aspect-[4/3] rounded-3xl overflow-hidden border-2 border-amber-700/60 shadow-[0_22px_50px_rgba(0,0,0,0.75)]"
-        style={{ backgroundColor: '#8f6e49' }}
-      >
-        {/* ကျေးလက်နောက်ခံပုံ (GitHub Pages + Raw GitHub Fallback) */}
-        {!bgFailedAll && (
-          <img
-            src={bgList[bgIndex]}
-            alt="Village Dirt Ground"
-            data-repaired="1"
-            onError={() => {
-              if (bgIndex + 1 < bgList.length) {
-                setBgIndex((i) => i + 1);
-              } else {
-                setBgFailedAll(true);
+      {/* ပုံ Load မပြီးမီ ခေတ္တပြမည့် ချောမွေ့သော Loader (ပုံဟောင်း မဖျပ်အောင်) */}
+      {!bgSrc && (
+        <div className="absolute inset-0 flex items-center justify-center bg-[#0b101b]">
+          <div className="w-8 h-8 rounded-full border-2 border-amber-400/30 border-t-amber-400 animate-spin" />
+        </div>
+      )}
+
+      {/* Subtle Vignette for Top/Bottom UI Readability */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/45 via-transparent to-black/50" />
+
+      {/* FLOATING STATUS PILL (Below Top Scoreboard) */}
+      <div className="absolute top-16 sm:top-20 inset-x-3 z-30 flex justify-center pointer-events-none">
+        <motion.div
+          key={statusText()}
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`px-4 py-1.5 rounded-full border text-xs sm:text-sm font-bold shadow-xl backdrop-blur-md text-center ${
+            userWon
+              ? 'bg-emerald-950/85 border-emerald-400/65 text-emerald-200'
+              : botWon
+              ? 'bg-rose-950/85 border-rose-400/65 text-rose-200'
+              : botMood === 'thinking' || botMood === 'bot_scratching'
+              ? 'bg-amber-950/85 border-amber-400/65 text-amber-200'
+              : 'bg-stone-950/80 border-amber-300/45 text-amber-100'
+          }`}
+        >
+          {statusText()}
+        </motion.div>
+      </div>
+
+      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone အားလုံးတွင် ကလေး ၂ ယောက် + 3x3 ဘုတ် အချိုးညီညီ မြင်ရမည်) */}
+      <div className="relative z-20 w-full h-full flex items-center justify-center px-1 sm:px-6 pt-12 pb-14">
+        <div className="w-full max-w-[980px] flex items-center justify-center gap-0.5 sm:gap-4 lg:gap-8">
+          {/* === 1. LEFT CHARACTER: USER BOY === */}
+          <div className="pointer-events-none relative w-[25%] sm:w-[24%] max-w-[230px] flex flex-col items-center justify-center shrink-0">
+            <motion.div
+              animate={
+                userWon
+                  ? { y: [0, -14, 0], rotate: [-4, 4, -4] }
+                  : activeScratch?.side === 'user'
+                  ? { x: [0, 12, 0] }
+                  : botWon
+                  ? { y: [0, 3, 0] }
+                  : { y: [0, -3, 0] }
               }
-            }}
-            className="pointer-events-none absolute inset-0 w-full h-full object-cover"
-          />
-        )}
-
-        {/* အလင်းအမှောင် အနည်းငယ်သာ ညှိပေးမည် */}
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-950/10 via-transparent to-emerald-950/10" />
-
-        {/* LEFT CHARACTER: USER (အင်္ကျီအပြာ ကောင်လေး) */}
-        <div className="pointer-events-none absolute left-[6%] sm:left-[9%] top-[33%] w-[22%] sm:w-[21%] z-20">
-          <UserBoyCharacter
-            isScratching={activeScratch?.side === 'user'}
-            isHappy={userWon}
-            isSad={botWon}
-          />
-        </div>
-
-        {/* RIGHT CHARACTER: BOT (မပုတု) */}
-        <div className="pointer-events-none absolute right-[6%] sm:right-[9%] top-[32%] w-[23%] sm:w-[22%] z-20">
-          <BotGirlMaPuTu mood={botMood} lang={lang} />
-        </div>
-
-        {/* CENTER DIRT TIC-TAC-TOE GRID (3x3) */}
-        <div className="absolute left-1/2 top-[51%] -translate-x-1/2 -translate-y-1/2 w-[38%] sm:w-[36%] aspect-square z-10">
-          <svg
-            viewBox="0 0 300 300"
-            className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_1px_rgba(255,235,200,0.5)]"
-          >
-            <path d="M100 10 Q97 150 102 290" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
-            <path d="M200 12 Q203 150 198 288" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
-            <path d="M10 100 Q150 97 290 102" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
-            <path d="M12 200 Q150 204 288 198" stroke="#5c3d22" strokeWidth="6" strokeLinecap="round" fill="none" opacity="0.9" />
-
-            {winLine && (
-              <motion.line
-                x1={getCellCenterPercent(winLine[0]).x * 3}
-                y1={getCellCenterPercent(winLine[0]).y * 3}
-                x2={getCellCenterPercent(winLine[2]).x * 3}
-                y2={getCellCenterPercent(winLine[2]).y * 3}
-                stroke={userWon ? '#fde047' : '#fb7185'}
-                strokeWidth="10"
-                strokeLinecap="round"
-                initial={{ pathLength: 0, opacity: 0.4 }}
-                animate={{ pathLength: 1, opacity: 0.95 }}
-                transition={{ duration: 0.45, ease: 'easeOut' }}
-              />
-            )}
-          </svg>
-
-          <div className="relative z-10 grid grid-cols-3 grid-rows-3 w-full h-full">
-            {board.map((cell, idx) => {
-              const canClick = !isLocked && cell === null;
-              const isWinningCell = winLine?.includes(idx) ?? false;
-              const isBeingScratched = activeScratch?.idx === idx;
-
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  disabled={!canClick}
-                  onClick={() => handleCellPress(idx)}
-                  aria-label={`Cell ${idx + 1}`}
-                  className={`relative flex items-center justify-center rounded-xl transition-colors ${
-                    canClick
-                      ? 'cursor-pointer hover:bg-amber-950/15 active:bg-amber-950/25'
-                      : 'cursor-default'
-                  }`}
-                >
-                  {cell === 'X' && <DirtScratchedX highlight={isWinningCell} />}
-                  {cell === 'O' && <DirtScratchedO highlight={isWinningCell} />}
-                  <AnimatePresence>
-                    {isBeingScratched && <DirtDustBurst key={`dust-${idx}`} />}
-                  </AnimatePresence>
-                </button>
-              );
-            })}
+              transition={{
+                repeat: userWon ? Infinity : 0,
+                duration: userWon ? 0.55 : 0.38,
+              }}
+              className="relative w-full aspect-square flex items-center justify-center"
+            >
+              {/* Natural Ground Shadow */}
+              <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
+              {sprites.boy && (
+                <img
+                  src={sprites.boy}
+                  alt="Player Boy"
+                  data-repaired="1"
+                  className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
+                />
+              )}
+            </motion.div>
           </div>
 
-          <AnimatePresence>
-            {activeScratch && (
-              <StickScratchHandOverlay
-                key={`${activeScratch.side}-${activeScratch.idx}`}
-                side={activeScratch.side}
-                targetIdx={activeScratch.idx}
-              />
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* RESULT OVERLAY BAR */}
-        <AnimatePresence>
-          {isFinished && (
-            <motion.div
-              initial={{ opacity: 0, y: 24 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 24 }}
-              className="absolute inset-x-3 bottom-3 z-30 rounded-2xl bg-stone-950/88 backdrop-blur-md border border-amber-400/55 px-3.5 py-2.5 flex items-center justify-between gap-2 shadow-2xl"
+          {/* === 2. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
+          <div className="relative w-[48%] sm:w-[44%] max-w-[360px] aspect-square shrink-0">
+            <svg
+              viewBox="0 0 300 300"
+              className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_2px_rgba(255,235,200,0.45)]"
             >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div
-                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                    userWon
-                      ? 'bg-emerald-500/20 text-emerald-300'
-                      : botWon
-                      ? 'bg-rose-500/20 text-rose-300'
-                      : 'bg-amber-500/20 text-amber-300'
-                  }`}
+              <path d="M100 10 Q97 150 102 290" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+              <path d="M200 12 Q203 150 198 288" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+              <path d="M10 100 Q150 97 290 102" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+              <path d="M12 200 Q150 204 288 198" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+
+              {winLine && (
+                <motion.line
+                  x1={getCellCenterPercent(winLine[0]).x * 3}
+                  y1={getCellCenterPercent(winLine[0]).y * 3}
+                  x2={getCellCenterPercent(winLine[2]).x * 3}
+                  y2={getCellCenterPercent(winLine[2]).y * 3}
+                  stroke={userWon ? '#fde047' : '#fb7185'}
+                  strokeWidth="10"
+                  strokeLinecap="round"
+                  initial={{ pathLength: 0, opacity: 0.4 }}
+                  animate={{ pathLength: 1, opacity: 0.95 }}
+                  transition={{ duration: 0.45, ease: 'easeOut' }}
+                />
+              )}
+            </svg>
+
+            <div className="relative z-10 grid grid-cols-3 grid-rows-3 w-full h-full">
+              {board.map((cell, idx) => {
+                const canClick = !isLocked && cell === null;
+                const isWinningCell = winLine?.includes(idx) ?? false;
+                const isBeingScratched = activeScratch?.idx === idx;
+
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    disabled={!canClick}
+                    onClick={() => handleCellPress(idx)}
+                    aria-label={`Cell ${idx + 1}`}
+                    className={`relative flex items-center justify-center rounded-xl transition-colors ${
+                      canClick
+                        ? 'cursor-pointer hover:bg-amber-950/15 active:bg-amber-950/25'
+                        : 'cursor-default'
+                    }`}
+                  >
+                    {cell === 'X' && <DirtScratchedX highlight={isWinningCell} />}
+                    {cell === 'O' && <DirtScratchedO highlight={isWinningCell} />}
+                    <AnimatePresence>
+                      {isBeingScratched && <DirtDustBurst key={`dust-${idx}`} />}
+                    </AnimatePresence>
+                  </button>
+                );
+              })}
+            </div>
+
+            <AnimatePresence>
+              {activeScratch && (
+                <StickScratchHandOverlay
+                  key={`${activeScratch.side}-${activeScratch.idx}`}
+                  side={activeScratch.side}
+                  targetIdx={activeScratch.idx}
+                />
+              )}
+            </AnimatePresence>
+          </div>
+
+          {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
+          <div className="pointer-events-none relative w-[25%] sm:w-[24%] max-w-[230px] flex flex-col items-center justify-center shrink-0">
+            {/* Thought / Win / Cry Speech Bubble */}
+            <AnimatePresence>
+              {botMood === 'thinking' && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.7, y: 6 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.7 }}
+                  className="absolute -top-8 sm:-top-10 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
                 >
-                  {userWon ? <Trophy className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+                  {lang === 'my' ? 'အင်း... 🤔' : 'Hmm... 🤔'}
+                </motion.div>
+              )}
+
+              {botMood === 'dancing' && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.7, y: 6 }}
+                  animate={{ opacity: 1, scale: 1, y: [0, -5, 0] }}
+                  transition={{ repeat: Infinity, duration: 0.6 }}
+                  className="absolute -top-9 sm:-top-11 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
+                >
+                  {lang === 'my' ? 'ဟေး! နိုင်ပြီ 💃🎉' : 'Yay! I Win! 💃'}
+                </motion.div>
+              )}
+
+              {botMood === 'rolling_cry' && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.7 }}
+                  animate={{ opacity: 1, scale: 1, rotate: [-4, 4, -4] }}
+                  transition={{ repeat: Infinity, duration: 0.45 }}
+                  className="absolute -top-9 sm:-top-11 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
+                >
+                  {lang === 'my' ? 'အီးဟီး... ရှုံးပြီ 😭' : 'Waaah!! 😭'}
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Dancing Sparkles */}
+            {botMood === 'dancing' && (
+              <div className="pointer-events-none absolute -inset-3 z-30">
+                {[
+                  { left: '8%', top: '4%', color: '#facc15' },
+                  { left: '84%', top: '8%', color: '#fb7185' },
+                  { left: '12%', top: '70%', color: '#38bdf8' },
+                  { left: '86%', top: '65%', color: '#4ade80' },
+                ].map((sp, i) => (
+                  <motion.span
+                    key={i}
+                    style={{ left: sp.left, top: sp.top, backgroundColor: sp.color }}
+                    animate={{ y: [0, -14, 0], scale: [0.7, 1.4, 0.7] }}
+                    transition={{ repeat: Infinity, duration: 0.65 + i * 0.15 }}
+                    className="absolute w-2.5 h-2.5 rounded-full shadow-md"
+                  />
+                ))}
+              </div>
+            )}
+
+            {/* Rolling Cry Dust Puffs */}
+            {botMood === 'rolling_cry' && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-5 z-10">
+                {[0, 1, 2].map((i) => (
+                  <motion.span
+                    key={i}
+                    animate={{ y: [0, -10, -16], opacity: [0.85, 0.4, 0], scale: [0.6, 1.3, 1.6] }}
+                    transition={{ repeat: Infinity, duration: 0.7, delay: i * 0.22 }}
+                    className="w-3 h-3 rounded-full bg-amber-100/75"
+                  />
+                ))}
+              </div>
+            )}
+
+            <motion.div
+              animate={
+                botMood === 'dancing'
+                  ? {
+                      y: [0, -28, 0, -22, 0],
+                      rotate: [-10, 10, -12, 12, -10],
+                      scale: [1, 1.08, 1, 1.06, 1],
+                    }
+                  : botMood === 'rolling_cry'
+                  ? {
+                      x: [-14, 14, -12, 12, -14],
+                      y: [8, 14, 6, 14, 8],
+                      rotate: [-26, 26, -22, 22, -26],
+                    }
+                  : botMood === 'thinking'
+                  ? { rotate: [-5, 5, -5] }
+                  : botMood === 'bot_scratching'
+                  ? { x: [0, -12, 0] }
+                  : { y: [0, -3, 0] }
+              }
+              transition={{
+                repeat:
+                  botMood === 'dancing' || botMood === 'rolling_cry' || botMood === 'thinking'
+                    ? Infinity
+                    : 0,
+                duration:
+                  botMood === 'dancing'
+                    ? 0.72
+                    : botMood === 'rolling_cry'
+                    ? 0.9
+                    : botMood === 'thinking'
+                    ? 1.4
+                    : 0.36,
+                ease: 'easeInOut',
+              }}
+              className="relative w-full aspect-square flex items-center justify-center"
+            >
+              {/* Natural Ground Shadow */}
+              <div className="absolute bottom-[10%] w-[72%] h-[22%] rounded-full bg-black/35 blur-md" />
+              {girlActiveSrc && (
+                <img
+                  src={girlActiveSrc}
+                  alt="Ma Pu Tu"
+                  data-repaired="1"
+                  className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
+                />
+              )}
+            </motion.div>
+          </div>
+        </div>
+      </div>
+
+      {/* RESULT OVERLAY BAR (Above Bottom Chat/Forfeit Bar) */}
+      <AnimatePresence>
+        {isFinished && (
+          <motion.div
+            initial={{ opacity: 0, y: 24 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 24 }}
+            className="absolute inset-x-3 bottom-16 z-30 max-w-xl mx-auto rounded-2xl bg-stone-950/90 backdrop-blur-md border border-amber-400/55 px-3.5 py-2.5 flex items-center justify-between gap-2 shadow-2xl"
+          >
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div
+                className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                  userWon
+                    ? 'bg-emerald-500/20 text-emerald-300'
+                    : botWon
+                    ? 'bg-rose-500/20 text-rose-300'
+                    : 'bg-amber-500/20 text-amber-300'
+                }`}
+              >
+                {userWon ? <Trophy className="w-4 h-4" /> : <Sparkles className="w-4 h-4" />}
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs sm:text-sm font-bold text-white truncate">
+                  {userWon
+                    ? lang === 'my'
+                      ? 'သင် အနိုင်ရရှိပါသည်! (+75 XP)'
+                      : 'Victory! (+75 XP)'
+                    : botWon
+                    ? lang === 'my'
+                      ? 'မပုတု အနိုင်ရသွားပါပြီ (-20 XP)'
+                      : 'Ma Pu Tu Wins! (-20 XP)'
+                    : lang === 'my'
+                    ? 'သရေပွဲ! (+25 XP)'
+                    : 'Draw! (+25 XP)'}
                 </div>
-                <div className="min-w-0">
-                  <div className="text-xs sm:text-sm font-bold text-white truncate">
-                    {userWon
-                      ? lang === 'my'
-                        ? 'သင် အနိုင်ရရှိပါသည်! (+75 XP)'
-                        : 'Victory! (+75 XP)'
-                      : botWon
-                      ? lang === 'my'
-                        ? 'မပုတု အနိုင်ရသွားပါပြီ (-20 XP)'
-                        : 'Ma Pu Tu Wins! (-20 XP)'
-                      : lang === 'my'
-                      ? 'သရေပွဲ! (+25 XP)'
-                      : 'Draw! (+25 XP)'}
-                  </div>
-                  <div className="text-[11px] text-amber-200/80 truncate">
-                    {userWon
-                      ? lang === 'my'
-                        ? 'မပုတု မြေကြီးပေါ်လူးလှိမ့်ပြီး ငိုနေပါပြီ 😭'
-                        : 'Ma Pu Tu is rolling on the dirt crying 😭'
-                      : botWon
-                      ? lang === 'my'
-                        ? 'မပုတု ဝမ်းသာအားရ ထခုန်ကနေပါပြီ 💃'
-                        : 'Ma Pu Tu is jumping & dancing 💃'
-                      : lang === 'my'
-                      ? 'နောက်တစ်ပွဲ ထပ်ကစားကြမယ်!'
-                      : 'Play again!'}
-                  </div>
+                <div className="text-[11px] text-amber-200/85 truncate">
+                  {userWon
+                    ? lang === 'my'
+                      ? 'မပုတု မြေကြီးပေါ်လူးလှိမ့်ပြီး ငိုနေပါပြီ 😭'
+                      : 'Ma Pu Tu is rolling on the dirt crying 😭'
+                    : botWon
+                    ? lang === 'my'
+                      ? 'မပုတု ဝမ်းသာအားရ ထခုန်ကနေပါပြီ 💃'
+                      : 'Ma Pu Tu is jumping & dancing 💃'
+                    : lang === 'my'
+                    ? 'နောက်တစ်ပွဲ ထပ်ကစားကြမယ်!'
+                    : 'Play again!'}
                 </div>
               </div>
+            </div>
 
-              <button
-                type="button"
-                onClick={onLeaveFinished}
-                className="px-3.5 h-9 rounded-xl bg-gradient-to-r from-amber-300 to-yellow-500 text-stone-950 font-extrabold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                <span>{lang === 'my' ? 'ပြန်ထွက်မည်' : 'Lobby'}</span>
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            <button
+              type="button"
+              onClick={onLeaveFinished}
+              className="px-3.5 h-9 rounded-xl bg-gradient-to-r from-amber-300 to-yellow-500 text-stone-950 font-extrabold text-xs flex items-center gap-1.5 shrink-0 cursor-pointer shadow-md"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{lang === 'my' ? 'ပြန်ထွက်မည်' : 'Lobby'}</span>
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
@@ -503,241 +800,19 @@ const StickScratchHandOverlay: React.FC<{
       >
         <svg
           viewBox="0 0 130 70"
-          className={`w-28 sm:w-32 h-16 drop-shadow-[0_6px_8px_rgba(0,0,0,0.45)] ${
+          className={`w-28 sm:w-36 h-16 drop-shadow-[0_6px_8px_rgba(0,0,0,0.5)] ${
             isUser ? '-translate-x-10' : 'translate-x-10 scale-x-[-1]'
           }`}
         >
-          <path d="M4 42 Q34 36 58 34" stroke="#f4be95" strokeWidth="15" strokeLinecap="round" fill="none" />
-          <path d="M2 42 L20 39" stroke={isUser ? '#2563eb' : '#e11d48'} strokeWidth="17" strokeLinecap="round" />
-          <path d="M52 28 L114 36" stroke="#6b4226" strokeWidth="6.5" strokeLinecap="round" />
+          <path d="M4 42 Q34 36 58 34" stroke="#ebb288" strokeWidth="14" strokeLinecap="round" fill="none" />
+          <path d="M2 42 L20 39" stroke={isUser ? '#2563eb' : '#e11d48'} strokeWidth="16" strokeLinecap="round" />
+          <path d="M52 28 L114 36" stroke="#5c381f" strokeWidth="6.5" strokeLinecap="round" />
           <path d="M56 29 L112 36" stroke="#8b5a2b" strokeWidth="2.5" strokeLinecap="round" />
           <circle cx="115" cy="36" r="3" fill="#fef3c7" opacity="0.85" />
-          <circle cx="62" cy="33" r="9.5" fill="#f4be95" stroke="#d99a70" strokeWidth="1.5" />
-          <path d="M58 26 Q66 24 70 30" stroke="#d99a70" strokeWidth="2" fill="none" strokeLinecap="round" />
+          <circle cx="62" cy="33" r="9" fill="#ebb288" stroke="#c88d62" strokeWidth="1.5" />
+          <path d="M58 26 Q66 24 70 30" stroke="#c88d62" strokeWidth="2" fill="none" strokeLinecap="round" />
         </svg>
       </motion.div>
     </motion.div>
-  );
-};
-
-const UserBoyCharacter: React.FC<{
-  isScratching: boolean;
-  isHappy: boolean;
-  isSad: boolean;
-}> = ({ isScratching, isHappy, isSad }) => (
-  <motion.div
-    animate={
-      isHappy
-        ? { y: [0, -10, 0], rotate: [-4, 4, -4] }
-        : isScratching
-        ? { x: [0, 8, 0] }
-        : isSad
-        ? { y: [0, 2, 0] }
-        : { y: [0, -2, 0] }
-    }
-    transition={{ repeat: isHappy ? Infinity : 0, duration: isHappy ? 0.55 : 0.38 }}
-    className="relative flex flex-col items-center"
-  >
-    <svg viewBox="0 0 120 120" className="w-full h-auto drop-shadow-[0_10px_10px_rgba(0,0,0,0.4)]">
-      <ellipse cx="56" cy="96" rx="34" ry="15" fill="rgba(45,28,12,0.35)" />
-      <ellipse cx="66" cy="84" rx="22" ry="16" fill="#1e3a8a" />
-      <circle cx="80" cy="92" r="7" fill="#f4be95" />
-      <circle cx="84" cy="76" r="7" fill="#f4be95" />
-      <ellipse cx="48" cy="70" rx="24" ry="26" fill="#3b82f6" stroke="#1d4ed8" strokeWidth="2.5" />
-      {!isScratching && (
-        <g>
-          <path d="M62 72 Q82 74 92 66" stroke="#f4be95" strokeWidth="10" strokeLinecap="round" fill="none" />
-          <path d="M88 68 L108 58" stroke="#6b4226" strokeWidth="4.5" strokeLinecap="round" />
-        </g>
-      )}
-      <circle cx="56" cy="46" r="24" fill="#f4be95" stroke="#d99a70" strokeWidth="1.5" />
-      <path d="M32 48 C30 22, 74 16, 79 40 C70 30, 56 32, 48 44 C42 46, 36 52, 32 48 Z" fill="#271c15" />
-      <circle cx="71" cy="49" r="3" fill="#1e1b18" />
-      <circle cx="72" cy="48" r="1" fill="#ffffff" />
-      {isSad ? (
-        <path d="M67 59 Q72 55 76 58" stroke="#9a3412" strokeWidth="2.2" fill="none" strokeLinecap="round" />
-      ) : (
-        <path d="M67 56 Q72 61 77 56" stroke="#9a3412" strokeWidth="2.2" fill="none" strokeLinecap="round" />
-      )}
-    </svg>
-  </motion.div>
-);
-
-const BotGirlMaPuTu: React.FC<{ mood: TTTBotPhase; lang: Language }> = ({ mood, lang }) => {
-  const isDancing = mood === 'dancing';
-  const isRollingCry = mood === 'rolling_cry';
-  const isThinking = mood === 'thinking';
-  const isScratching = mood === 'bot_scratching';
-
-  return (
-    <div className="relative flex flex-col items-center">
-      <AnimatePresence>
-        {isThinking && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.7, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.7 }}
-            className="absolute -top-9 right-0 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
-          >
-            {lang === 'my' ? 'အင်း... 🤔' : 'Hmm... 🤔'}
-          </motion.div>
-        )}
-
-        {isDancing && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.7, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: [0, -4, 0] }}
-            transition={{ repeat: Infinity, duration: 0.6 }}
-            className="absolute -top-10 right-0 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
-          >
-            {lang === 'my' ? 'ဟေး! နိုင်ပြီ 💃🎉' : 'Yay! I Win! 💃'}
-          </motion.div>
-        )}
-
-        {isRollingCry && (
-          <motion.div
-            initial={{ opacity: 0, scale: 0.7 }}
-            animate={{ opacity: 1, scale: 1, rotate: [-4, 4, -4] }}
-            transition={{ repeat: Infinity, duration: 0.45 }}
-            className="absolute -top-10 right-0 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
-          >
-            {lang === 'my' ? 'အီးဟီး... ရှုံးပြီ 😭' : 'Waaah!! 😭'}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {isDancing && (
-        <div className="pointer-events-none absolute -inset-4 z-30">
-          {[
-            { left: '8%', top: '0%', color: '#facc15' },
-            { left: '82%', top: '6%', color: '#fb7185' },
-            { left: '14%', top: '62%', color: '#38bdf8' },
-            { left: '86%', top: '58%', color: '#4ade80' },
-          ].map((sp, i) => (
-            <motion.span
-              key={i}
-              style={{ left: sp.left, top: sp.top, backgroundColor: sp.color }}
-              animate={{ y: [0, -12, 0], scale: [0.7, 1.4, 0.7] }}
-              transition={{ repeat: Infinity, duration: 0.7 + i * 0.15 }}
-              className="absolute w-2.5 h-2.5 rounded-full shadow-md"
-            />
-          ))}
-        </div>
-      )}
-
-      {isRollingCry && (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-6">
-          {[0, 1, 2].map((i) => (
-            <motion.span
-              key={i}
-              animate={{ y: [0, -10, -16], opacity: [0.85, 0.4, 0], scale: [0.6, 1.3, 1.6] }}
-              transition={{ repeat: Infinity, duration: 0.7, delay: i * 0.22 }}
-              className="w-3 h-3 rounded-full bg-amber-100/70"
-            />
-          ))}
-        </div>
-      )}
-
-      <motion.div
-        animate={
-          isDancing
-            ? {
-                y: [0, -26, 0, -22, 0],
-                rotate: [-10, 10, -12, 12, -10],
-                scale: [1, 1.08, 1, 1.06, 1],
-              }
-            : isRollingCry
-            ? {
-                x: [-16, 16, -14, 14, -16],
-                y: [10, 16, 8, 16, 10],
-                rotate: [-32, 32, -28, 28, -32],
-              }
-            : isThinking
-            ? { rotate: [-5, 5, -5] }
-            : isScratching
-            ? { x: [0, -8, 0] }
-            : { y: [0, -2, 0] }
-        }
-        transition={{
-          repeat: isDancing || isRollingCry || isThinking ? Infinity : 0,
-          duration: isDancing ? 0.75 : isRollingCry ? 0.95 : isThinking ? 1.4 : 0.35,
-          ease: 'easeInOut',
-        }}
-        className="w-full"
-      >
-        <svg viewBox="0 0 124 124" className="w-full h-auto drop-shadow-[0_10px_10px_rgba(0,0,0,0.42)]">
-          <ellipse cx="64" cy="98" rx="34" ry="15" fill="rgba(45,28,12,0.35)" />
-          <ellipse cx="58" cy="82" rx="28" ry="20" fill="#e11d48" stroke="#be123c" strokeWidth="2" />
-          <path d="M36 78 Q58 92 80 78" stroke="#facc15" strokeWidth="4" fill="none" />
-          <path d="M40 86 Q58 98 76 86" stroke="#38bdf8" strokeWidth="3" fill="none" />
-          <ellipse cx="70" cy="68" rx="22" ry="20" fill="#f59e0b" stroke="#d97706" strokeWidth="2" />
-
-          {isDancing ? (
-            <>
-              <path d="M52 62 Q30 38 24 22" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-              <path d="M84 62 Q104 38 110 22" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-            </>
-          ) : isRollingCry ? (
-            <>
-              <path d="M48 64 Q26 56 20 72" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-              <path d="M84 64 Q102 52 108 68" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-              <circle cx="34" cy="94" r="7" fill="#f7c8a2" />
-              <circle cx="82" cy="96" r="7" fill="#f7c8a2" />
-            </>
-          ) : isThinking ? (
-            <path d="M56 70 Q44 62 48 54" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-          ) : !isScratching ? (
-            <g>
-              <path d="M56 72 Q38 74 30 66" stroke="#f7c8a2" strokeWidth="9.5" strokeLinecap="round" fill="none" />
-              <path d="M34 68 L14 58" stroke="#6b4226" strokeWidth="4.5" strokeLinecap="round" />
-            </g>
-          ) : null}
-
-          <circle cx="66" cy="46" r="24" fill="#f7c8a2" stroke="#d99a70" strokeWidth="1.5" />
-          <circle cx="88" cy="42" r="10" fill="#1e1b18" />
-          <circle cx="88" cy="42" r="3.5" fill="#fb7185" />
-          <path d="M44 40 C48 16, 92 20, 90 48 C82 52, 74 44, 68 38 C60 32, 50 32, 44 40 Z" fill="#1e1b18" />
-          <ellipse cx="52" cy="52" rx="5.5" ry="3.5" fill="#fef3c7" opacity="0.9" />
-          <circle cx="48" cy="43" r="1.8" fill="#e11d48" />
-
-          {isDancing ? (
-            <path d="M46 47 Q51 41 56 47" stroke="#1e1b18" strokeWidth="2.8" fill="none" strokeLinecap="round" />
-          ) : isRollingCry ? (
-            <>
-              <path d="M46 44 L54 48 L46 52" stroke="#1e1b18" strokeWidth="2.6" fill="none" strokeLinecap="round" />
-              <motion.circle
-                cx="45"
-                cy="54"
-                r="3.2"
-                fill="#38bdf8"
-                animate={{ y: [0, 18], opacity: [1, 0] }}
-                transition={{ repeat: Infinity, duration: 0.55 }}
-              />
-              <motion.circle
-                cx="53"
-                cy="55"
-                r="2.8"
-                fill="#7dd3fc"
-                animate={{ y: [0, 20], opacity: [1, 0] }}
-                transition={{ repeat: Infinity, duration: 0.55, delay: 0.25 }}
-              />
-            </>
-          ) : (
-            <>
-              <circle cx="51" cy="48" r="3" fill="#1e1b18" />
-              <circle cx="50" cy="47" r="1" fill="#ffffff" />
-            </>
-          )}
-
-          {isDancing ? (
-            <path d="M46 56 Q52 64 58 56 Z" fill="#be123c" />
-          ) : isRollingCry ? (
-            <ellipse cx="52" cy="59" rx="5" ry="4" fill="#9f1239" />
-          ) : (
-            <path d="M47 56 Q52 60 57 56" stroke="#9f1239" strokeWidth="2.2" fill="none" strokeLinecap="round" />
-          )}
-        </svg>
-      </motion.div>
-    </div>
   );
 };
