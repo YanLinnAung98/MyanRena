@@ -31,7 +31,7 @@ jobs:
         run: |
           PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
           if [ -z "$PKG_PATH" ]; then
-            echo "ERROR: package.json ဖိုင်ကို Repository ထဲတွင် ရှာမတွေ့ပါ။"
+            echo "ERROR: package.json not found."
             exit 1
           fi
           APP_DIR=$(dirname "$PKG_PATH")
@@ -45,6 +45,23 @@ jobs:
       - name: Build production bundle
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npx vite build
+
+      - name: Copy all public assets into dist/assets
+        run: |
+          TARGET_DIR="${{ steps.find_dir.outputs.app_dir }}/dist/assets"
+          mkdir -p "$TARGET_DIR"
+          for src in "public/assets" "assets" "${{ steps.find_dir.outputs.app_dir }}/public/assets"; do
+            if [ -d "$src" ]; then
+              cp -rv "$src"/. "$TARGET_DIR"/ || true
+            fi
+          done
+          for f in "$TARGET_DIR"/*.jpeg; do
+            [ -e "$f" ] && cp -v "$f" "${f%.jpeg}.jpg" || true
+          done
+          for f in "$TARGET_DIR"/*.JPG; do
+            [ -e "$f" ] && cp -v "$f" "${f%.JPG}.jpg" || true
+          done
+          ls -la "$TARGET_DIR"
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
