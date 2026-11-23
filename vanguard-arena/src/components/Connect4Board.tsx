@@ -111,18 +111,15 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       }, remainingMinMs);
     };
 
-    // 1. Loading Screen နောက်ခံ Video/Image ကို အမြန်ဆုံး ရှာပြမည်
     resolveLoadingScreenMedia().then((m) => {
       if (mounted) setLoadingMedia(m);
     });
 
-    // 2. Safety Timeout (အင်တာနက် အရမ်းနှေးနေလျှင်လည်း ဂိမ်းထဲ ဝင်ခွင့်ပေးမည်)
     const safetyTimer = window.setTimeout(
       finishLoading,
       CONNECT4_ASSET_CONFIG.loadingScreen.maxWaitMs
     );
 
-    // 3. ဂိမ်းထဲရှိ Background + မောင်ဖိုးသား 5 moods + Disc/Board Assets အားလုံး Preload လုပ်မည်
     preloadAllConnect4Assets((pct) => {
       if (mounted) setLoadProgress((prev) => Math.max(prev, pct));
     }).then((bundle) => {
@@ -142,6 +139,8 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
 
   const hasCustomRoomBackdrop =
     assets.background.kind === 'video' || assets.background.kind === 'image';
+  const hasCustomBoardFrame =
+    assets.boardOverlay.kind === 'image' && Boolean(assets.boardOverlay.url);
 
   const grid: Array<Array<string | null>> =
     match.c4Board || Array.from({ length: 6 }, () => Array(7).fill(null));
@@ -199,8 +198,8 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-amber-300/25 shadow-[0_24px_60px_rgba(0,0,0,0.7)] flex flex-col items-center justify-end pt-3 pb-4 px-3 select-none bg-[#0a1022]">
-      {/* 0. Game Entry Loading Screen (အနည်းဆုံး ၂ စက္ကန့် + Assets Ready ဖြစ်မှ ဖျောက်မည်) */}
+    <div className="relative w-full h-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-amber-300/25 shadow-[0_24px_60px_rgba(0,0,0,0.7)] flex flex-col items-center justify-end pt-2 pb-2 sm:pb-3 px-2 select-none bg-[#0a1022]">
+      {/* 0. Game Entry Loading Screen */}
       <AnimatePresence>
         {isLoadingScene && (
           <Connect4LoadingScreen
@@ -211,7 +210,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* 1. Seamless Video (Mix Transition Loop) / Image Backdrop */}
+      {/* 1. Seamless Video / Image Room Backdrop */}
       <SeamlessMediaBackdrop
         media={assets.background}
         onFallback={() =>
@@ -219,13 +218,13 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         }
       />
 
-      {/* 2. Top Speech-Bubble Status Pill */}
-      <div className="relative z-30 flex flex-col items-center mb-1">
+      {/* 2. Compact Speech-Bubble Status Pill (No Vertical Bloat) */}
+      <div className="relative z-30 flex flex-col items-center shrink-0 mb-0.5">
         <motion.div
           key={statusText()}
-          initial={{ opacity: 0, y: -6, scale: 0.96 }}
+          initial={{ opacity: 0, y: -5, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          className={`relative px-5 py-2 rounded-2xl border text-xs sm:text-sm font-bold tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md ${
+          className={`relative px-4 py-1.5 rounded-2xl border text-[11px] sm:text-sm font-bold tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md ${
             userWon
               ? 'bg-emerald-950/85 border-emerald-400/60 text-emerald-200'
               : botWon
@@ -236,15 +235,14 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           }`}
         >
           {statusText()}
-          <span className="absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rotate-45 bg-[#161c33] border-r border-b border-amber-300/55" />
+          <span className="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 rotate-45 bg-[#161c33] border-r border-b border-amber-300/55" />
         </motion.div>
-
-        <div className="mt-2 w-6 h-6 rounded-full border-2 border-amber-300/70 shadow-[0_0_14px_rgba(251,191,36,0.7)] bg-amber-300/10" />
       </div>
 
-      {/* 3. Scene Stage: မောင်ဖိုးသား (Replaceable MP4/Image/SVG) + 4-Row Board */}
-      <div className="relative z-20 w-full max-w-[440px] flex flex-col items-center">
-        <div className="relative z-10 -mb-9 w-full flex justify-center pointer-events-none">
+      {/* 3. Responsive No-Scroll Scene Stage: မောင်ဖိုးသား + 4-Row Board */}
+      <div className="relative z-20 w-full flex-1 min-h-0 flex flex-col items-center justify-end">
+        {/* Kid Character Peeking Right Behind the Board */}
+        <div className="relative z-10 -mb-7 sm:-mb-9 w-full flex justify-center pointer-events-none shrink-0 scale-[0.82] sm:scale-95 origin-bottom">
           <PhoTharMediaCharacter
             mood={kidMood}
             targetCol={botTargetCol}
@@ -252,150 +250,251 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Hover Preview Row */}
-        <div className="relative z-20 w-[308px] sm:w-[368px] h-7 grid grid-cols-7 px-3 mb-0.5">
-          {Array.from({ length: 7 }).map((_, c) => {
-            const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
-            return (
-              <div key={c} className="flex items-center justify-center">
-                <AnimatePresence>
-                  {showUserDisc && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -8, scale: 0.75 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, scale: 0.7 }}
-                      className="w-6 h-6 sm:w-8 sm:h-8 rounded-full overflow-hidden flex items-center justify-center"
-                    >
-                      {assets.discUser.kind === 'image' && assets.discUser.url ? (
-                        <img
-                          src={assets.discUser.url}
-                          alt="Yellow Disc"
-                          className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(251,191,36,0.8)]"
-                        />
-                      ) : (
-                        <div className="w-full h-full rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_16px_rgba(251,191,36,0.9)]" />
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-            );
-          })}
-        </div>
-
-        {/* 4-Row Board + Side LED Stand Legs */}
-        <div className="relative z-20 flex items-end justify-center">
-          {/* Left LED Stand Leg */}
-          <div className="relative w-3 sm:w-3.5 h-[228px] sm:h-[268px] -mr-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
-            <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
-            <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
-          </div>
-
-          {/* Main Board Frame */}
-          <div className="relative p-2 sm:p-3 rounded-2xl bg-gradient-to-b from-[#1e2946] via-[#151e36] to-[#0f172a] border-[3px] border-amber-300/75 shadow-[0_18px_36px_rgba(0,0,0,0.8),inset_0_1px_8px_rgba(254,240,138,0.25)] mb-4">
-            <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
-              {Array.from({ length: 7 }).map((_, colIdx) => {
-                const colFull = grid[0][colIdx] !== null;
-                const canClick = isUserTurn && !colFull;
+        {/* Custom PNG 3D Board Frame Mode (No Double Board, Large & Perfectly Aligned) */}
+        {hasCustomBoardFrame ? (
+          <div
+            className="relative z-20 flex flex-col items-center shrink-0"
+            style={{
+              width: 'min(92vw, 480px, calc(52dvh * 1.24))',
+            }}
+          >
+            {/* Hover Preview Row Aligned to the 7 Columns */}
+            <div className="w-full px-[12%] h-6 sm:h-7 grid grid-cols-7 mb-0.5">
+              {Array.from({ length: 7 }).map((_, c) => {
+                const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
-                  <button
-                    key={colIdx}
-                    type="button"
-                    disabled={!canClick}
-                    onMouseEnter={() => setHoverCol(colIdx)}
-                    onMouseLeave={() => setHoverCol(null)}
-                    onClick={() => canClick && onDropColumn(colIdx)}
-                    className={`flex flex-col gap-1.5 sm:gap-2 rounded-xl p-0.5 transition-colors ${
-                      canClick
-                        ? 'cursor-pointer hover:bg-amber-300/12'
-                        : 'cursor-default'
-                    } ${botTargetCol === colIdx ? 'bg-rose-400/20' : ''}`}
-                    aria-label={`Column ${colIdx + 1}`}
-                  >
-                    {Array.from({ length: 6 }).map((__, rowIdx) => {
-                      const cell = grid[rowIdx][colIdx];
-                      const winning = isWinningCell(rowIdx, colIdx);
-                      const customDiscUrl =
-                        cell === 'P1'
-                          ? assets.discUser.url
-                          : cell === 'P2'
-                          ? assets.discBot.url
-                          : null;
-
-                      return (
-                        <div
-                          key={`${rowIdx}-${colIdx}`}
-                          className="relative w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#090e1c]/90 shadow-[inset_0_3px_7px_rgba(0,0,0,0.92)] border-[1.5px] border-amber-300/45 flex items-center justify-center overflow-visible"
+                  <div key={c} className="flex items-center justify-center">
+                    <AnimatePresence>
+                      {showUserDisc && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6, scale: 0.75 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.7 }}
+                          className="w-5 h-5 sm:w-7 sm:h-7 rounded-full overflow-hidden flex items-center justify-center"
                         >
-                          {cell && (
-                            <motion.div
-                              key={`${rowIdx}-${colIdx}-${cell}`}
-                              initial={{ y: -(rowIdx + 2) * 44, opacity: 0.9 }}
-                              animate={{ y: 0, opacity: 1 }}
-                              transition={{
-                                type: 'spring',
-                                stiffness: 330,
-                                damping: 21,
-                                mass: 0.85,
-                              }}
-                              className={`w-[88%] h-[88%] rounded-full flex items-center justify-center ${
-                                customDiscUrl
-                                  ? ''
-                                  : cell === 'P1'
-                                  ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/85 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
-                                  : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/85 shadow-[0_0_12px_rgba(244,63,94,0.85)]'
-                              } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
-                            >
-                              {customDiscUrl ? (
-                                <img
-                                  src={customDiscUrl}
-                                  alt={cell === 'P1' ? 'Yellow Disc' : 'Red Disc'}
-                                  className="w-full h-full object-contain"
-                                />
-                              ) : (
-                                <span
-                                  className={`w-[62%] h-[62%] rounded-full border ${
-                                    cell === 'P1'
-                                      ? 'border-yellow-100/60 bg-amber-300/30'
-                                      : 'border-rose-100/60 bg-rose-400/30'
-                                  }`}
-                                />
-                              )}
-                            </motion.div>
+                          {assets.discUser.kind === 'image' && assets.discUser.url ? (
+                            <img
+                              src={assets.discUser.url}
+                              alt="Yellow Disc"
+                              className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(251,191,36,0.85)]"
+                            />
+                          ) : (
+                            <div className="w-full h-full rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_14px_rgba(251,191,36,0.9)]" />
                           )}
-                        </div>
-                      );
-                    })}
-                  </button>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 );
               })}
             </div>
 
-            {/* Optional Custom Transparent 3D Board Frame Overlay */}
-            {assets.boardOverlay.kind === 'image' && assets.boardOverlay.url && (
-              <img
-                src={assets.boardOverlay.url}
-                alt="Board Frame Overlay"
-                className="pointer-events-none absolute inset-0 w-full h-full object-fill rounded-2xl z-30"
+            {/* Locked-Aspect Board Container matching c4-board-frame.png */}
+            <div className="relative w-full aspect-[1.24/1]">
+              {/* Dark Recessed Backing Behind the 7x6 Holes */}
+              <div
+                className="pointer-events-none absolute z-0 rounded-xl bg-[#070c1a]/88 shadow-inner"
+                style={{
+                  top: '5%',
+                  bottom: '16.5%',
+                  left: '11.5%',
+                  right: '11.5%',
+                }}
               />
-            )}
+
+              {/* Playable 7x6 Grid (Drops Behind the PNG Frame Holes) */}
+              <div
+                className="absolute z-10 grid grid-cols-7 gap-x-[1.6%] gap-y-[1.8%]"
+                style={{
+                  top: '5.5%',
+                  bottom: '17%',
+                  left: '12%',
+                  right: '12%',
+                }}
+              >
+                {Array.from({ length: 7 }).map((_, colIdx) => {
+                  const colFull = grid[0][colIdx] !== null;
+                  const canClick = isUserTurn && !colFull;
+                  return (
+                    <button
+                      key={colIdx}
+                      type="button"
+                      disabled={!canClick}
+                      onMouseEnter={() => setHoverCol(colIdx)}
+                      onMouseLeave={() => setHoverCol(null)}
+                      onClick={() => canClick && onDropColumn(colIdx)}
+                      className={`grid grid-rows-6 gap-y-[1.8%] rounded-lg transition-colors ${
+                        canClick ? 'cursor-pointer hover:bg-amber-300/12' : 'cursor-default'
+                      } ${botTargetCol === colIdx ? 'bg-rose-400/20' : ''}`}
+                      aria-label={`Column ${colIdx + 1}`}
+                    >
+                      {Array.from({ length: 6 }).map((__, rowIdx) => {
+                        const cell = grid[rowIdx][colIdx];
+                        const winning = isWinningCell(rowIdx, colIdx);
+                        const customDiscUrl =
+                          cell === 'P1'
+                            ? assets.discUser.url
+                            : cell === 'P2'
+                            ? assets.discBot.url
+                            : null;
+
+                        return (
+                          <div
+                            key={`${rowIdx}-${colIdx}`}
+                            className="relative w-full h-full flex items-center justify-center p-[6%]"
+                          >
+                            {cell && (
+                              <motion.div
+                                key={`${rowIdx}-${colIdx}-${cell}`}
+                                initial={{ y: -(rowIdx + 2) * 44, opacity: 0.95 }}
+                                animate={{ y: 0, opacity: 1 }}
+                                transition={{
+                                  type: 'spring',
+                                  stiffness: 330,
+                                  damping: 21,
+                                  mass: 0.85,
+                                }}
+                                className={`w-full h-full aspect-square rounded-full flex items-center justify-center ${
+                                  customDiscUrl
+                                    ? ''
+                                    : cell === 'P1'
+                                    ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_12px_rgba(251,191,36,0.85)]'
+                                    : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_12px_rgba(244,63,94,0.9)]'
+                                } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
+                              >
+                                {customDiscUrl ? (
+                                  <img
+                                    src={customDiscUrl}
+                                    alt={cell === 'P1' ? 'Yellow Disc' : 'Red Disc'}
+                                    className="w-full h-full object-contain"
+                                  />
+                                ) : (
+                                  <span
+                                    className={`w-[60%] h-[60%] rounded-full border ${
+                                      cell === 'P1'
+                                        ? 'border-yellow-100/65 bg-amber-300/35'
+                                        : 'border-rose-100/65 bg-rose-400/35'
+                                    }`}
+                                  />
+                                )}
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Front 3D PNG Board Frame (Overlaps Discs Naturally) */}
+              <img
+                src={assets.boardOverlay.url!}
+                alt="3D Connect 4 Board"
+                className="pointer-events-none absolute inset-0 z-20 w-full h-full object-fill drop-shadow-[0_16px_28px_rgba(0,0,0,0.85)]"
+              />
+            </div>
+
+            {/* Natural Table Contact Shadow */}
+            <div className="pointer-events-none relative z-10 -mt-2 w-[88%] h-4 rounded-full bg-black/70 blur-md" />
           </div>
+        ) : (
+          /* Fallback CSS 3D Board (When c4-board-frame.png is not uploaded) */
+          <div className="relative z-20 flex flex-col items-center shrink-0">
+            <div className="w-[310px] sm:w-[374px] h-6 sm:h-7 grid grid-cols-7 px-3 mb-0.5">
+              {Array.from({ length: 7 }).map((_, c) => {
+                const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
+                return (
+                  <div key={c} className="flex items-center justify-center">
+                    <AnimatePresence>
+                      {showUserDisc && (
+                        <motion.div
+                          initial={{ opacity: 0, y: -6, scale: 0.75 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.7 }}
+                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_16px_rgba(251,191,36,0.9)]"
+                        />
+                      )}
+                    </AnimatePresence>
+                  </div>
+                );
+              })}
+            </div>
 
-          {/* Right LED Stand Leg */}
-          <div className="relative w-3 sm:w-3.5 h-[228px] sm:h-[268px] -ml-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
-            <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
-            <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
+            <div className="flex items-end justify-center">
+              <div className="relative w-3 sm:w-3.5 h-[220px] sm:h-[264px] -mr-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
+                <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
+                <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
+              </div>
+
+              <div className="relative p-2 sm:p-3 rounded-2xl bg-gradient-to-b from-[#1e2946] via-[#151e36] to-[#0f172a] border-[3px] border-amber-300/75 shadow-[0_18px_36px_rgba(0,0,0,0.8),inset_0_1px_8px_rgba(254,240,138,0.25)] mb-3">
+                <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+                  {Array.from({ length: 7 }).map((_, colIdx) => {
+                    const colFull = grid[0][colIdx] !== null;
+                    const canClick = isUserTurn && !colFull;
+                    return (
+                      <button
+                        key={colIdx}
+                        type="button"
+                        disabled={!canClick}
+                        onMouseEnter={() => setHoverCol(colIdx)}
+                        onMouseLeave={() => setHoverCol(null)}
+                        onClick={() => canClick && onDropColumn(colIdx)}
+                        className={`flex flex-col gap-1.5 sm:gap-2 rounded-xl p-0.5 transition-colors ${
+                          canClick ? 'cursor-pointer hover:bg-amber-300/12' : 'cursor-default'
+                        } ${botTargetCol === colIdx ? 'bg-rose-400/20' : ''}`}
+                        aria-label={`Column ${colIdx + 1}`}
+                      >
+                        {Array.from({ length: 6 }).map((__, rowIdx) => {
+                          const cell = grid[rowIdx][colIdx];
+                          const winning = isWinningCell(rowIdx, colIdx);
+                          return (
+                            <div
+                              key={`${rowIdx}-${colIdx}`}
+                              className="relative w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-[#090e1c]/90 shadow-[inset_0_3px_7px_rgba(0,0,0,0.92)] border-[1.5px] border-amber-300/45 flex items-center justify-center"
+                            >
+                              {cell && (
+                                <motion.div
+                                  key={`${rowIdx}-${colIdx}-${cell}`}
+                                  initial={{ y: -(rowIdx + 2) * 44, opacity: 0.9 }}
+                                  animate={{ y: 0, opacity: 1 }}
+                                  transition={{
+                                    type: 'spring',
+                                    stiffness: 330,
+                                    damping: 21,
+                                    mass: 0.85,
+                                  }}
+                                  className={`w-[88%] h-[88%] rounded-full border-2 flex items-center justify-center ${
+                                    cell === 'P1'
+                                      ? 'bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/85 shadow-[0_0_12px_rgba(251,191,36,0.75)]'
+                                      : 'bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/85 shadow-[0_0_12px_rgba(244,63,94,0.85)]'
+                                  } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
+                                />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="relative w-3 sm:w-3.5 h-[220px] sm:h-[264px] -ml-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
+                <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
+                <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
+              </div>
+            </div>
+
+            <div className="pointer-events-none relative z-10 -mt-2 w-[310px] sm:w-[375px] h-4 rounded-full bg-black/65 blur-md" />
           </div>
-        </div>
+        )}
 
-        {/* Contact Shadow */}
-        <div className="pointer-events-none relative z-10 -mt-2 w-[310px] sm:w-[375px] h-5 rounded-full bg-black/65 blur-md" />
-
-        {/* Fallback CSS Table Surface */}
+        {/* Fallback CSS Table Surface (Custom Room Video/Image မရှိမှသာ ပြမည်) */}
         {!hasCustomRoomBackdrop && (
-          <div className="relative z-0 -mt-6 w-[130%] flex flex-col items-center pointer-events-none">
+          <div className="relative z-0 -mt-5 w-[130%] flex flex-col items-center pointer-events-none shrink-0">
             <div
-              className="w-full h-16 sm:h-20 rounded-t-3xl bg-gradient-to-b from-[#3b4b75] via-[#263252] to-[#161e36] border-t-2 border-sky-200/30 shadow-[0_-6px_30px_rgba(15,23,42,0.8)]"
+              className="w-full h-14 sm:h-16 rounded-t-3xl bg-gradient-to-b from-[#3b4b75] via-[#263252] to-[#161e36] border-t-2 border-sky-200/30 shadow-[0_-6px_30px_rgba(15,23,42,0.8)]"
               style={{ transform: 'perspective(380px) rotateX(42deg)' }}
             />
           </div>
