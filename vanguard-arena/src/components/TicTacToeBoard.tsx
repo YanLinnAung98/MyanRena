@@ -22,7 +22,6 @@ export function getTicTacToeBotName(lang: Language, difficulty = 'medium'): stri
   return 'Ma Pu Tu';
 }
 
-// Bot Profile ပုံ (မပုတု - 404 လုံးဝမတက်စေရန် Embedded High-Detail SVG)
 const MA_PU_TU_AVATAR_SVG = `
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
@@ -47,15 +46,12 @@ const MA_PU_TU_AVATAR_SVG = `
   <path d="M36 86 L60 110 L84 86" stroke="#fde047" stroke-width="2" fill="none" stroke-dasharray="4 3"/>
   <circle cx="60" cy="57" r="29" fill="url(#mptSkin)"/>
   <path d="M30 56 C30 24, 90 24, 90 56 C82 38, 68 35, 60 40 C52 35, 38 38, 30 56 Z" fill="url(#mptHair)"/>
-  <path d="M40 34 Q54 27 68 32" stroke="#6b4a3a" stroke-width="2" fill="none" opacity="0.6"/>
   <ellipse cx="42" cy="66" rx="8" ry="4.5" fill="#fef3c7" opacity="0.88"/>
   <ellipse cx="78" cy="66" rx="8" ry="4.5" fill="#fef3c7" opacity="0.88"/>
   <ellipse cx="48" cy="57" rx="4.6" ry="5" fill="#231712"/>
   <ellipse cx="72" cy="57" rx="4.6" ry="5" fill="#231712"/>
   <circle cx="46.5" cy="55" r="1.7" fill="#ffffff"/>
   <circle cx="70.5" cy="55" r="1.7" fill="#ffffff"/>
-  <path d="M42 49 Q48 46 53 48" stroke="#2a1b14" stroke-width="2" fill="none" stroke-linecap="round"/>
-  <path d="M67 48 Q72 46 78 49" stroke="#2a1b14" stroke-width="2" fill="none" stroke-linecap="round"/>
   <path d="M52 70 Q60 77 68 70" stroke="#9f1239" stroke-width="2.6" fill="none" stroke-linecap="round"/>
 </svg>
 `.trim();
@@ -64,13 +60,9 @@ export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIC
   MA_PU_TU_AVATAR_SVG
 )}`;
 
-// Same-Origin GitHub Pages / Vite Asset URLs (Timeout လုံးဝမဖြစ်စေရန်)
 function getLocalAssetUrl(filename: string): string {
-  if (typeof window !== 'undefined') {
-    const pathname = window.location.pathname;
-    if (pathname.startsWith('/MyanRena')) {
-      return `/MyanRena/assets/${filename}`;
-    }
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/MyanRena')) {
+    return `/MyanRena/assets/${filename}`;
   }
   const base = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
   return `${base}assets/${filename}`;
@@ -78,7 +70,7 @@ function getLocalAssetUrl(filename: string): string {
 
 const BG_URL = getLocalAssetUrl('ttt-village-bg.jpg');
 
-// Optional Uploaded Character Sprites (public/assets/ ထဲ တင်ထားပါက အဖြူနောက်ခံဖျက်ပြီး သုံးမည်)
+// public/assets/ ရှိ ဇာတ်ကောင်ပုံများ၏ အဖြူနောက်ခံကို အလိုအလျောက် ဖျက်ပေးမည့် Cache
 const spriteCache = new Map<string, string | null>();
 const spritePromises = new Map<string, Promise<string | null>>();
 
@@ -107,7 +99,6 @@ function loadOptionalSprite(filename: string): Promise<string | null> {
         const imgData = ctx.getImageData(0, 0, w, h);
         const data = imgData.data;
 
-        // 4 ထောင့်မှစတင်၍ အပြင်ဘက် အဖြူရောင်နောက်ခံတစ်ခုတည်းကိုသာ Flood-Fill ဖျက်မည်
         const visited = new Uint8Array(w * h);
         const queue = new Int32Array(w * h);
         let head = 0;
@@ -169,7 +160,6 @@ function loadOptionalSprite(filename: string): Promise<string | null> {
   return task;
 }
 
-// App စဖွင့်ကတည်းက နောက်ခံပုံကို ကြိုတင် Preload လုပ်ထားမည် (ပုံဟောင်း မဖျပ်အောင်)
 if (typeof window !== 'undefined') {
   const preBg = new Image();
   preBg.src = BG_URL;
@@ -334,13 +324,13 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 
   return (
     <div
-      className="relative w-full h-full overflow-hidden select-none"
+      className="relative w-full h-full overflow-hidden select-none flex flex-col items-center justify-center"
       style={{
         background:
           'radial-gradient(ellipse at 50% 50%, #c69f6c 0%, #8e6c44 55%, #3d4a26 100%)',
       }}
     >
-      {/* FULL-SCREEN VILLAGE BACKGROUND (PC + Phone အပြည့်) */}
+      {/* FULL-SCREEN VILLAGE BACKGROUND */}
       <img
         src={BG_URL}
         alt="Village Dirt Ground"
@@ -351,16 +341,16 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         }`}
       />
 
-      {/* Subtle Vignette for Top/Bottom Bar Readability */}
+      {/* Subtle Vignette */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/45" />
 
       {/* FLOATING STATUS PILL */}
-      <div className="absolute top-16 sm:top-20 inset-x-3 z-30 flex justify-center pointer-events-none">
+      <div className="absolute top-[60px] sm:top-[68px] inset-x-3 z-30 flex justify-center pointer-events-none">
         <motion.div
           key={statusText()}
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className={`px-4 py-1.5 rounded-full border text-xs sm:text-sm font-bold shadow-xl backdrop-blur-md text-center ${
+          className={`px-3.5 py-1 rounded-full border text-[11px] sm:text-sm font-bold shadow-xl backdrop-blur-md text-center ${
             userWon
               ? 'bg-emerald-950/85 border-emerald-400/65 text-emerald-200'
               : botWon
@@ -374,11 +364,14 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </motion.div>
       </div>
 
-      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone နှစ်မျိုးလုံး အချိုးညီညီ အပြည့်မြင်ရမည်) */}
-      <div className="relative z-20 w-full h-full flex items-center justify-center px-1 sm:px-6 pt-12 pb-14">
-        <div className="w-full max-w-[1040px] flex items-center justify-center gap-0.5 sm:gap-5 lg:gap-10">
+      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone ဘယ်အရွယ်အစားမဆို အလယ်တည့်တည့် အပြည့်မြင်ရမည်) */}
+      <div className="relative z-20 w-full flex items-center justify-center px-2 sm:px-6 pt-16 pb-12">
+        <div className="flex items-center justify-center gap-1 sm:gap-5 lg:gap-8">
           {/* === 1. LEFT CHARACTER: USER BOY === */}
-          <div className="pointer-events-none relative w-[26%] sm:w-[25%] max-w-[240px] flex flex-col items-center justify-center shrink-0">
+          <div
+            style={{ width: 'min(26vw, 34dvh, 230px)' }}
+            className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
+          >
             <motion.div
               animate={
                 userWon
@@ -414,7 +407,10 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           </div>
 
           {/* === 2. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
-          <div className="relative w-[46%] sm:w-[42%] max-w-[370px] aspect-square shrink-0">
+          <div
+            style={{ width: 'min(44vw, 48dvh, 340px)' }}
+            className="relative aspect-square shrink-0"
+          >
             <svg
               viewBox="0 0 300 300"
               className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_2px_rgba(255,235,200,0.48)]"
@@ -481,14 +477,17 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
           </div>
 
           {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
-          <div className="pointer-events-none relative w-[26%] sm:w-[25%] max-w-[240px] flex flex-col items-center justify-center shrink-0">
+          <div
+            style={{ width: 'min(26vw, 34dvh, 230px)' }}
+            className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
+          >
             <AnimatePresence>
               {botMood === 'thinking' && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.7, y: 6 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.7 }}
-                  className="absolute -top-8 sm:-top-10 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
+                  className="absolute -top-8 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
                 >
                   {lang === 'my' ? 'အင်း... 🤔' : 'Hmm... 🤔'}
                 </motion.div>
@@ -499,7 +498,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
                   initial={{ opacity: 0, scale: 0.7, y: 6 }}
                   animate={{ opacity: 1, scale: 1, y: [0, -5, 0] }}
                   transition={{ repeat: Infinity, duration: 0.6 }}
-                  className="absolute -top-9 sm:-top-11 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
+                  className="absolute -top-9 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
                 >
                   {lang === 'my' ? 'ဟေး! နိုင်ပြီ 💃🎉' : 'Yay! I Win! 💃'}
                 </motion.div>
@@ -510,7 +509,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
                   initial={{ opacity: 0, scale: 0.7 }}
                   animate={{ opacity: 1, scale: 1, rotate: [-4, 4, -4] }}
                   transition={{ repeat: Infinity, duration: 0.45 }}
-                  className="absolute -top-9 sm:-top-11 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
+                  className="absolute -top-9 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
                 >
                   {lang === 'my' ? 'အီးဟီး... ရှုံးပြီ 😭' : 'Waaah!! 😭'}
                 </motion.div>
@@ -553,7 +552,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
               animate={
                 botMood === 'dancing'
                   ? {
-                      y: [0, -28, 0, -22, 0],
+                      y: [0, -24, 0, -18, 0],
                       rotate: [-10, 10, -12, 12, -10],
                       scale: [1, 1.08, 1, 1.06, 1],
                     }
@@ -609,7 +608,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
             initial={{ opacity: 0, y: 24 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 24 }}
-            className="absolute inset-x-3 bottom-16 z-30 max-w-xl mx-auto rounded-2xl bg-stone-950/90 backdrop-blur-md border border-amber-400/55 px-3.5 py-2.5 flex items-center justify-between gap-2 shadow-2xl"
+            className="absolute inset-x-3 bottom-14 z-30 max-w-xl mx-auto rounded-2xl bg-stone-950/90 backdrop-blur-md border border-amber-400/55 px-3.5 py-2 flex items-center justify-between gap-2 shadow-2xl"
           >
             <div className="flex items-center gap-2.5 min-w-0">
               <div
@@ -669,7 +668,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 };
 
 /* ============================================================================
- * Painted 2D Anime Style Fallback Characters (ပန်းချီလက်ရာနှင့် လိုက်ဖက်အောင်)
+ * Painted 2D Fallback Characters
  * ============================================================================ */
 const PaintedBoyCharacter: React.FC<{
   isScratching: boolean;
@@ -693,65 +692,24 @@ const PaintedBoyCharacter: React.FC<{
       </linearGradient>
     </defs>
 
-    {/* Crossed Legs & Shorts */}
-    <path
-      d="M52 146 C52 126, 128 124, 134 150 C138 166, 98 176, 68 168 C54 164, 52 154, 52 146 Z"
-      fill="#263c5e"
-      stroke="#15233a"
-      strokeWidth="3"
-    />
-    {/* Bare Feet */}
+    <path d="M52 146 C52 126, 128 124, 134 150 C138 166, 98 176, 68 168 C54 164, 52 154, 52 146 Z" fill="#263c5e" stroke="#15233a" strokeWidth="3" />
     <ellipse cx="128" cy="158" rx="14" ry="8" transform="rotate(-12 128 158)" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
     <ellipse cx="92" cy="172" rx="12" ry="7" transform="rotate(14 92 172)" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
-
-    {/* Blue T-Shirt Torso */}
-    <path
-      d="M46 138 C44 98, 72 86, 98 88 C118 90, 126 112, 122 140 C104 148, 66 150, 46 138 Z"
-      fill="url(#boyShirt)"
-      stroke="#193b6b"
-      strokeWidth="3"
-    />
-    {/* Shirt Fold Highlight */}
+    <path d="M46 138 C44 98, 72 86, 98 88 C118 90, 126 112, 122 140 C104 148, 66 150, 46 138 Z" fill="url(#boyShirt)" stroke="#193b6b" strokeWidth="3" />
     <path d="M62 104 Q76 118 68 136" stroke="#85bdfc" strokeWidth="3" fill="none" opacity="0.45" strokeLinecap="round" />
 
-    {/* Right Arm + Wooden Twig Stick */}
     {!isScratching && (
       <g>
-        <path
-          d="M92 110 C112 128, 132 132, 148 138"
-          stroke="url(#boySkin)"
-          strokeWidth="15"
-          strokeLinecap="round"
-          fill="none"
-        />
-        <path
-          d="M92 110 C112 128, 132 132, 148 138"
-          stroke="#6e4429"
-          strokeWidth="2.2"
-          strokeLinecap="round"
-          fill="none"
-          opacity="0.4"
-        />
+        <path d="M92 110 C112 128, 132 132, 148 138" stroke="url(#boySkin)" strokeWidth="15" strokeLinecap="round" fill="none" />
         <path d="M140 130 L176 156" stroke="#5c3a21" strokeWidth="6" strokeLinecap="round" />
         <path d="M142 131 L174 155" stroke="#8a5a36" strokeWidth="2.2" strokeLinecap="round" />
         <circle cx="147" cy="138" r="8" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2" />
       </g>
     )}
 
-    {/* Head */}
     <circle cx="102" cy="68" r="36" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2.6" />
-    {/* Ear */}
     <circle cx="72" cy="76" r="8" fill="url(#boySkin)" stroke="#6e4429" strokeWidth="2.2" />
-    {/* Natural Messy Anime Hair */}
-    <path
-      d="M66 74 C60 40, 86 24, 112 28 C134 31, 144 48, 138 64 C130 50, 118 48, 108 54 C98 48, 86 54, 80 68 C74 72, 68 76, 66 74 Z"
-      fill="url(#boyHair)"
-      stroke="#140c08"
-      strokeWidth="2.5"
-    />
-    <path d="M84 38 Q104 32 122 40" stroke="#6e4d3b" strokeWidth="3" fill="none" opacity="0.55" strokeLinecap="round" />
-
-    {/* Face Features */}
+    <path d="M66 74 C60 40, 86 24, 112 28 C134 31, 144 48, 138 64 C130 50, 118 48, 108 54 C98 48, 86 54, 80 68 C74 72, 68 76, 66 74 Z" fill="url(#boyHair)" stroke="#140c08" strokeWidth="2.5" />
     <ellipse cx="118" cy="81" rx="6" ry="3.5" fill="#f4846c" opacity="0.38" />
     {isHappy ? (
       <path d="M114 70 Q122 62 129 70" stroke="#1e130e" strokeWidth="3.2" fill="none" strokeLinecap="round" />
@@ -797,35 +755,15 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
         </linearGradient>
       </defs>
 
-      {/* Hair Bun Behind Head */}
       <circle cx="136" cy="74" r="15" fill="url(#girlHair)" stroke="#120b08" strokeWidth="2.5" />
       <circle cx="133" cy="73" r="4.5" fill="#fb7185" />
-
-      {/* Traditional Patterned Myanmar Longyi / Dress */}
-      <path
-        d="M54 146 C58 122, 134 122, 144 148 C150 166, 114 176, 82 172 C58 169, 50 158, 54 146 Z"
-        fill="url(#girlSkirt)"
-        stroke="#6b0f26"
-        strokeWidth="3"
-      />
+      <path d="M54 146 C58 122, 134 122, 144 148 C150 166, 114 176, 82 172 C58 169, 50 158, 54 146 Z" fill="url(#girlSkirt)" stroke="#6b0f26" strokeWidth="3" />
       <path d="M62 146 Q100 162 138 146" stroke="#fde047" strokeWidth="4" fill="none" strokeDasharray="7 4" />
-      <path d="M66 158 Q100 172 132 158" stroke="#fbbf24" strokeWidth="3" fill="none" />
-
-      {/* Bare Feet */}
       <ellipse cx="68" cy="158" rx="13" ry="7.5" transform="rotate(14 68 158)" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2" />
       <ellipse cx="104" cy="172" rx="12" ry="7" transform="rotate(-10 104 172)" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2" />
-
-      {/* Traditional Yellow/Red Patterned Blouse */}
-      <path
-        d="M78 136 C74 106, 86 90, 108 90 C130 90, 142 108, 138 138 C122 146, 94 146, 78 136 Z"
-        fill="url(#girlBlouse)"
-        stroke="#8c2d0c"
-        strokeWidth="2.8"
-      />
+      <path d="M78 136 C74 106, 86 90, 108 90 C130 90, 142 108, 138 138 C122 146, 94 146, 78 136 Z" fill="url(#girlBlouse)" stroke="#8c2d0c" strokeWidth="2.8" />
       <path d="M88 96 L108 122 L128 96" stroke="#e11d48" strokeWidth="7" fill="none" strokeLinejoin="round" />
-      <path d="M90 96 L108 120 L126 96" stroke="#fef08a" strokeWidth="2" fill="none" strokeDasharray="4 3" />
 
-      {/* Arms by Mood */}
       {isDancing ? (
         <>
           <path d="M84 106 Q56 78 44 52" stroke="url(#girlSkin)" strokeWidth="13" strokeLinecap="round" fill="none" />
@@ -846,22 +784,11 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
         </g>
       ) : null}
 
-      {/* Head */}
       <circle cx="98" cy="66" r="35" fill="url(#girlSkin)" stroke="#6e4429" strokeWidth="2.5" />
-      {/* Hair Top + Neat Parting */}
-      <path
-        d="M64 62 C64 28, 128 24, 134 62 C126 74, 118 54, 102 48 C86 44, 72 52, 64 62 Z"
-        fill="url(#girlHair)"
-        stroke="#140c08"
-        strokeWidth="2.5"
-      />
-      <path d="M80 38 Q98 31 118 40" stroke="#755341" strokeWidth="2.8" fill="none" opacity="0.55" strokeLinecap="round" />
-
-      {/* Thanaka Cheeks */}
+      <path d="M64 62 C64 28, 128 24, 134 62 C126 74, 118 54, 102 48 C86 44, 72 52, 64 62 Z" fill="url(#girlHair)" stroke="#140c08" strokeWidth="2.5" />
       <ellipse cx="75" cy="78" rx="8.5" ry="5" fill="#fef3c7" opacity="0.88" />
       <ellipse cx="106" cy="79" rx="8" ry="4.5" fill="#fef3c7" opacity="0.85" />
 
-      {/* Eyes & Tears */}
       {isDancing ? (
         <>
           <path d="M72 68 Q78 60 85 68" stroke="#1e130e" strokeWidth="3.2" fill="none" strokeLinecap="round" />
@@ -871,24 +798,8 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
         <>
           <path d="M72 64 L84 70 L72 74" stroke="#1e130e" strokeWidth="3" fill="none" strokeLinecap="round" />
           <path d="M110 64 L98 70 L110 74" stroke="#1e130e" strokeWidth="3" fill="none" strokeLinecap="round" />
-          <motion.ellipse
-            cx="68"
-            cy="78"
-            rx="5"
-            ry="3.5"
-            fill="#38bdf8"
-            animate={{ x: [-2, -16], y: [0, 12], opacity: [1, 0] }}
-            transition={{ repeat: Infinity, duration: 0.6 }}
-          />
-          <motion.ellipse
-            cx="114"
-            cy="78"
-            rx="5"
-            ry="3.5"
-            fill="#7dd3fc"
-            animate={{ x: [2, 16], y: [0, 12], opacity: [1, 0] }}
-            transition={{ repeat: Infinity, duration: 0.6, delay: 0.25 }}
-          />
+          <motion.ellipse cx="68" cy="78" rx="5" ry="3.5" fill="#38bdf8" animate={{ x: [-2, -16], y: [0, 12], opacity: [1, 0] }} transition={{ repeat: Infinity, duration: 0.6 }} />
+          <motion.ellipse cx="114" cy="78" rx="5" ry="3.5" fill="#7dd3fc" animate={{ x: [2, 16], y: [0, 12], opacity: [1, 0] }} transition={{ repeat: Infinity, duration: 0.6, delay: 0.25 }} />
         </>
       ) : (
         <>
@@ -899,7 +810,6 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
         </>
       )}
 
-      {/* Mouth */}
       {isDancing ? (
         <path d="M80 84 Q90 95 100 84 Z" fill="#be123c" stroke="#7f1d1d" strokeWidth="1.5" />
       ) : isCry ? (
@@ -916,71 +826,17 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
  * ============================================================================ */
 const DirtScratchedX: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   <svg viewBox="0 0 80 80" className="w-[74%] h-[74%] overflow-visible">
-    <motion.path
-      d="M18 18 Q40 42 62 62"
-      stroke="#4a2e16"
-      strokeWidth="9"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-    />
-    <motion.path
-      d="M62 18 Q38 40 18 62"
-      stroke="#4a2e16"
-      strokeWidth="9"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.2, delay: 0.16, ease: 'easeOut' }}
-    />
-    <motion.path
-      d="M18 18 Q40 42 62 62"
-      stroke={highlight ? '#fef08a' : '#f5e6cc'}
-      strokeWidth="4.5"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-    />
-    <motion.path
-      d="M62 18 Q38 40 18 62"
-      stroke={highlight ? '#fef08a' : '#f5e6cc'}
-      strokeWidth="4.5"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.2, delay: 0.16, ease: 'easeOut' }}
-    />
+    <motion.path d="M18 18 Q40 42 62 62" stroke="#4a2e16" strokeWidth="9" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.2, ease: 'easeOut' }} />
+    <motion.path d="M62 18 Q38 40 18 62" stroke="#4a2e16" strokeWidth="9" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.2, delay: 0.16, ease: 'easeOut' }} />
+    <motion.path d="M18 18 Q40 42 62 62" stroke={highlight ? '#fef08a' : '#f5e6cc'} strokeWidth="4.5" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.2, ease: 'easeOut' }} />
+    <motion.path d="M62 18 Q38 40 18 62" stroke={highlight ? '#fef08a' : '#f5e6cc'} strokeWidth="4.5" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.2, delay: 0.16, ease: 'easeOut' }} />
   </svg>
 );
 
 const DirtScratchedO: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   <svg viewBox="0 0 80 80" className="w-[76%] h-[76%] overflow-visible">
-    <motion.path
-      d="M40 15 C58 14, 67 27, 65 42 C63 59, 51 67, 38 66 C22 65, 14 53, 15 39 C16 24, 27 16, 42 15"
-      stroke="#4a2e16"
-      strokeWidth="9"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.36, ease: 'easeInOut' }}
-    />
-    <motion.path
-      d="M40 15 C58 14, 67 27, 65 42 C63 59, 51 67, 38 66 C22 65, 14 53, 15 39 C16 24, 27 16, 42 15"
-      stroke={highlight ? '#fda4af' : '#d6b286'}
-      strokeWidth="4.2"
-      strokeLinecap="round"
-      fill="none"
-      initial={{ pathLength: 0 }}
-      animate={{ pathLength: 1 }}
-      transition={{ duration: 0.36, ease: 'easeInOut' }}
-    />
+    <motion.path d="M40 15 C58 14, 67 27, 65 42 C63 59, 51 67, 38 66 C22 65, 14 53, 15 39 C16 24, 27 16, 42 15" stroke="#4a2e16" strokeWidth="9" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.36, ease: 'easeInOut' }} />
+    <motion.path d="M40 15 C58 14, 67 27, 65 42 C63 59, 51 67, 38 66 C22 65, 14 53, 15 39 C16 24, 27 16, 42 15" stroke={highlight ? '#fda4af' : '#d6b286'} strokeWidth="4.2" strokeLinecap="round" fill="none" initial={{ pathLength: 0 }} animate={{ pathLength: 1 }} transition={{ duration: 0.36, ease: 'easeInOut' }} />
   </svg>
 );
 
