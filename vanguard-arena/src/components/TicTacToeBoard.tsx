@@ -60,109 +60,118 @@ export const TTT_KID_BOT_AVATAR_DATA_URI = `data:image/svg+xml;utf8,${encodeURIC
   MA_PU_TU_AVATAR_SVG
 )}`;
 
-function getLocalAssetUrl(filename: string): string {
+function getAssetBaseDir(): string {
   if (typeof window !== 'undefined' && window.location.pathname.startsWith('/MyanRena')) {
-    return `/MyanRena/assets/${filename}`;
+    return '/MyanRena/assets/';
   }
   const base = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
-  return `${base}assets/${filename}`;
+  return `${base}assets/`;
 }
 
-const BG_URL = getLocalAssetUrl('ttt-village-bg.jpg');
+function getExtensionCandidates(baseName: string): string[] {
+  const dir = getAssetBaseDir();
+  return [`${dir}${baseName}.jpg`, `${dir}${baseName}.jpeg`, `${dir}${baseName}.png`];
+}
 
-// public/assets/ ရှိ ဇာတ်ကောင်ပုံများ၏ အဖြူနောက်ခံကို အလိုအလျောက် ဖျက်ပေးမည့် Cache
+// public/assets/ ရှိ ဇာတ်ကောင်ပုံများ (.jpg / .jpeg / .png) ၏ အဖြူနောက်ခံကို ဖျက်ပေးမည့် Cache
 const spriteCache = new Map<string, string | null>();
 const spritePromises = new Map<string, Promise<string | null>>();
 
-function loadOptionalSprite(filename: string): Promise<string | null> {
-  if (spriteCache.has(filename)) return Promise.resolve(spriteCache.get(filename)!);
-  if (spritePromises.has(filename)) return spritePromises.get(filename)!;
-
-  const task = new Promise<string | null>((resolve) => {
+function loadHtmlImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => {
-      try {
-        const maxDim = 480;
-        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
-        const w = Math.max(1, Math.round(img.naturalWidth * scale));
-        const h = Math.max(1, Math.round(img.naturalHeight * scale));
-        const canvas = document.createElement('canvas');
-        canvas.width = w;
-        canvas.height = h;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          spriteCache.set(filename, img.src);
-          resolve(img.src);
-          return;
-        }
-        ctx.drawImage(img, 0, 0, w, h);
-        const imgData = ctx.getImageData(0, 0, w, h);
-        const data = imgData.data;
-
-        const visited = new Uint8Array(w * h);
-        const queue = new Int32Array(w * h);
-        let head = 0;
-        let tail = 0;
-
-        const isNearWhite = (i4: number) => {
-          const r = data[i4];
-          const g = data[i4 + 1];
-          const b = data[i4 + 2];
-          return r > 226 && g > 226 && b > 226 && Math.max(r, g, b) - Math.min(r, g, b) < 28;
-        };
-
-        const pushIfBg = (x: number, y: number) => {
-          const p = y * w + x;
-          if (visited[p]) return;
-          if (isNearWhite(p * 4)) {
-            visited[p] = 1;
-            queue[tail++] = p;
-          }
-        };
-
-        for (let x = 0; x < w; x++) {
-          pushIfBg(x, 0);
-          pushIfBg(x, h - 1);
-        }
-        for (let y = 0; y < h; y++) {
-          pushIfBg(0, y);
-          pushIfBg(w - 1, y);
-        }
-
-        while (head < tail) {
-          const p = queue[head++];
-          data[p * 4 + 3] = 0;
-          const x = p % w;
-          const y = (p - x) / w;
-          if (x > 0) pushIfBg(x - 1, y);
-          if (x < w - 1) pushIfBg(x + 1, y);
-          if (y > 0) pushIfBg(x, y - 1);
-          if (y < h - 1) pushIfBg(x, y + 1);
-        }
-
-        ctx.putImageData(imgData, 0, 0);
-        const uri = canvas.toDataURL('image/png');
-        spriteCache.set(filename, uri);
-        resolve(uri);
-      } catch {
-        spriteCache.set(filename, null);
-        resolve(null);
-      }
-    };
-    img.onerror = () => {
-      spriteCache.set(filename, null);
-      resolve(null);
-    };
-    img.src = getLocalAssetUrl(filename);
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed: ${url}`));
+    img.src = url;
   });
-
-  spritePromises.set(filename, task);
-  return task;
 }
 
-if (typeof window !== 'undefined') {
-  const preBg = new Image();
-  preBg.src = BG_URL;
+function removeWhiteBgToDataUri(img: HTMLImageElement): string {
+  try {
+    const maxDim = 480;
+    const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return img.src;
+
+    ctx.drawImage(img, 0, 0, w, h);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    const visited = new Uint8Array(w * h);
+    const queue = new Int32Array(w * h);
+    let head = 0;
+    let tail = 0;
+
+    const isNearWhite = (i4: number) => {
+      const r = data[i4];
+      const g = data[i4 + 1];
+      const b = data[i4 + 2];
+      return r > 224 && g > 224 && b > 224 && Math.max(r, g, b) - Math.min(r, g, b) < 30;
+    };
+
+    const pushIfBg = (x: number, y: number) => {
+      const p = y * w + x;
+      if (visited[p]) return;
+      if (isNearWhite(p * 4)) {
+        visited[p] = 1;
+        queue[tail++] = p;
+      }
+    };
+
+    for (let x = 0; x < w; x++) {
+      pushIfBg(x, 0);
+      pushIfBg(x, h - 1);
+    }
+    for (let y = 0; y < h; y++) {
+      pushIfBg(0, y);
+      pushIfBg(w - 1, y);
+    }
+
+    while (head < tail) {
+      const p = queue[head++];
+      data[p * 4 + 3] = 0;
+      const x = p % w;
+      const y = (p - x) / w;
+      if (x > 0) pushIfBg(x - 1, y);
+      if (x < w - 1) pushIfBg(x + 1, y);
+      if (y > 0) pushIfBg(x, y - 1);
+      if (y < h - 1) pushIfBg(x, y + 1);
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return img.src;
+  }
+}
+
+function loadOptionalSprite(baseName: string): Promise<string | null> {
+  if (spriteCache.has(baseName)) return Promise.resolve(spriteCache.get(baseName)!);
+  if (spritePromises.has(baseName)) return spritePromises.get(baseName)!;
+
+  const task = (async () => {
+    const urls = getExtensionCandidates(baseName);
+    for (const url of urls) {
+      try {
+        const img = await loadHtmlImage(url);
+        const processed = removeWhiteBgToDataUri(img);
+        spriteCache.set(baseName, processed);
+        return processed;
+      } catch {
+        // try next extension
+      }
+    }
+    spriteCache.set(baseName, null);
+    return null;
+  })();
+
+  spritePromises.set(baseName, task);
+  return task;
 }
 
 interface TicTacToeBoardProps {
@@ -215,26 +224,29 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
 
+  const bgCandidates = getExtensionCandidates('ttt-village-bg');
+  const [bgIdx, setBgIdx] = useState(0);
   const [bgReady, setBgReady] = useState(false);
+
   const [sprites, setSprites] = useState<{
     boy: string | null;
     girlIdle: string | null;
     girlDance: string | null;
     girlCry: string | null;
   }>({
-    boy: spriteCache.get('ttt-boy.jpg') ?? null,
-    girlIdle: spriteCache.get('ttt-girl-idle.jpg') ?? null,
-    girlDance: spriteCache.get('ttt-girl-dance.jpg') ?? null,
-    girlCry: spriteCache.get('ttt-girl-cry.jpg') ?? null,
+    boy: spriteCache.get('ttt-boy') ?? null,
+    girlIdle: spriteCache.get('ttt-girl-idle') ?? null,
+    girlDance: spriteCache.get('ttt-girl-dance') ?? null,
+    girlCry: spriteCache.get('ttt-girl-cry') ?? null,
   });
 
   useEffect(() => {
     let active = true;
     Promise.all([
-      loadOptionalSprite('ttt-boy.jpg'),
-      loadOptionalSprite('ttt-girl-idle.jpg'),
-      loadOptionalSprite('ttt-girl-dance.jpg'),
-      loadOptionalSprite('ttt-girl-cry.jpg'),
+      loadOptionalSprite('ttt-boy'),
+      loadOptionalSprite('ttt-girl-idle'),
+      loadOptionalSprite('ttt-girl-dance'),
+      loadOptionalSprite('ttt-girl-cry'),
     ]).then(([boy, girlIdle, girlDance, girlCry]) => {
       if (active) setSprites({ boy, girlIdle, girlDance, girlCry });
     });
@@ -331,21 +343,24 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       }}
     >
       {/* FULL-SCREEN VILLAGE BACKGROUND */}
-      <img
-        src={BG_URL}
-        alt="Village Dirt Ground"
-        data-repaired="1"
-        onLoad={() => setBgReady(true)}
-        className={`pointer-events-none absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
-          bgReady ? 'opacity-100' : 'opacity-0'
-        }`}
-      />
+      {bgIdx < bgCandidates.length && (
+        <img
+          src={bgCandidates[bgIdx]}
+          alt="Village Dirt Ground"
+          data-repaired="1"
+          onLoad={() => setBgReady(true)}
+          onError={() => setBgIdx((i) => i + 1)}
+          className={`pointer-events-none absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
+            bgReady ? 'opacity-100' : 'opacity-0'
+          }`}
+        />
+      )}
 
       {/* Subtle Vignette */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/45" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/40" />
 
       {/* FLOATING STATUS PILL */}
-      <div className="absolute top-[60px] sm:top-[68px] inset-x-3 z-30 flex justify-center pointer-events-none">
+      <div className="absolute top-[58px] sm:top-[64px] inset-x-3 z-30 flex justify-center pointer-events-none">
         <motion.div
           key={statusText()}
           initial={{ opacity: 0, y: -6 }}
@@ -364,12 +379,12 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </motion.div>
       </div>
 
-      {/* CENTER RESPONSIVE PLAY STAGE (PC + Phone ဘယ်အရွယ်အစားမဆို အလယ်တည့်တည့် အပြည့်မြင်ရမည်) */}
-      <div className="relative z-20 w-full flex items-center justify-center px-2 sm:px-6 pt-16 pb-12">
+      {/* CENTER RESPONSIVE PLAY STAGE (အပေါ်/အောက် မပြတ်ဘဲ အလယ်တည့်တည့် အပြည့်မြင်ရမည်) */}
+      <div className="relative z-20 w-full flex items-center justify-center px-2 sm:px-6 pt-10 pb-8">
         <div className="flex items-center justify-center gap-1 sm:gap-5 lg:gap-8">
           {/* === 1. LEFT CHARACTER: USER BOY === */}
           <div
-            style={{ width: 'min(26vw, 34dvh, 230px)' }}
+            style={{ width: 'min(25vw, 31dvh, 215px)' }}
             className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
           >
             <motion.div
@@ -408,7 +423,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 
           {/* === 2. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
           <div
-            style={{ width: 'min(44vw, 48dvh, 340px)' }}
+            style={{ width: 'min(42vw, 43dvh, 320px)' }}
             className="relative aspect-square shrink-0"
           >
             <svg
@@ -478,7 +493,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 
           {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
           <div
-            style={{ width: 'min(26vw, 34dvh, 230px)' }}
+            style={{ width: 'min(25vw, 31dvh, 215px)' }}
             className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
           >
             <AnimatePresence>
