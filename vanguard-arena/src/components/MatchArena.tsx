@@ -11,12 +11,8 @@ import {
   KID_BOT_AVATAR_DATA_URI,
 } from './Connect4Board.tsx';
 import {
-  TicTacToeBoard,
-  getTicTacToeBotName,
-  TTT_KID_BOT_AVATAR_DATA_URI,
-} from './TicTacToeBoard.tsx';
-import {
   VillageRpsScene,
+  VillageTicTacToeScene,
   WiseOwlTreeQuizScene,
 } from './VillageScenes3D.tsx';
 
@@ -42,6 +38,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   currentUser,
   frames,
   chatMessages,
+  botThinking = false,
   onMove,
   onForfeit,
   onSendChat,
@@ -51,12 +48,12 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const [chatText, setChatText] = React.useState('');
 
   const gType = normalizeGameId(match.gameType);
-  const isFullBleed = gType === 'tictactoe';
   const players: any[] = match.players || [currentUser];
   const p1 = players[0] || currentUser;
   const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
   const isPvp = Boolean(match.isRealtimePvp && players.length >= 2);
 
+  // 4-Row Bot Match တွင် မောင်ဖိုးသား၏ Profile ပုံနှင့် နာမည်ကို သုံးမည်
   const p2 =
     gType === 'connect4' && !isPvp
       ? {
@@ -64,18 +61,13 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           displayName: getConnect4BotName(lang, match.difficulty || 'medium'),
           avatarUrl: KID_BOT_AVATAR_DATA_URI,
         }
-      : gType === 'tictactoe' && !isPvp
-      ? {
-          ...rawP2,
-          displayName: getTicTacToeBotName(lang, match.difficulty || 'medium'),
-          avatarUrl: TTT_KID_BOT_AVATAR_DATA_URI,
-        }
       : rawP2;
 
   const p1Score = match.scores?.[p1.id] ?? 0;
   const p2Score = match.scores?.[p2.id] ?? 0;
   const isFinished = match.status === 'finished';
   const didWin = match.winnerId === currentUser.id;
+  const isMyTurn = (!isPvp && !botThinking) || (isPvp && match.turnUserId === currentUser.id);
 
   const handleChatSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -85,21 +77,9 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   };
 
   return (
-    <div
-      className={
-        isFullBleed
-          ? 'fixed inset-x-0 top-14 bottom-0 z-20 w-screen flex flex-col justify-between overflow-hidden'
-          : 'h-[calc(100dvh-3.5rem)] max-w-3xl mx-auto px-3 py-2 flex flex-col justify-between overflow-hidden relative'
-      }
-    >
+    <div className="fixed inset-x-0 top-14 bottom-0 max-w-3xl mx-auto px-2 sm:px-3 py-1.5 sm:py-2 flex flex-col justify-between overflow-hidden overscroll-none">
       {/* Cyber Scoreboard Header */}
-      <div
-        className={
-          isFullBleed
-            ? 'absolute top-2 inset-x-3 z-40 max-w-3xl mx-auto cyber-panel bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl'
-            : 'cyber-panel flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/25 shrink-0'
-        }
-      >
+      <div className="cyber-panel flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/25 shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <AvatarWithFrame
             avatarUrl={p1.avatarUrl}
@@ -127,7 +107,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           {gType === 'connect4'
             ? '၄ လုံးတန်း 3D'
             : gType === 'tictactoe'
-            ? 'ကျေးလက် Tic-Tac-Toe'
+            ? 'ကွပ်ပျစ် Tic-Tac-Toe'
             : gType === 'rps'
             ? `ကျေးလက် RPS (Bo${match.bestOf || 3})`
             : 'ဉာဏ်စမ်းပဟေဠိ'}
@@ -157,24 +137,21 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         </div>
       </div>
 
-      {/* Game Stage */}
-      <div
-        className={
-          isFullBleed
-            ? 'flex-1 min-h-0 w-full h-full'
-            : 'flex-1 min-h-0 flex items-center justify-center py-1'
-        }
-      >
+      {/* Centered 3D Game Stage */}
+      <div className="flex-1 min-h-0 flex items-center justify-center py-1 overflow-hidden">
+        {/* 1. VILLAGE KUT-PYIT TIC-TAC-TOE */}
         {gType === 'tictactoe' && (
-          <TicTacToeBoard
+          <VillageTicTacToeScene
             lang={lang}
             match={match}
-            currentUserId={currentUser.id}
+            currentUser={currentUser}
+            isMyTurn={isMyTurn}
+            botThinking={botThinking}
             onCellClick={(idx) => onMove({ index: idx })}
-            onLeaveFinished={onLeaveFinished}
           />
         )}
 
+        {/* 2. 3D CONNECT 4 WITH MG PHO THAR */}
         {gType === 'connect4' && (
           <Connect4Board
             lang={lang}
@@ -185,6 +162,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           />
         )}
 
+        {/* 3. VILLAGE RPS 3D WITH HEAD BONK */}
         {gType === 'rps' && (
           <VillageRpsScene
             lang={lang}
@@ -192,12 +170,13 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
             currentUser={currentUser}
             isPvp={isPvp}
             onPick={(choice) => {
-              (soundEngine as any).playClash?.();
+              soundEngine.playClash();
               onMove({ choice });
             }}
           />
         )}
 
+        {/* 4. WISE OWL TREE QUIZ WITH SEATED KIDS & HEAD BONK */}
         {gType === 'sakarhtar' && (
           <WiseOwlTreeQuizScene
             lang={lang}
@@ -210,17 +189,11 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       </div>
 
       {/* Bottom Bar */}
-      <div
-        className={
-          isFullBleed
-            ? 'absolute bottom-2 inset-x-3 z-40 max-w-3xl mx-auto flex items-center justify-between gap-2'
-            : 'flex items-center justify-between gap-2 shrink-0'
-        }
-      >
+      <div className="flex items-center justify-between gap-2 shrink-0">
         <button
           type="button"
           onClick={() => setChatOpen((v) => !v)}
-          className="min-h-[40px] px-3.5 rounded-xl cyber-panel bg-slate-950/80 backdrop-blur-md text-xs font-semibold text-slate-200 flex items-center gap-1.5 cursor-pointer"
+          className="min-h-[40px] px-3.5 rounded-xl cyber-panel text-xs font-semibold text-slate-200 flex items-center gap-1.5 cursor-pointer"
         >
           <MessageSquare className="w-4 h-4 text-amber-400" />
           <span>Chat ({chatMessages.length})</span>
@@ -239,7 +212,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           <button
             type="button"
             onClick={onForfeit}
-            className="min-h-[40px] px-3.5 rounded-xl bg-rose-950/80 hover:bg-rose-900/85 backdrop-blur-md border border-rose-500/45 text-xs font-semibold text-rose-200 flex items-center gap-1.5 cursor-pointer"
+            className="min-h-[40px] px-3.5 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/35 text-xs font-semibold text-rose-300 flex items-center gap-1.5 cursor-pointer"
           >
             <Flag className="w-3.5 h-3.5" />
             <span>{lang === 'my' ? 'အရှုံးပေးထွက်မည်' : 'Forfeit'}</span>
@@ -249,7 +222,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
 
       {/* In-Match Chat */}
       {chatOpen && (
-        <div className="absolute inset-x-3 bottom-14 z-50 max-w-3xl mx-auto rounded-2xl cyber-panel border border-amber-400/30 p-3 shadow-2xl space-y-2">
+        <div className="absolute inset-x-3 bottom-14 z-30 rounded-2xl cyber-panel border border-amber-400/30 p-3 shadow-2xl space-y-2">
           <div className="flex items-center justify-between border-b border-white/10 pb-1.5">
             <span className="text-xs font-bold text-white">In-Match Chat</span>
             <button type="button" onClick={() => setChatOpen(false)} className="text-slate-400 cursor-pointer">
@@ -279,8 +252,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         </div>
       )}
 
-      {/* Match Result Banner (Non-Connect4 & Non-TicTacToe Games) */}
-      {isFinished && gType !== 'connect4' && gType !== 'tictactoe' && (
+      {/* Match Result Banner (Non-Connect4 Games) */}
+      {isFinished && gType !== 'connect4' && (
         <motion.div
           initial={{ y: 40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
