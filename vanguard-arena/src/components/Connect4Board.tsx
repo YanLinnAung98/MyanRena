@@ -267,16 +267,16 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Custom PNG 3D Board Frame Mode (Exact Locked 7x6 Hole Alignment) */}
+        {/* Custom PNG 3D Board Frame Mode (Natural Image Aspect Ratio + Exact 7x6 Hole Alignment) */}
         {hasCustomBoardFrame ? (
           <div
             className="relative z-20 flex flex-col items-center shrink-0"
             style={{
-              width: 'min(94vw, 490px, calc(48dvh * 1.24))',
+              width: 'min(95vw, 500px, calc(48dvh * 1.33))',
             }}
           >
             {/* Hover Preview Row Aligned to the Exact 7 Columns */}
-            <div className="w-full px-[13.4%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
+            <div className="w-full px-[15.5%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
@@ -306,27 +306,27 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               })}
             </div>
 
-            {/* Locked-Aspect Board Container matching c4-board-frame.png */}
-            <div className="relative w-full aspect-[1.24/1]">
+            {/* Natural-Aspect Board Container (Driven by c4-board-frame.png itself, Zero Distortion) */}
+            <div className="relative w-full">
               {/* Dark Recessed Backing Behind the 7x6 Holes */}
               <div
                 className="pointer-events-none absolute z-0 rounded-lg bg-[#070c1a]/92 shadow-inner"
                 style={{
-                  top: '7.5%',
-                  bottom: '22%',
-                  left: '12.8%',
-                  right: '12.8%',
+                  top: '8%',
+                  bottom: '23%',
+                  left: '14.8%',
+                  right: '14.8%',
                 }}
               />
 
-              {/* Playable 7x6 Grid (Locked h-full & absolute cells so rows NEVER shift) */}
+              {/* Playable 7x6 Grid (Exact Alignment to c4-board-frame.png Holes) */}
               <div
                 className="absolute z-10 grid grid-cols-7 overflow-hidden"
                 style={{
-                  top: '8.2%',
-                  bottom: '22.8%',
-                  left: '13.4%',
-                  right: '13.4%',
+                  top: '8.8%',
+                  bottom: '23.8%',
+                  left: '15.5%',
+                  right: '15.5%',
                 }}
               >
                 {Array.from({ length: 7 }).map((_, colIdx) => {
@@ -372,7 +372,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                                     damping: 21,
                                     mass: 0.85,
                                   }}
-                                  className={`h-[84%] aspect-square rounded-full flex items-center justify-center ${
+                                  className={`h-[88%] aspect-square rounded-full flex items-center justify-center ${
                                     customDiscUrl
                                       ? ''
                                       : cell === 'P1'
@@ -406,11 +406,11 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                 })}
               </div>
 
-              {/* Front 3D PNG Board Frame */}
+              {/* Front 3D PNG Board Frame (In normal flow so container matches natural ratio 100%) */}
               <img
                 src={assets.boardOverlay.url!}
                 alt="3D Connect 4 Board"
-                className="pointer-events-none absolute inset-0 z-20 w-full h-full object-fill drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
+                className="pointer-events-none relative z-20 block w-full h-auto drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
               />
             </div>
 
