@@ -188,7 +188,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   const statusText = () => {
     if (userWon) {
       return lang === 'my'
-        ? '🎉 သင် အနိုင်ရရှိပါသည်! မောင်ဖိုးသား ငိုနေပါပြီ'
+        ? '🎉 သင် အနိုင်ရရှိပါသည်!'
         : '🎉 You Win! Mg Pho Thar is crying!';
     }
     if (botWon) {
@@ -267,7 +267,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Custom PNG 3D Board Frame Mode (Natural Image Aspect Ratio + Exact 7x6 Hole Alignment) */}
+        {/* Custom PNG 3D Board Frame Mode (Bright Vivid Discs Inside Gold Rings) */}
         {hasCustomBoardFrame ? (
           <div
             className="relative z-20 flex flex-col items-center shrink-0"
@@ -276,7 +276,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
             }}
           >
             {/* Hover Preview Row Aligned to the Exact 7 Columns */}
-            <div className="w-full px-[15.5%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
+            <div className="w-full px-[15.3%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
@@ -293,10 +293,17 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                             <img
                               src={assets.discUser.url}
                               alt="Yellow Disc"
-                              className="w-full h-full object-contain drop-shadow-[0_0_10px_rgba(251,191,36,0.85)]"
+                              className="w-full h-full object-contain drop-shadow-[0_0_12px_rgba(253,224,71,0.95)]"
                             />
                           ) : (
-                            <div className="w-full h-full rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_14px_rgba(251,191,36,0.9)]" />
+                            <div
+                              className="w-full h-full rounded-full border-2 border-yellow-100"
+                              style={{
+                                background:
+                                  'radial-gradient(circle at 32% 28%, #fef9c3 0%, #facc15 45%, #ea580c 100%)',
+                                boxShadow: '0 0 14px rgba(250,204,21,0.95)',
+                              }}
+                            />
                           )}
                         </motion.div>
                       )}
@@ -306,27 +313,34 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               })}
             </div>
 
-            {/* Natural-Aspect Board Container (Driven by c4-board-frame.png itself, Zero Distortion) */}
+            {/* Natural-Aspect Board Container */}
             <div className="relative w-full">
               {/* Dark Recessed Backing Behind the 7x6 Holes */}
               <div
-                className="pointer-events-none absolute z-0 rounded-lg bg-[#070c1a]/92 shadow-inner"
+                className="pointer-events-none absolute z-0 rounded-lg bg-[#050814] shadow-inner"
                 style={{
                   top: '8%',
-                  bottom: '23%',
+                  bottom: '24%',
                   left: '14.8%',
                   right: '14.8%',
                 }}
               />
 
-              {/* Playable 7x6 Grid (Exact Alignment to c4-board-frame.png Holes) */}
+              {/* 3D PNG Board Frame (z-20) */}
+              <img
+                src={assets.boardOverlay.url!}
+                alt="3D Connect 4 Board"
+                className="pointer-events-none relative z-20 block w-full h-auto drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
+              />
+
+              {/* Playable 7x6 Grid (z-30 ON TOP so discs are 100% Bright & Never Dimmed, Sized to Fit Inside Gold Rings) */}
               <div
-                className="absolute z-10 grid grid-cols-7 overflow-hidden"
+                className="absolute z-30 grid grid-cols-7 overflow-hidden"
                 style={{
-                  top: '8.8%',
-                  bottom: '23.8%',
-                  left: '15.5%',
-                  right: '15.5%',
+                  top: '8.4%',
+                  bottom: '24.6%',
+                  left: '15.3%',
+                  right: '15.3%',
                 }}
               >
                 {Array.from({ length: 7 }).map((_, colIdx) => {
@@ -341,7 +355,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                       onMouseLeave={() => setHoverCol(null)}
                       onClick={() => canClick && onDropColumn(colIdx)}
                       className={`h-full min-h-0 grid grid-rows-6 rounded-md transition-colors ${
-                        canClick ? 'cursor-pointer hover:bg-amber-300/10' : 'cursor-default'
+                        canClick ? 'cursor-pointer hover:bg-amber-300/12' : 'cursor-default'
                       } ${botTargetCol === colIdx ? 'bg-rose-400/15' : ''}`}
                       aria-label={`Column ${colIdx + 1}`}
                     >
@@ -364,7 +378,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                               <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                                 <motion.div
                                   key={`${rowIdx}-${colIdx}-${cell}`}
-                                  initial={{ y: -(rowIdx + 2) * 42, opacity: 0.95 }}
+                                  initial={{ y: -(rowIdx + 2) * 42, opacity: 1 }}
                                   animate={{ y: 0, opacity: 1 }}
                                   transition={{
                                     type: 'spring',
@@ -372,26 +386,43 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                                     damping: 21,
                                     mass: 0.85,
                                   }}
-                                  className={`h-[88%] aspect-square rounded-full flex items-center justify-center ${
+                                  style={
+                                    customDiscUrl
+                                      ? undefined
+                                      : cell === 'P1'
+                                      ? {
+                                          background:
+                                            'radial-gradient(circle at 32% 28%, #fef9c3 0%, #fde047 38%, #f59e0b 78%, #b45309 100%)',
+                                          boxShadow:
+                                            '0 0 12px rgba(250, 204, 21, 0.9), inset 0 2px 4px rgba(255, 255, 255, 0.85)',
+                                        }
+                                      : {
+                                          background:
+                                            'radial-gradient(circle at 32% 28%, #ffe4e6 0%, #ff2e55 40%, #e11d48 78%, #881337 100%)',
+                                          boxShadow:
+                                            '0 0 12px rgba(255, 46, 85, 0.9), inset 0 2px 4px rgba(255, 255, 255, 0.75)',
+                                        }
+                                  }
+                                  className={`h-[78%] aspect-square rounded-full flex items-center justify-center ${
                                     customDiscUrl
                                       ? ''
                                       : cell === 'P1'
-                                      ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_10px_rgba(251,191,36,0.85)]'
-                                      : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_10px_rgba(244,63,94,0.9)]'
+                                      ? 'border border-yellow-100/95'
+                                      : 'border border-rose-200/95'
                                   } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
                                 >
                                   {customDiscUrl ? (
                                     <img
                                       src={customDiscUrl}
                                       alt={cell === 'P1' ? 'Yellow Disc' : 'Red Disc'}
-                                      className="w-full h-full object-contain"
+                                      className="w-full h-full object-contain brightness-110 saturate-125"
                                     />
                                   ) : (
                                     <span
                                       className={`w-[58%] h-[58%] rounded-full border ${
                                         cell === 'P1'
-                                          ? 'border-yellow-100/65 bg-amber-300/35'
-                                          : 'border-rose-100/65 bg-rose-400/35'
+                                          ? 'border-yellow-50/75 bg-yellow-200/35'
+                                          : 'border-rose-100/75 bg-rose-300/30'
                                       }`}
                                     />
                                   )}
@@ -405,13 +436,6 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                   );
                 })}
               </div>
-
-              {/* Front 3D PNG Board Frame (In normal flow so container matches natural ratio 100%) */}
-              <img
-                src={assets.boardOverlay.url!}
-                alt="3D Connect 4 Board"
-                className="pointer-events-none relative z-20 block w-full h-auto drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
-              />
             </div>
 
             {/* Natural Table Contact Shadow */}
@@ -475,7 +499,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                               {cell && (
                                 <motion.div
                                   key={`${rowIdx}-${colIdx}-${cell}`}
-                                  initial={{ y: -(rowIdx + 2) * 44, opacity: 0.9 }}
+                                  initial={{ y: -(rowIdx + 2) * 44, opacity: 1 }}
                                   animate={{ y: 0, opacity: 1 }}
                                   transition={{
                                     type: 'spring',
