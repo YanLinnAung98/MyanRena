@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { RotateCcw, Sparkles, Trophy } from 'lucide-react';
 import type { Language } from '../types.ts';
@@ -70,10 +70,13 @@ function getAssetBaseDir(): string {
 
 function getExtensionCandidates(baseName: string): string[] {
   const dir = getAssetBaseDir();
-  return [`${dir}${baseName}.jpg`, `${dir}${baseName}.jpeg`, `${dir}${baseName}.png`];
+  const list = [`${dir}${baseName}.jpg`, `${dir}${baseName}.jpeg`, `${dir}${baseName}.png`];
+  if (baseName === 'ttt-boy') {
+    list.splice(1, 0, `${dir}ttt-boy..jpg`);
+  }
+  return list;
 }
 
-// public/assets/ ရှိ ဇာတ်ကောင်ပုံများ (.jpg / .jpeg / .png) ၏ အဖြူနောက်ခံကို ဖျက်ပေးမည့် Cache
 const spriteCache = new Map<string, string | null>();
 const spritePromises = new Map<string, Promise<string | null>>();
 
@@ -88,7 +91,7 @@ function loadHtmlImage(url: string): Promise<HTMLImageElement> {
 
 function removeWhiteBgToDataUri(img: HTMLImageElement): string {
   try {
-    const maxDim = 480;
+    const maxDim = 512;
     const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
     const w = Math.max(1, Math.round(img.naturalWidth * scale));
     const h = Math.max(1, Math.round(img.naturalHeight * scale));
@@ -143,6 +146,26 @@ function removeWhiteBgToDataUri(img: HTMLImageElement): string {
       if (y < h - 1) pushIfBg(x, y + 1);
     }
 
+    // 1px Soft Anti-Alias Edge Feather
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const p = y * w + x;
+        const i4 = p * 4;
+        if (data[i4 + 3] === 0) continue;
+        const touchesBg =
+          data[(p - 1) * 4 + 3] === 0 ||
+          data[(p + 1) * 4 + 3] === 0 ||
+          data[(p - w) * 4 + 3] === 0 ||
+          data[(p + w) * 4 + 3] === 0;
+        if (touchesBg) {
+          const avg = (data[i4] + data[i4 + 1] + data[i4 + 2]) / 3;
+          if (avg > 195) {
+            data[i4 + 3] = Math.round(data[i4 + 3] * 0.3);
+          }
+        }
+      }
+    }
+
     ctx.putImageData(imgData, 0, 0);
     return canvas.toDataURL('image/png');
   } catch {
@@ -163,7 +186,7 @@ function loadOptionalSprite(baseName: string): Promise<string | null> {
         spriteCache.set(baseName, processed);
         return processed;
       } catch {
-        // try next extension
+        // try next candidate
       }
     }
     spriteCache.set(baseName, null);
@@ -223,6 +246,51 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   const userWon = isFinished && !isDraw && match.winnerId === currentUserId;
   const botWon = isFinished && !isDraw && match.winnerId !== currentUserId;
   const winLine = getWinningLine(board);
+
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState<{ w: number; h: number; isCroppedPortrait: boolean }>({
+    w: 960,
+    h: 720,
+    isCroppedPortrait: false,
+  });
+
+  // 4:3 World Stage ကို Screen အရွယ်အစားအလိုက် တိကျစွာ တွက်ချက်မည်
+  // (နောက်ခံပတ်ဝန်းကျင် + ကလေး ၂ ယောက် + 3x3 ဘုတ် အချိုးအစား အမြဲသဘာဝကျစေရန်)
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const recalc = () => {
+      const cw = el.clientWidth || window.innerWidth;
+      const ch = el.clientHeight || window.innerHeight;
+      const safeH = Math.max(240, ch - 138);
+      const safeW = cw * 0.96;
+
+      // Playable Clearing Zone သည် 4:3 Stage ၏ အလယ် 64% (W) × 42% (H) ဖြစ်သည်
+      const coverW = Math.max(cw, (ch * 4) / 3);
+      const maxWBySafeH = (safeH / 0.42) * (4 / 3);
+      const maxWBySafeW = safeW / 0.64;
+
+      const finalW = Math.min(coverW, maxWBySafeH, maxWBySafeW);
+      const finalH = finalW * 0.75;
+      const isCroppedPortrait = finalH < ch - 4;
+
+      setStageSize({
+        w: Math.round(finalW),
+        h: Math.round(finalH),
+        isCroppedPortrait,
+      });
+    };
+
+    recalc();
+    const ro = new ResizeObserver(recalc);
+    ro.observe(el);
+    window.addEventListener('resize', recalc);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', recalc);
+    };
+  }, []);
 
   const bgCandidates = getExtensionCandidates('ttt-village-bg');
   const [bgIdx, setBgIdx] = useState(0);
@@ -334,32 +402,317 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       ? sprites.girlCry || sprites.girlIdle
       : sprites.girlIdle;
 
+  const activeBgUrl = bgIdx < bgCandidates.length ? bgCandidates[bgIdx] : null;
+
   return (
     <div
-      className="relative w-full h-full overflow-hidden select-none flex flex-col items-center justify-center"
+      ref={containerRef}
+      className="relative w-full h-full overflow-hidden select-none flex items-center justify-center"
       style={{
         background:
-          'radial-gradient(ellipse at 50% 50%, #c69f6c 0%, #8e6c44 55%, #3d4a26 100%)',
+          'radial-gradient(ellipse at 50% 50%, #b58d5a 0%, #6d5333 60%, #2c381c 100%)',
       }}
     >
-      {/* FULL-SCREEN VILLAGE BACKGROUND */}
-      {bgIdx < bgCandidates.length && (
+      {/* 1. AMBIENT FULL-BLEED BACKDROP (Portrait Phone အပေါ်/အောက် ဘေးမမည်းစေရန်) */}
+      {activeBgUrl && stageSize.isCroppedPortrait && (
         <img
-          src={bgCandidates[bgIdx]}
-          alt="Village Dirt Ground"
+          src={activeBgUrl}
+          alt=""
+          aria-hidden="true"
           data-repaired="1"
-          onLoad={() => setBgReady(true)}
-          onError={() => setBgIdx((i) => i + 1)}
-          className={`pointer-events-none absolute inset-0 w-full h-full object-cover object-center transition-opacity duration-300 ${
+          className={`pointer-events-none absolute inset-0 w-full h-full object-cover object-center scale-110 blur-md brightness-75 transition-opacity duration-300 ${
             bgReady ? 'opacity-100' : 'opacity-0'
           }`}
         />
       )}
 
-      {/* Subtle Vignette */}
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/40" />
+      {/* 2. LOCKED 4:3 PROPORTIONAL WORLD STAGE (နောက်ခံ + ကလေး ၂ ယောက် + ဇယားကွက် အချိုးတစ်သားတည်း) */}
+      <div
+        style={{
+          width: `${stageSize.w}px`,
+          height: `${stageSize.h}px`,
+          ...(stageSize.isCroppedPortrait
+            ? {
+                WebkitMaskImage:
+                  'linear-gradient(to bottom, transparent 0%, black 7%, black 93%, transparent 100%)',
+                maskImage:
+                  'linear-gradient(to bottom, transparent 0%, black 7%, black 93%, transparent 100%)',
+              }
+            : {}),
+        }}
+        className="relative shrink-0 overflow-visible"
+      >
+        {/* Village Background Image locked 1:1 to this 4:3 stage */}
+        {activeBgUrl && (
+          <img
+            src={activeBgUrl}
+            alt="Village Dirt Ground"
+            data-repaired="1"
+            onLoad={() => setBgReady(true)}
+            onError={() => setBgIdx((i) => i + 1)}
+            className={`pointer-events-none absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
+              bgReady ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+        )}
 
-      {/* FLOATING STATUS PILL */}
+        {/* === LEFT CHARACTER: USER BOY (Locked to Dirt Clearing Left Side) === */}
+        <div
+          style={{
+            left: '29.5%',
+            top: '51.5%',
+            width: '19.5%',
+          }}
+          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 aspect-square z-20"
+        >
+          <motion.div
+            animate={
+              userWon
+                ? { y: [0, -10, 0], rotate: [-4, 4, -4] }
+                : activeScratch?.side === 'user'
+                ? { x: [0, 10, 0] }
+                : botWon
+                ? { y: [0, 2, 0] }
+                : { y: [0, -2, 0] }
+            }
+            transition={{
+              repeat: userWon ? Infinity : 0,
+              duration: userWon ? 0.55 : 0.38,
+            }}
+            className="relative w-full h-full flex items-center justify-center"
+          >
+            {/* နေရောင် ဘယ်အပေါ်မှကျသည့်အတိုင်း ညာအောက်သို့ စောင်းကျနေသော မြေကြီးအရိပ် */}
+            <div
+              className="absolute bottom-[9%] left-[18%] w-[72%] h-[22%] rounded-full blur-[6px]"
+              style={{ backgroundColor: 'rgba(42, 26, 10, 0.44)' }}
+            />
+            {sprites.boy ? (
+              <img
+                src={sprites.boy}
+                alt="Player Boy"
+                data-repaired="1"
+                className="relative w-full h-full object-contain brightness-[0.97] contrast-[1.03] saturate-[0.95] drop-shadow-[4px_8px_8px_rgba(38,22,8,0.45)]"
+              />
+            ) : (
+              <PaintedBoyCharacter
+                isScratching={activeScratch?.side === 'user'}
+                isHappy={userWon}
+                isSad={botWon}
+              />
+            )}
+          </motion.div>
+        </div>
+
+        {/* === CENTER DIRT TIC-TAC-TOE GRID (3x3 — Locked to Center Clearing) === */}
+        <div
+          style={{
+            left: '50%',
+            top: '52.5%',
+            width: '22.5%',
+          }}
+          className="absolute -translate-x-1/2 -translate-y-1/2 aspect-square z-10"
+        >
+          <svg
+            viewBox="0 0 300 300"
+            className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_1px_rgba(255,232,195,0.42)]"
+          >
+            <path d="M100 10 Q97 150 102 290" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M200 12 Q203 150 198 288" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M10 100 Q150 97 290 102" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+            <path d="M12 200 Q150 204 288 198" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.9" />
+
+            {winLine && (
+              <motion.line
+                x1={getCellCenterPercent(winLine[0]).x * 3}
+                y1={getCellCenterPercent(winLine[0]).y * 3}
+                x2={getCellCenterPercent(winLine[2]).x * 3}
+                y2={getCellCenterPercent(winLine[2]).y * 3}
+                stroke={userWon ? '#fde047' : '#fb7185'}
+                strokeWidth="10"
+                strokeLinecap="round"
+                initial={{ pathLength: 0, opacity: 0.4 }}
+                animate={{ pathLength: 1, opacity: 0.95 }}
+                transition={{ duration: 0.45, ease: 'easeOut' }}
+              />
+            )}
+          </svg>
+
+          <div className="relative z-10 grid grid-cols-3 grid-rows-3 w-full h-full">
+            {board.map((cell, idx) => {
+              const canClick = !isLocked && cell === null;
+              const isWinningCell = winLine?.includes(idx) ?? false;
+              const isBeingScratched = activeScratch?.idx === idx;
+
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  disabled={!canClick}
+                  onClick={() => handleCellPress(idx)}
+                  aria-label={`Cell ${idx + 1}`}
+                  className={`relative flex items-center justify-center rounded-lg transition-colors ${
+                    canClick
+                      ? 'cursor-pointer hover:bg-amber-950/15 active:bg-amber-950/25'
+                      : 'cursor-default'
+                  }`}
+                >
+                  {cell === 'X' && <DirtScratchedX highlight={isWinningCell} />}
+                  {cell === 'O' && <DirtScratchedO highlight={isWinningCell} />}
+                  <AnimatePresence>
+                    {isBeingScratched && <DirtDustBurst key={`dust-${idx}`} />}
+                  </AnimatePresence>
+                </button>
+              );
+            })}
+          </div>
+
+          <AnimatePresence>
+            {activeScratch && (
+              <StickScratchHandOverlay
+                key={`${activeScratch.side}-${activeScratch.idx}`}
+                side={activeScratch.side}
+                targetIdx={activeScratch.idx}
+              />
+            )}
+          </AnimatePresence>
+        </div>
+
+        {/* === RIGHT CHARACTER: MA PU TU (Locked beside Banyan Tree Roots) === */}
+        <div
+          style={{
+            left: '70.5%',
+            top: '51.5%',
+            width: '19.5%',
+          }}
+          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 aspect-square z-20 flex items-center justify-center"
+        >
+          <AnimatePresence>
+            {botMood === 'thinking' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.7, y: 6 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.7 }}
+                className="absolute -top-[22%] z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
+              >
+                {lang === 'my' ? 'အင်း... 🤔' : 'Hmm... 🤔'}
+              </motion.div>
+            )}
+
+            {botMood === 'dancing' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.7, y: 6 }}
+                animate={{ opacity: 1, scale: 1, y: [0, -5, 0] }}
+                transition={{ repeat: Infinity, duration: 0.6 }}
+                className="absolute -top-[24%] z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
+              >
+                {lang === 'my' ? 'ဟေး! နိုင်ပြီ 💃🎉' : 'Yay! I Win! 💃'}
+              </motion.div>
+            )}
+
+            {botMood === 'rolling_cry' && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.7 }}
+                animate={{ opacity: 1, scale: 1, rotate: [-4, 4, -4] }}
+                transition={{ repeat: Infinity, duration: 0.45 }}
+                className="absolute -top-[24%] z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
+              >
+                {lang === 'my' ? 'အီးဟီး... ရှုံးပြီ 😭' : 'Waaah!! 😭'}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {botMood === 'dancing' && (
+            <div className="pointer-events-none absolute -inset-2 z-30">
+              {[
+                { left: '8%', top: '4%', color: '#facc15' },
+                { left: '84%', top: '8%', color: '#fb7185' },
+                { left: '12%', top: '70%', color: '#38bdf8' },
+                { left: '86%', top: '65%', color: '#4ade80' },
+              ].map((sp, i) => (
+                <motion.span
+                  key={i}
+                  style={{ left: sp.left, top: sp.top, backgroundColor: sp.color }}
+                  animate={{ y: [0, -12, 0], scale: [0.7, 1.4, 0.7] }}
+                  transition={{ repeat: Infinity, duration: 0.65 + i * 0.15 }}
+                  className="absolute w-2.5 h-2.5 rounded-full shadow-md"
+                />
+              ))}
+            </div>
+          )}
+
+          {botMood === 'rolling_cry' && (
+            <div className="pointer-events-none absolute inset-x-0 bottom-[4%] flex justify-center gap-4 z-10">
+              {[0, 1, 2].map((i) => (
+                <motion.span
+                  key={i}
+                  animate={{ y: [0, -10, -16], opacity: [0.85, 0.4, 0], scale: [0.6, 1.3, 1.6] }}
+                  transition={{ repeat: Infinity, duration: 0.7, delay: i * 0.22 }}
+                  className="w-2.5 h-2.5 rounded-full bg-amber-100/75"
+                />
+              ))}
+            </div>
+          )}
+
+          <motion.div
+            animate={
+              botMood === 'dancing'
+                ? {
+                    y: [0, -20, 0, -15, 0],
+                    rotate: [-9, 9, -11, 11, -9],
+                    scale: [1, 1.07, 1, 1.05, 1],
+                  }
+                : botMood === 'rolling_cry'
+                ? {
+                    x: [-12, 12, -10, 10, -12],
+                    y: [6, 12, 5, 12, 6],
+                    rotate: [-26, 26, -22, 22, -26],
+                  }
+                : botMood === 'thinking'
+                ? { rotate: [-5, 5, -5] }
+                : botMood === 'bot_scratching'
+                ? { x: [0, -10, 0] }
+                : { y: [0, -2, 0] }
+            }
+            transition={{
+              repeat:
+                botMood === 'dancing' || botMood === 'rolling_cry' || botMood === 'thinking'
+                  ? Infinity
+                  : 0,
+              duration:
+                botMood === 'dancing'
+                  ? 0.72
+                  : botMood === 'rolling_cry'
+                  ? 0.9
+                  : botMood === 'thinking'
+                  ? 1.4
+                  : 0.36,
+              ease: 'easeInOut',
+            }}
+            className="relative w-full h-full flex items-center justify-center"
+          >
+            {/* မြေကြီးအရိပ် */}
+            <div
+              className="absolute bottom-[9%] left-[16%] w-[72%] h-[22%] rounded-full blur-[6px]"
+              style={{ backgroundColor: 'rgba(42, 26, 10, 0.44)' }}
+            />
+            {girlSpriteSrc ? (
+              <img
+                src={girlSpriteSrc}
+                alt="Ma Pu Tu"
+                data-repaired="1"
+                className="relative w-full h-full object-contain brightness-[0.96] contrast-[1.03] saturate-[0.95] drop-shadow-[4px_8px_8px_rgba(38,22,8,0.45)]"
+              />
+            ) : (
+              <PaintedMaPuTuCharacter mood={botMood} />
+            )}
+          </motion.div>
+        </div>
+      </div>
+
+      {/* 3. SUBTLE TOP/BOTTOM VIGNETTE FOR HUD READABILITY */}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/35 via-transparent to-black/40 z-20" />
+
+      {/* 4. FLOATING STATUS PILL */}
       <div className="absolute top-[58px] sm:top-[64px] inset-x-3 z-30 flex justify-center pointer-events-none">
         <motion.div
           key={statusText()}
@@ -379,244 +732,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
         </motion.div>
       </div>
 
-      {/* CENTER RESPONSIVE PLAY STAGE (အပေါ်/အောက် မပြတ်ဘဲ အလယ်တည့်တည့် အပြည့်မြင်ရမည်) */}
-      <div className="relative z-20 w-full flex items-center justify-center px-2 sm:px-6 pt-10 pb-8">
-        <div className="flex items-center justify-center gap-1 sm:gap-5 lg:gap-8">
-          {/* === 1. LEFT CHARACTER: USER BOY === */}
-          <div
-            style={{ width: 'min(25vw, 31dvh, 215px)' }}
-            className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
-          >
-            <motion.div
-              animate={
-                userWon
-                  ? { y: [0, -14, 0], rotate: [-4, 4, -4] }
-                  : activeScratch?.side === 'user'
-                  ? { x: [0, 12, 0] }
-                  : botWon
-                  ? { y: [0, 3, 0] }
-                  : { y: [0, -2.5, 0] }
-              }
-              transition={{
-                repeat: userWon ? Infinity : 0,
-                duration: userWon ? 0.55 : 0.38,
-              }}
-              className="relative w-full aspect-square flex items-center justify-center"
-            >
-              <div className="absolute bottom-[10%] w-[70%] h-[20%] rounded-full bg-black/35 blur-md" />
-              {sprites.boy ? (
-                <img
-                  src={sprites.boy}
-                  alt="Player Boy"
-                  data-repaired="1"
-                  className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
-                />
-              ) : (
-                <PaintedBoyCharacter
-                  isScratching={activeScratch?.side === 'user'}
-                  isHappy={userWon}
-                  isSad={botWon}
-                />
-              )}
-            </motion.div>
-          </div>
-
-          {/* === 2. CENTER DIRT TIC-TAC-TOE GRID (3x3) === */}
-          <div
-            style={{ width: 'min(42vw, 43dvh, 320px)' }}
-            className="relative aspect-square shrink-0"
-          >
-            <svg
-              viewBox="0 0 300 300"
-              className="pointer-events-none absolute inset-0 w-full h-full drop-shadow-[0_1px_2px_rgba(255,235,200,0.48)]"
-            >
-              <path d="M100 10 Q97 150 102 290" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
-              <path d="M200 12 Q203 150 198 288" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
-              <path d="M10 100 Q150 97 290 102" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
-              <path d="M12 200 Q150 204 288 198" stroke="#4f331b" strokeWidth="7" strokeLinecap="round" fill="none" opacity="0.92" />
-
-              {winLine && (
-                <motion.line
-                  x1={getCellCenterPercent(winLine[0]).x * 3}
-                  y1={getCellCenterPercent(winLine[0]).y * 3}
-                  x2={getCellCenterPercent(winLine[2]).x * 3}
-                  y2={getCellCenterPercent(winLine[2]).y * 3}
-                  stroke={userWon ? '#fde047' : '#fb7185'}
-                  strokeWidth="10"
-                  strokeLinecap="round"
-                  initial={{ pathLength: 0, opacity: 0.4 }}
-                  animate={{ pathLength: 1, opacity: 0.95 }}
-                  transition={{ duration: 0.45, ease: 'easeOut' }}
-                />
-              )}
-            </svg>
-
-            <div className="relative z-10 grid grid-cols-3 grid-rows-3 w-full h-full">
-              {board.map((cell, idx) => {
-                const canClick = !isLocked && cell === null;
-                const isWinningCell = winLine?.includes(idx) ?? false;
-                const isBeingScratched = activeScratch?.idx === idx;
-
-                return (
-                  <button
-                    key={idx}
-                    type="button"
-                    disabled={!canClick}
-                    onClick={() => handleCellPress(idx)}
-                    aria-label={`Cell ${idx + 1}`}
-                    className={`relative flex items-center justify-center rounded-xl transition-colors ${
-                      canClick
-                        ? 'cursor-pointer hover:bg-amber-950/15 active:bg-amber-950/25'
-                        : 'cursor-default'
-                    }`}
-                  >
-                    {cell === 'X' && <DirtScratchedX highlight={isWinningCell} />}
-                    {cell === 'O' && <DirtScratchedO highlight={isWinningCell} />}
-                    <AnimatePresence>
-                      {isBeingScratched && <DirtDustBurst key={`dust-${idx}`} />}
-                    </AnimatePresence>
-                  </button>
-                );
-              })}
-            </div>
-
-            <AnimatePresence>
-              {activeScratch && (
-                <StickScratchHandOverlay
-                  key={`${activeScratch.side}-${activeScratch.idx}`}
-                  side={activeScratch.side}
-                  targetIdx={activeScratch.idx}
-                />
-              )}
-            </AnimatePresence>
-          </div>
-
-          {/* === 3. RIGHT CHARACTER: MA PU TU (BOT) === */}
-          <div
-            style={{ width: 'min(25vw, 31dvh, 215px)' }}
-            className="pointer-events-none relative flex flex-col items-center justify-center shrink-0"
-          >
-            <AnimatePresence>
-              {botMood === 'thinking' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.7, y: 6 }}
-                  animate={{ opacity: 1, scale: 1, y: 0 }}
-                  exit={{ opacity: 0, scale: 0.7 }}
-                  className="absolute -top-8 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-stone-950/90 border border-amber-300/60 text-[10px] sm:text-xs font-bold text-amber-200 shadow-lg"
-                >
-                  {lang === 'my' ? 'အင်း... 🤔' : 'Hmm... 🤔'}
-                </motion.div>
-              )}
-
-              {botMood === 'dancing' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.7, y: 6 }}
-                  animate={{ opacity: 1, scale: 1, y: [0, -5, 0] }}
-                  transition={{ repeat: Infinity, duration: 0.6 }}
-                  className="absolute -top-9 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-rose-600/95 border border-yellow-300 text-[10px] sm:text-xs font-extrabold text-white shadow-lg"
-                >
-                  {lang === 'my' ? 'ဟေး! နိုင်ပြီ 💃🎉' : 'Yay! I Win! 💃'}
-                </motion.div>
-              )}
-
-              {botMood === 'rolling_cry' && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.7 }}
-                  animate={{ opacity: 1, scale: 1, rotate: [-4, 4, -4] }}
-                  transition={{ repeat: Infinity, duration: 0.45 }}
-                  className="absolute -top-9 z-30 whitespace-nowrap px-2.5 py-1 rounded-2xl bg-sky-950/95 border border-sky-300/70 text-[10px] sm:text-xs font-extrabold text-sky-200 shadow-lg"
-                >
-                  {lang === 'my' ? 'အီးဟီး... ရှုံးပြီ 😭' : 'Waaah!! 😭'}
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            {botMood === 'dancing' && (
-              <div className="pointer-events-none absolute -inset-3 z-30">
-                {[
-                  { left: '8%', top: '4%', color: '#facc15' },
-                  { left: '84%', top: '8%', color: '#fb7185' },
-                  { left: '12%', top: '70%', color: '#38bdf8' },
-                  { left: '86%', top: '65%', color: '#4ade80' },
-                ].map((sp, i) => (
-                  <motion.span
-                    key={i}
-                    style={{ left: sp.left, top: sp.top, backgroundColor: sp.color }}
-                    animate={{ y: [0, -14, 0], scale: [0.7, 1.4, 0.7] }}
-                    transition={{ repeat: Infinity, duration: 0.65 + i * 0.15 }}
-                    className="absolute w-2.5 h-2.5 rounded-full shadow-md"
-                  />
-                ))}
-              </div>
-            )}
-
-            {botMood === 'rolling_cry' && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center gap-5 z-10">
-                {[0, 1, 2].map((i) => (
-                  <motion.span
-                    key={i}
-                    animate={{ y: [0, -10, -16], opacity: [0.85, 0.4, 0], scale: [0.6, 1.3, 1.6] }}
-                    transition={{ repeat: Infinity, duration: 0.7, delay: i * 0.22 }}
-                    className="w-3 h-3 rounded-full bg-amber-100/75"
-                  />
-                ))}
-              </div>
-            )}
-
-            <motion.div
-              animate={
-                botMood === 'dancing'
-                  ? {
-                      y: [0, -24, 0, -18, 0],
-                      rotate: [-10, 10, -12, 12, -10],
-                      scale: [1, 1.08, 1, 1.06, 1],
-                    }
-                  : botMood === 'rolling_cry'
-                  ? {
-                      x: [-14, 14, -12, 12, -14],
-                      y: [8, 14, 6, 14, 8],
-                      rotate: [-28, 28, -24, 24, -28],
-                    }
-                  : botMood === 'thinking'
-                  ? { rotate: [-5, 5, -5] }
-                  : botMood === 'bot_scratching'
-                  ? { x: [0, -12, 0] }
-                  : { y: [0, -2.5, 0] }
-              }
-              transition={{
-                repeat:
-                  botMood === 'dancing' || botMood === 'rolling_cry' || botMood === 'thinking'
-                    ? Infinity
-                    : 0,
-                duration:
-                  botMood === 'dancing'
-                    ? 0.72
-                    : botMood === 'rolling_cry'
-                    ? 0.9
-                    : botMood === 'thinking'
-                    ? 1.4
-                    : 0.36,
-                ease: 'easeInOut',
-              }}
-              className="relative w-full aspect-square flex items-center justify-center"
-            >
-              <div className="absolute bottom-[10%] w-[70%] h-[20%] rounded-full bg-black/35 blur-md" />
-              {girlSpriteSrc ? (
-                <img
-                  src={girlSpriteSrc}
-                  alt="Ma Pu Tu"
-                  data-repaired="1"
-                  className="relative w-full h-full object-contain drop-shadow-[0_10px_14px_rgba(35,20,8,0.45)]"
-                />
-              ) : (
-                <PaintedMaPuTuCharacter mood={botMood} />
-              )}
-            </motion.div>
-          </div>
-        </div>
-      </div>
-
-      {/* RESULT OVERLAY BAR */}
+      {/* 5. RESULT OVERLAY BAR */}
       <AnimatePresence>
         {isFinished && (
           <motion.div
@@ -837,7 +953,7 @@ const PaintedMaPuTuCharacter: React.FC<{ mood: TTTBotPhase }> = ({ mood }) => {
 };
 
 /* ============================================================================
- * Dirt Scratched X, O, Dust Burst & Stick-Scratching Hand
+ * Dirt Scratched X, O, Dust Burst & Proportional Stick-Scratching Hand
  * ============================================================================ */
 const DirtScratchedX: React.FC<{ highlight: boolean }> = ({ highlight }) => (
   <svg viewBox="0 0 80 80" className="w-[74%] h-[74%] overflow-visible">
@@ -857,11 +973,11 @@ const DirtScratchedO: React.FC<{ highlight: boolean }> = ({ highlight }) => (
 
 const DirtDustBurst: React.FC = () => {
   const particles = [
-    { x: -18, y: -14, s: 5 },
-    { x: 16, y: -16, s: 4 },
-    { x: -14, y: 15, s: 4.5 },
-    { x: 18, y: 12, s: 5 },
-    { x: 0, y: -20, s: 3.5 },
+    { x: -16, y: -12, s: 4.5 },
+    { x: 14, y: -14, s: 3.8 },
+    { x: -12, y: 14, s: 4 },
+    { x: 16, y: 10, s: 4.5 },
+    { x: 0, y: -18, s: 3.2 },
   ];
   return (
     <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
@@ -886,29 +1002,33 @@ const StickScratchHandOverlay: React.FC<{
 }> = ({ side, targetIdx }) => {
   const center = getCellCenterPercent(targetIdx);
   const isUser = side === 'user';
-  const startOffsetX = isUser ? -95 : 95;
+  const startOffsetX = isUser ? -75 : 75;
   const scratchMotion = isUser
-    ? { x: [0, -10, 10, 10, -10, 0], y: [0, -10, 10, -10, 10, 0] }
-    : { x: [0, 10, 0, -10, 0], y: [-10, 0, 10, 0, -10] };
+    ? { x: [0, -8, 8, 8, -8, 0], y: [0, -8, 8, -8, 8, 0] }
+    : { x: [0, 8, 0, -8, 0], y: [-8, 0, 8, 0, -8] };
 
   return (
     <motion.div
-      initial={{ opacity: 0, x: startOffsetX, y: 18 }}
+      initial={{ opacity: 0, x: startOffsetX, y: 14 }}
       animate={{ opacity: 1, x: 0, y: 0 }}
       exit={{ opacity: 0, x: startOffsetX * 0.7, transition: { duration: 0.16 } }}
       transition={{ duration: 0.16, ease: 'easeOut' }}
-      style={{ left: `${center.x}%`, top: `${center.y}%` }}
+      style={{
+        left: `${center.x}%`,
+        top: `${center.y}%`,
+        width: '48%',
+      }}
       className="pointer-events-none absolute z-30 -translate-x-1/2 -translate-y-1/2"
     >
       <motion.div
         animate={scratchMotion}
         transition={{ duration: 0.34, delay: 0.08, ease: 'easeInOut' }}
-        className="relative"
+        className="relative w-full"
       >
         <svg
           viewBox="0 0 130 70"
-          className={`w-28 sm:w-36 h-16 drop-shadow-[0_6px_8px_rgba(0,0,0,0.5)] ${
-            isUser ? '-translate-x-10' : 'translate-x-10 scale-x-[-1]'
+          className={`w-full h-auto drop-shadow-[0_6px_8px_rgba(0,0,0,0.48)] ${
+            isUser ? '-translate-x-[36%]' : 'translate-x-[36%] scale-x-[-1]'
           }`}
         >
           <path d="M4 42 Q34 36 58 34" stroke="#ebb288" strokeWidth="14" strokeLinecap="round" fill="none" />
