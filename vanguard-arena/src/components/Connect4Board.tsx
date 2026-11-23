@@ -1,14 +1,23 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import { RotateCcw, Sparkles, Trophy } from 'lucide-react';
+import {
+  CONNECT4_ASSET_CONFIG,
+  resolveMediaSlot,
+  type ResolvedMediaAsset,
+} from '../config/connect4Assets.ts';
 import type { Language } from '../types.ts';
+import {
+  Connect4LoadingScreen,
+  SeamlessMediaBackdrop,
+} from './Connect4MediaKit.tsx';
 
 export type KidMood = 'idle' | 'thinking' | 'dropping' | 'happy' | 'crying';
 
 const toSvgUri = (svg: string) =>
   `data:image/svg+xml;utf8,${encodeURIComponent(svg.trim())}`;
 
-// Bot Profile တွင် သုံးမည့် မောင်ဖိုးသား (အပြာရောင် Hoodie ဝတ် ကလေးငယ်) Avatar
+// Bot Profile တွင် သုံးမည့် မောင်ဖိုးသား Avatar
 export const KID_BOT_AVATAR_DATA_URI = toSvgUri(`
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
   <defs>
@@ -71,6 +80,61 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   onLeaveFinished,
 }) => {
   const [hoverCol, setHoverCol] = useState<number | null>(null);
+  const [bgMedia, setBgMedia] = useState<ResolvedMediaAsset>({ kind: 'none', url: null });
+  const [isLoadingScene, setIsLoadingScene] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(15);
+
+  // နောက်ခံ Video / Image ကို အလိုအလျောက် ရှာဖွေပြီး Loading Progress ထိန်းချုပ်မည်
+  useEffect(() => {
+    let mounted = true;
+    const startedAt = Date.now();
+    let mediaReady = false;
+
+    const finishLoading = () => {
+      if (!mounted) return;
+      const elapsed = Date.now() - startedAt;
+      const waitMore = Math.max(0, CONNECT4_ASSET_CONFIG.loadingScreen.minDisplayMs - elapsed);
+      setLoadProgress(100);
+      window.setTimeout(() => {
+        if (mounted) setIsLoadingScene(false);
+      }, waitMore);
+    };
+
+    const progressTicker = window.setInterval(() => {
+      setLoadProgress((prev) => (prev < 88 ? prev + 7 : prev));
+    }, 180);
+
+    // Safety Timeout: အင်တာနက် အရမ်းနှေးလျှင်လည်း ဂိမ်းထဲ ဝင်ခွင့်ပေးမည်
+    const safetyTimer = window.setTimeout(() => {
+      if (!mediaReady) {
+        mediaReady = true;
+        finishLoading();
+      }
+    }, CONNECT4_ASSET_CONFIG.loadingScreen.maxWaitMs);
+
+    resolveMediaSlot('background').then((resolved) => {
+      if (!mounted) return;
+      setBgMedia(resolved);
+      setLoadProgress((p) => Math.max(p, 55));
+      if (resolved.kind === 'none') {
+        mediaReady = true;
+        finishLoading();
+      }
+    });
+
+    return () => {
+      mounted = false;
+      window.clearInterval(progressTicker);
+      window.clearTimeout(safetyTimer);
+    };
+  }, []);
+
+  const handleBackdropReady = () => {
+    setLoadProgress(100);
+    window.setTimeout(() => setIsLoadingScene(false), 260);
+  };
+
+  const hasCustomRoomBackdrop = bgMedia.kind === 'video' || bgMedia.kind === 'image';
 
   const grid: Array<Array<string | null>> =
     match.c4Board || Array.from({ length: 6 }, () => Array(7).fill(null));
@@ -90,6 +154,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
     typeof match.botTargetCol === 'number' ? match.botTargetCol : null;
 
   const isUserTurn =
+    !isLoadingScene &&
     !isFinished &&
     kidMood === 'idle' &&
     (!match.isRealtimePvp || match.turnUserId === currentUserId);
@@ -128,50 +193,21 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
 
   return (
     <div className="relative w-full h-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-amber-300/25 shadow-[0_24px_60px_rgba(0,0,0,0.7)] flex flex-col items-center justify-end pt-3 pb-4 px-3 select-none bg-[#0a1022]">
-      {/* 1. Cozy Galaxy Bedroom Background (Left Galaxy + Right Warm Sunlight) */}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
-        {/* Left Galaxy Swirl Glow */}
-        <div
-          className="absolute -left-16 top-0 w-80 h-80 rounded-full opacity-55 blur-[55px]"
-          style={{
-            background:
-              'radial-gradient(circle, rgba(99,102,241,0.55) 0%, rgba(56,189,248,0.28) 45%, transparent 72%)',
-          }}
-        />
-        {/* Right Warm Window Sunlight */}
-        <div
-          className="absolute -right-12 -top-8 w-80 h-96 rounded-full opacity-50 blur-[65px]"
-          style={{
-            background:
-              'radial-gradient(circle, rgba(254,240,138,0.5) 0%, rgba(251,191,36,0.2) 50%, transparent 75%)',
-          }}
-        />
-        {/* Subtle Stars */}
-        <svg className="absolute inset-0 w-full h-full opacity-45" viewBox="0 0 800 500" preserveAspectRatio="none">
-          <circle cx="110" cy="70" r="1.8" fill="#bae6fd" />
-          <circle cx="180" cy="115" r="2.2" fill="#c7d2fe" />
-          <circle cx="145" cy="160" r="1.4" fill="#fde68a" />
-          <circle cx="240" cy="80" r="1.6" fill="#7dd3fc" />
-          <circle cx="75" cy="140" r="2" fill="#e0e7ff" />
-          <circle cx="290" cy="130" r="1.5" fill="#93c5fd" />
-          <circle cx="520" cy="65" r="1.5" fill="#fef08a" />
-          {/* Galaxy spiral hint */}
-          <ellipse
-            cx="175"
-            cy="125"
-            rx="78"
-            ry="32"
-            transform="rotate(-22 175 125)"
-            fill="none"
-            stroke="#818cf8"
-            strokeWidth="1.5"
-            strokeDasharray="4 6"
-            opacity="0.4"
-          />
-        </svg>
-      </div>
+      {/* 0. Game Entry Loading Screen (Assets များ Load နေချိန် ပြသမည်) */}
+      <AnimatePresence>
+        {isLoadingScene && (
+          <Connect4LoadingScreen lang={lang} progress={loadProgress} />
+        )}
+      </AnimatePresence>
 
-      {/* 2. Top Speech-Bubble Status Pill (Matches Reference Design) */}
+      {/* 1. Auto-Detecting Seamless Video (Mix Transition Loop) / Image Backdrop */}
+      <SeamlessMediaBackdrop
+        media={bgMedia}
+        onReady={handleBackdropReady}
+        onFallback={() => setBgMedia({ kind: 'none', url: null })}
+      />
+
+      {/* 2. Top Speech-Bubble Status Pill */}
       <div className="relative z-30 flex flex-col items-center mb-1">
         <motion.div
           key={statusText()}
@@ -188,22 +224,20 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           }`}
         >
           {statusText()}
-          {/* Speech Bubble Pointer */}
           <span className="absolute left-1/2 -bottom-2 -translate-x-1/2 w-3.5 h-3.5 rotate-45 bg-[#161c33] border-r border-b border-amber-300/55" />
         </motion.div>
 
-        {/* Glowing Halo Ring under Speech Bubble */}
         <div className="mt-2 w-6 h-6 rounded-full border-2 border-amber-300/70 shadow-[0_0_14px_rgba(251,191,36,0.7)] bg-amber-300/10" />
       </div>
 
-      {/* 3. Scene Stage: မောင်ဖိုးသား (Behind Board) + Gold-Trimmed 4-Row Board + Matte Blue Table */}
-      <div className="relative w-full max-w-[440px] flex flex-col items-center">
+      {/* 3. Scene Stage: မောင်ဖိုးသား + Gold-Trimmed 4-Row Board */}
+      <div className="relative z-20 w-full max-w-[440px] flex flex-col items-center">
         {/* Kid Character Peeking Behind Board */}
         <div className="relative z-10 -mb-9 w-full flex justify-center pointer-events-none">
           <PhoTharKidCharacter mood={kidMood} targetCol={botTargetCol} />
         </div>
 
-        {/* Hover Preview Row (User's Golden Disc) */}
+        {/* Hover Preview Row */}
         <div className="relative z-20 w-[308px] sm:w-[368px] h-7 grid grid-cols-7 px-3 mb-0.5">
           {Array.from({ length: 7 }).map((_, c) => {
             const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
@@ -232,7 +266,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
             <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
           </div>
 
-          {/* Main Board Frame (Brushed Gold Outer Border + Deep Navy Face) */}
+          {/* Main Board Frame */}
           <div className="relative p-2 sm:p-3 rounded-2xl bg-gradient-to-b from-[#1e2946] via-[#151e36] to-[#0f172a] border-[3px] border-amber-300/75 shadow-[0_18px_36px_rgba(0,0,0,0.8),inset_0_1px_8px_rgba(254,240,138,0.25)] mb-4">
             <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
               {Array.from({ length: 7 }).map((_, colIdx) => {
@@ -278,7 +312,6 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                                   : 'bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/85 shadow-[0_0_12px_rgba(244,63,94,0.85)]'
                               } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
                             >
-                              {/* Inner Glossy Ring Detail */}
                               <span
                                 className={`w-[62%] h-[62%] rounded-full border ${
                                   cell === 'P1'
@@ -304,16 +337,21 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           </div>
         </div>
 
-        {/* 4. Matte Navy-Blue Foreground Table Surface */}
-        <div className="relative z-10 -mt-5 w-[130%] flex flex-col items-center pointer-events-none">
-          <div
-            className="w-full h-16 sm:h-20 rounded-t-3xl bg-gradient-to-b from-[#3b4b75] via-[#263252] to-[#161e36] border-t-2 border-sky-200/30 shadow-[0_-6px_30px_rgba(15,23,42,0.8)]"
-            style={{ transform: 'perspective(380px) rotateX(42deg)' }}
-          />
-        </div>
+        {/* Contact Shadow (Video/Image စားပွဲခုံပေါ် ဘုတ်တင်ထားသကဲ့သို့ သဘာဝကျစေမည်) */}
+        <div className="pointer-events-none relative z-10 -mt-2 w-[310px] sm:w-[375px] h-5 rounded-full bg-black/65 blur-md" />
+
+        {/* Fallback CSS Table Surface (Custom Video/Image မရှိမှသာ ပြမည်) */}
+        {!hasCustomRoomBackdrop && (
+          <div className="relative z-0 -mt-6 w-[130%] flex flex-col items-center pointer-events-none">
+            <div
+              className="w-full h-16 sm:h-20 rounded-t-3xl bg-gradient-to-b from-[#3b4b75] via-[#263252] to-[#161e36] border-t-2 border-sky-200/30 shadow-[0_-6px_30px_rgba(15,23,42,0.8)]"
+              style={{ transform: 'perspective(380px) rotateX(42deg)' }}
+            />
+          </div>
+        )}
       </div>
 
-      {/* 5. Match Finished Action Bar */}
+      {/* 4. Match Finished Action Bar */}
       <AnimatePresence>
         {isFinished && (
           <motion.div
@@ -380,7 +418,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
 
   return (
     <div className="relative w-60 h-36 sm:h-40 flex items-end justify-center">
-      {/* Thinking Bubble */}
       <AnimatePresence>
         {mood === 'thinking' && (
           <motion.div
@@ -400,7 +437,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
         )}
       </AnimatePresence>
 
-      {/* Happy Celebration Sparkles */}
       <AnimatePresence>
         {mood === 'happy' && (
           <motion.div
@@ -461,30 +497,24 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
           </radialGradient>
         </defs>
 
-        {/* Blue-Grey Hoodie Shoulders */}
         <path
           d="M52 175 C54 128, 76 112, 110 112 C144 112, 166 128, 168 175 Z"
           fill="url(#phoHoodie)"
           stroke="#94a3b8"
           strokeWidth="2"
         />
-        {/* Hoodie Collar */}
         <path d="M84 118 Q110 138 136 118" fill="none" stroke="#64748b" strokeWidth="6" strokeLinecap="round" />
 
-        {/* Ears */}
         <circle cx="64" cy="70" r="10.5" fill="#e8ae88" />
         <circle cx="156" cy="70" r="10.5" fill="#e8ae88" />
 
-        {/* Head */}
         <ellipse cx="110" cy="68" rx="45" ry="43" fill="url(#phoSkin)" />
 
-        {/* Messy Dark Hair */}
         <path
           d="M62 64 C59 26, 84 14, 112 14 C144 14, 161 31, 158 64 C150 48, 138 42, 126 46 C116 34, 96 35, 84 48 C75 43, 67 52, 62 64 Z"
           fill="#1e1b18"
         />
 
-        {/* Rosy Cheeks & Freckles */}
         <ellipse cx="80" cy="80" rx="8" ry="4.5" fill="#fb7185" opacity="0.35" />
         <ellipse cx="140" cy="80" rx="8" ry="4.5" fill="#fb7185" opacity="0.35" />
         <circle cx="78" cy="79" r="1" fill="#b45309" opacity="0.45" />
@@ -492,7 +522,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
         <circle cx="137" cy="81" r="1" fill="#b45309" opacity="0.45" />
         <circle cx="142" cy="79" r="1" fill="#b45309" opacity="0.45" />
 
-        {/* Eyes & Eyebrows */}
         {mood === 'happy' ? (
           <>
             <path d="M82 68 Q92 56 102 68" stroke="#1c1917" strokeWidth="4" fill="none" strokeLinecap="round" />
@@ -507,7 +536,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
             <circle cx="90" cy="66" r="2.2" fill="#fff" />
             <circle cx="126" cy="66" r="2.2" fill="#fff" />
 
-            {/* Falling Tears */}
             <motion.path
               d="M88 76 C84 84, 92 88, 92 82 C92 78, 88 76, 88 76 Z"
               fill="#38bdf8"
@@ -539,7 +567,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
           </>
         )}
 
-        {/* Mouth */}
         {mood === 'happy' ? (
           <path d="M92 85 Q110 105 128 85 Z" fill="#be123c" stroke="#881337" strokeWidth="2" />
         ) : mood === 'crying' ? (
@@ -550,7 +577,6 @@ const PhoTharKidCharacter: React.FC<{ mood: KidMood; targetCol: number | null }>
           <path d="M95 86 Q110 98 125 86" stroke="#9f1239" strokeWidth="3.5" fill="none" strokeLinecap="round" />
         )}
 
-        {/* Right Hand (Screen Left, matches reference image) holding Glowing Red Disc */}
         <motion.g
           animate={
             mood === 'dropping'
