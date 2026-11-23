@@ -91,6 +91,23 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   const [isLoadingScene, setIsLoadingScene] = useState(true);
   const [loadProgress, setLoadProgress] = useState(10);
 
+  // ဖုန်းဖြင့် ကစားနေချိန်တွင် Page Scroll လုံးဝဆွဲမရအောင် Lock ချထားမည်
+  useEffect(() => {
+    const prevHtmlOverflow = document.documentElement.style.overflow;
+    const prevBodyOverflow = document.body.style.overflow;
+    const prevBodyOverscroll = document.body.style.overscrollBehavior;
+
+    document.documentElement.style.overflow = 'hidden';
+    document.body.style.overflow = 'hidden';
+    document.body.style.overscrollBehavior = 'none';
+
+    return () => {
+      document.documentElement.style.overflow = prevHtmlOverflow;
+      document.body.style.overflow = prevBodyOverflow;
+      document.body.style.overscrollBehavior = prevBodyOverscroll;
+    };
+  }, []);
+
   // ဂိမ်းအဝင်တွင် အနည်းဆုံး ၂ စက္ကန့် Loading ပြပြီး Asset အားလုံး အဆင်သင့်ဖြစ်မှ စမည်
   useEffect(() => {
     let mounted = true;
@@ -198,7 +215,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   };
 
   return (
-    <div className="relative w-full h-full max-w-3xl mx-auto rounded-3xl overflow-hidden border border-amber-300/25 shadow-[0_24px_60px_rgba(0,0,0,0.7)] flex flex-col items-center justify-end pt-2 pb-2 sm:pb-3 px-2 select-none bg-[#0a1022]">
+    <div className="relative w-full h-full max-w-3xl mx-auto rounded-2xl sm:rounded-3xl overflow-hidden touch-none overscroll-none border border-amber-300/25 shadow-[0_24px_60px_rgba(0,0,0,0.7)] flex flex-col items-center justify-end pt-1.5 pb-1.5 sm:pb-3 px-2 select-none bg-[#0a1022]">
       {/* 0. Game Entry Loading Screen */}
       <AnimatePresence>
         {isLoadingScene && (
@@ -218,13 +235,13 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         }
       />
 
-      {/* 2. Compact Speech-Bubble Status Pill (No Vertical Bloat) */}
+      {/* 2. Compact Speech-Bubble Status Pill */}
       <div className="relative z-30 flex flex-col items-center shrink-0 mb-0.5">
         <motion.div
           key={statusText()}
-          initial={{ opacity: 0, y: -5, scale: 0.96 }}
+          initial={{ opacity: 0, y: -4, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          className={`relative px-4 py-1.5 rounded-2xl border text-[11px] sm:text-sm font-bold tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md ${
+          className={`relative px-4 py-1 sm:py-1.5 rounded-2xl border text-[11px] sm:text-sm font-bold tracking-wide shadow-[0_8px_24px_rgba(0,0,0,0.45)] backdrop-blur-md ${
             userWon
               ? 'bg-emerald-950/85 border-emerald-400/60 text-emerald-200'
               : botWon
@@ -239,10 +256,10 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         </motion.div>
       </div>
 
-      {/* 3. Responsive No-Scroll Scene Stage: မောင်ဖိုးသား + 4-Row Board */}
-      <div className="relative z-20 w-full flex-1 min-h-0 flex flex-col items-center justify-end">
-        {/* Kid Character Peeking Right Behind the Board */}
-        <div className="relative z-10 -mb-7 sm:-mb-9 w-full flex justify-center pointer-events-none shrink-0 scale-[0.82] sm:scale-95 origin-bottom">
+      {/* 3. No-Scroll Responsive Stage: မောင်ဖိုးသား + 4-Row Board */}
+      <div className="relative z-20 w-full flex-1 min-h-0 flex flex-col items-center justify-end overflow-hidden">
+        {/* Kid Character Peeking Behind Board */}
+        <div className="relative z-10 -mb-8 sm:-mb-9 w-full flex justify-center pointer-events-none shrink-0 scale-[0.76] sm:scale-95 origin-bottom">
           <PhoTharMediaCharacter
             mood={kidMood}
             targetCol={botTargetCol}
@@ -250,16 +267,16 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Custom PNG 3D Board Frame Mode (No Double Board, Large & Perfectly Aligned) */}
+        {/* Custom PNG 3D Board Frame Mode (Exact Hole Alignment + Clipped Discs) */}
         {hasCustomBoardFrame ? (
           <div
             className="relative z-20 flex flex-col items-center shrink-0"
             style={{
-              width: 'min(92vw, 480px, calc(52dvh * 1.24))',
+              width: 'min(94vw, 490px, calc(48dvh * 1.24))',
             }}
           >
             {/* Hover Preview Row Aligned to the 7 Columns */}
-            <div className="w-full px-[12%] h-6 sm:h-7 grid grid-cols-7 mb-0.5">
+            <div className="w-full px-[11.5%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
@@ -270,7 +287,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                           initial={{ opacity: 0, y: -6, scale: 0.75 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.7 }}
-                          className="w-5 h-5 sm:w-7 sm:h-7 rounded-full overflow-hidden flex items-center justify-center"
+                          className="w-5 h-5 sm:w-6 sm:h-6 rounded-full overflow-hidden flex items-center justify-center"
                         >
                           {assets.discUser.kind === 'image' && assets.discUser.url ? (
                             <img
@@ -293,23 +310,23 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
             <div className="relative w-full aspect-[1.24/1]">
               {/* Dark Recessed Backing Behind the 7x6 Holes */}
               <div
-                className="pointer-events-none absolute z-0 rounded-xl bg-[#070c1a]/88 shadow-inner"
+                className="pointer-events-none absolute z-0 rounded-lg bg-[#070c1a]/92 shadow-inner"
                 style={{
-                  top: '5%',
-                  bottom: '16.5%',
-                  left: '11.5%',
-                  right: '11.5%',
+                  top: '6%',
+                  bottom: '24%',
+                  left: '11%',
+                  right: '11%',
                 }}
               />
 
-              {/* Playable 7x6 Grid (Drops Behind the PNG Frame Holes) */}
+              {/* Playable 7x6 Grid (Exact Alignment + overflow-hidden so discs never peek below gold bar) */}
               <div
-                className="absolute z-10 grid grid-cols-7 gap-x-[1.6%] gap-y-[1.8%]"
+                className="absolute z-10 grid grid-cols-7 overflow-hidden"
                 style={{
-                  top: '5.5%',
-                  bottom: '17%',
-                  left: '12%',
-                  right: '12%',
+                  top: '6.5%',
+                  bottom: '24.5%',
+                  left: '11.5%',
+                  right: '11.5%',
                 }}
               >
                 {Array.from({ length: 7 }).map((_, colIdx) => {
@@ -323,9 +340,9 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                       onMouseEnter={() => setHoverCol(colIdx)}
                       onMouseLeave={() => setHoverCol(null)}
                       onClick={() => canClick && onDropColumn(colIdx)}
-                      className={`grid grid-rows-6 gap-y-[1.8%] rounded-lg transition-colors ${
-                        canClick ? 'cursor-pointer hover:bg-amber-300/12' : 'cursor-default'
-                      } ${botTargetCol === colIdx ? 'bg-rose-400/20' : ''}`}
+                      className={`grid grid-rows-6 rounded-md transition-colors ${
+                        canClick ? 'cursor-pointer hover:bg-amber-300/10' : 'cursor-default'
+                      } ${botTargetCol === colIdx ? 'bg-rose-400/15' : ''}`}
                       aria-label={`Column ${colIdx + 1}`}
                     >
                       {Array.from({ length: 6 }).map((__, rowIdx) => {
@@ -341,12 +358,12 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                         return (
                           <div
                             key={`${rowIdx}-${colIdx}`}
-                            className="relative w-full h-full flex items-center justify-center p-[6%]"
+                            className="relative w-full h-full flex items-center justify-center p-[8%]"
                           >
                             {cell && (
                               <motion.div
                                 key={`${rowIdx}-${colIdx}-${cell}`}
-                                initial={{ y: -(rowIdx + 2) * 44, opacity: 0.95 }}
+                                initial={{ y: -(rowIdx + 2) * 42, opacity: 0.95 }}
                                 animate={{ y: 0, opacity: 1 }}
                                 transition={{
                                   type: 'spring',
@@ -358,8 +375,8 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                                   customDiscUrl
                                     ? ''
                                     : cell === 'P1'
-                                    ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_12px_rgba(251,191,36,0.85)]'
-                                    : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_12px_rgba(244,63,94,0.9)]'
+                                    ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_10px_rgba(251,191,36,0.85)]'
+                                    : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_10px_rgba(244,63,94,0.9)]'
                                 } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
                               >
                                 {customDiscUrl ? (
@@ -370,7 +387,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                                   />
                                 ) : (
                                   <span
-                                    className={`w-[60%] h-[60%] rounded-full border ${
+                                    className={`w-[58%] h-[58%] rounded-full border ${
                                       cell === 'P1'
                                         ? 'border-yellow-100/65 bg-amber-300/35'
                                         : 'border-rose-100/65 bg-rose-400/35'
@@ -387,21 +404,21 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                 })}
               </div>
 
-              {/* Front 3D PNG Board Frame (Overlaps Discs Naturally) */}
+              {/* Front 3D PNG Board Frame */}
               <img
                 src={assets.boardOverlay.url!}
                 alt="3D Connect 4 Board"
-                className="pointer-events-none absolute inset-0 z-20 w-full h-full object-fill drop-shadow-[0_16px_28px_rgba(0,0,0,0.85)]"
+                className="pointer-events-none absolute inset-0 z-20 w-full h-full object-fill drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
               />
             </div>
 
             {/* Natural Table Contact Shadow */}
-            <div className="pointer-events-none relative z-10 -mt-2 w-[88%] h-4 rounded-full bg-black/70 blur-md" />
+            <div className="pointer-events-none relative z-10 -mt-2 w-[88%] h-3.5 rounded-full bg-black/70 blur-md" />
           </div>
         ) : (
-          /* Fallback CSS 3D Board (When c4-board-frame.png is not uploaded) */
+          /* Fallback CSS 3D Board */
           <div className="relative z-20 flex flex-col items-center shrink-0">
-            <div className="w-[310px] sm:w-[374px] h-6 sm:h-7 grid grid-cols-7 px-3 mb-0.5">
+            <div className="w-[310px] sm:w-[374px] h-5 sm:h-6 grid grid-cols-7 px-3 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
@@ -412,7 +429,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                           initial={{ opacity: 0, y: -6, scale: 0.75 }}
                           animate={{ opacity: 1, y: 0, scale: 1 }}
                           exit={{ opacity: 0, scale: 0.7 }}
-                          className="w-6 h-6 sm:w-7 sm:h-7 rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_16px_rgba(251,191,36,0.9)]"
+                          className="w-5 h-5 sm:w-6 sm:h-6 rounded-full bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-2 border-yellow-100/90 shadow-[0_0_16px_rgba(251,191,36,0.9)]"
                         />
                       )}
                     </AnimatePresence>
@@ -422,7 +439,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
             </div>
 
             <div className="flex items-end justify-center">
-              <div className="relative w-3 sm:w-3.5 h-[220px] sm:h-[264px] -mr-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
+              <div className="relative w-3 sm:w-3.5 h-[210px] sm:h-[256px] -mr-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
                 <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
                 <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
               </div>
@@ -480,7 +497,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                 </div>
               </div>
 
-              <div className="relative w-3 sm:w-3.5 h-[220px] sm:h-[264px] -ml-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
+              <div className="relative w-3 sm:w-3.5 h-[210px] sm:h-[256px] -ml-1.5 rounded-t-md rounded-b-xl bg-gradient-to-b from-slate-700 via-slate-800 to-slate-950 border border-sky-300/40 shadow-[0_12px_20px_rgba(0,0,0,0.75)] flex flex-col items-center justify-between py-2">
                 <span className="w-1 h-16 rounded-full bg-sky-200 shadow-[0_0_10px_#7dd3fc]" />
                 <span className="w-1 h-10 rounded-full bg-amber-200/90 shadow-[0_0_8px_#fde68a]" />
               </div>
@@ -490,7 +507,6 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           </div>
         )}
 
-        {/* Fallback CSS Table Surface (Custom Room Video/Image မရှိမှသာ ပြမည်) */}
         {!hasCustomRoomBackdrop && (
           <div className="relative z-0 -mt-5 w-[130%] flex flex-col items-center pointer-events-none shrink-0">
             <div
