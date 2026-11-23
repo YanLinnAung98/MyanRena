@@ -258,8 +258,8 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
 
       {/* 3. No-Scroll Responsive Stage: မောင်ဖိုးသား + 4-Row Board */}
       <div className="relative z-20 w-full flex-1 min-h-0 flex flex-col items-center justify-end overflow-hidden">
-        {/* Kid Character Peeking Behind Board */}
-        <div className="relative z-10 -mb-8 sm:-mb-9 w-full flex justify-center pointer-events-none shrink-0 scale-[0.76] sm:scale-95 origin-bottom">
+        {/* Kid Character Peeking Directly Behind Board */}
+        <div className="relative z-10 -mb-10 sm:-mb-11 w-full flex justify-center pointer-events-none shrink-0 scale-[0.78] sm:scale-95 origin-bottom">
           <PhoTharMediaCharacter
             mood={kidMood}
             targetCol={botTargetCol}
@@ -267,7 +267,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Custom PNG 3D Board Frame Mode (Exact Hole Alignment + Clipped Discs) */}
+        {/* Custom PNG 3D Board Frame Mode (Exact Locked 7x6 Hole Alignment) */}
         {hasCustomBoardFrame ? (
           <div
             className="relative z-20 flex flex-col items-center shrink-0"
@@ -275,8 +275,8 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               width: 'min(94vw, 490px, calc(48dvh * 1.24))',
             }}
           >
-            {/* Hover Preview Row Aligned to the 7 Columns */}
-            <div className="w-full px-[11.5%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
+            {/* Hover Preview Row Aligned to the Exact 7 Columns */}
+            <div className="w-full px-[13.4%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
                 return (
@@ -312,21 +312,21 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               <div
                 className="pointer-events-none absolute z-0 rounded-lg bg-[#070c1a]/92 shadow-inner"
                 style={{
-                  top: '6%',
-                  bottom: '24%',
-                  left: '11%',
-                  right: '11%',
+                  top: '7.5%',
+                  bottom: '22%',
+                  left: '12.8%',
+                  right: '12.8%',
                 }}
               />
 
-              {/* Playable 7x6 Grid (Exact Alignment + overflow-hidden so discs never peek below gold bar) */}
+              {/* Playable 7x6 Grid (Locked h-full & absolute cells so rows NEVER shift) */}
               <div
                 className="absolute z-10 grid grid-cols-7 overflow-hidden"
                 style={{
-                  top: '6.5%',
-                  bottom: '24.5%',
-                  left: '11.5%',
-                  right: '11.5%',
+                  top: '8.2%',
+                  bottom: '22.8%',
+                  left: '13.4%',
+                  right: '13.4%',
                 }}
               >
                 {Array.from({ length: 7 }).map((_, colIdx) => {
@@ -340,7 +340,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                       onMouseEnter={() => setHoverCol(colIdx)}
                       onMouseLeave={() => setHoverCol(null)}
                       onClick={() => canClick && onDropColumn(colIdx)}
-                      className={`grid grid-rows-6 rounded-md transition-colors ${
+                      className={`h-full min-h-0 grid grid-rows-6 rounded-md transition-colors ${
                         canClick ? 'cursor-pointer hover:bg-amber-300/10' : 'cursor-default'
                       } ${botTargetCol === colIdx ? 'bg-rose-400/15' : ''}`}
                       aria-label={`Column ${colIdx + 1}`}
@@ -358,43 +358,45 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                         return (
                           <div
                             key={`${rowIdx}-${colIdx}`}
-                            className="relative w-full h-full flex items-center justify-center p-[8%]"
+                            className="relative w-full h-full min-h-0 min-w-0"
                           >
                             {cell && (
-                              <motion.div
-                                key={`${rowIdx}-${colIdx}-${cell}`}
-                                initial={{ y: -(rowIdx + 2) * 42, opacity: 0.95 }}
-                                animate={{ y: 0, opacity: 1 }}
-                                transition={{
-                                  type: 'spring',
-                                  stiffness: 330,
-                                  damping: 21,
-                                  mass: 0.85,
-                                }}
-                                className={`w-full h-full aspect-square rounded-full flex items-center justify-center ${
-                                  customDiscUrl
-                                    ? ''
-                                    : cell === 'P1'
-                                    ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_10px_rgba(251,191,36,0.85)]'
-                                    : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_10px_rgba(244,63,94,0.9)]'
-                                } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
-                              >
-                                {customDiscUrl ? (
-                                  <img
-                                    src={customDiscUrl}
-                                    alt={cell === 'P1' ? 'Yellow Disc' : 'Red Disc'}
-                                    className="w-full h-full object-contain"
-                                  />
-                                ) : (
-                                  <span
-                                    className={`w-[58%] h-[58%] rounded-full border ${
-                                      cell === 'P1'
-                                        ? 'border-yellow-100/65 bg-amber-300/35'
-                                        : 'border-rose-100/65 bg-rose-400/35'
-                                    }`}
-                                  />
-                                )}
-                              </motion.div>
+                              <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+                                <motion.div
+                                  key={`${rowIdx}-${colIdx}-${cell}`}
+                                  initial={{ y: -(rowIdx + 2) * 42, opacity: 0.95 }}
+                                  animate={{ y: 0, opacity: 1 }}
+                                  transition={{
+                                    type: 'spring',
+                                    stiffness: 330,
+                                    damping: 21,
+                                    mass: 0.85,
+                                  }}
+                                  className={`h-[84%] aspect-square rounded-full flex items-center justify-center ${
+                                    customDiscUrl
+                                      ? ''
+                                      : cell === 'P1'
+                                      ? 'border-2 bg-gradient-to-br from-yellow-200 via-amber-400 to-amber-600 border-yellow-100/90 shadow-[0_0_10px_rgba(251,191,36,0.85)]'
+                                      : 'border-2 bg-gradient-to-br from-rose-300 via-red-500 to-rose-700 border-rose-200/90 shadow-[0_0_10px_rgba(244,63,94,0.9)]'
+                                  } ${winning ? 'ring-4 ring-white animate-pulse scale-105' : ''}`}
+                                >
+                                  {customDiscUrl ? (
+                                    <img
+                                      src={customDiscUrl}
+                                      alt={cell === 'P1' ? 'Yellow Disc' : 'Red Disc'}
+                                      className="w-full h-full object-contain"
+                                    />
+                                  ) : (
+                                    <span
+                                      className={`w-[58%] h-[58%] rounded-full border ${
+                                        cell === 'P1'
+                                          ? 'border-yellow-100/65 bg-amber-300/35'
+                                          : 'border-rose-100/65 bg-rose-400/35'
+                                      }`}
+                                    />
+                                  )}
+                                </motion.div>
+                              </div>
                             )}
                           </div>
                         );
