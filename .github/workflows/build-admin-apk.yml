@@ -1,0 +1,59 @@
+name: Build Standalone Admin Android APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 17 (for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Prepare Standalone Admin Web Assets
+        run: |
+          mkdir -p admin-apk-build/www
+          ADMIN_FILE=""
+          for path in "./admin.html" "./public/admin.html" "./vanguard-arena/admin.html" "./vanguard-arena/public/admin.html"; do
+            if [ -f "$path" ]; then
+              ADMIN_FILE="$path"
+              break
+            fi
+          done
+          if [ -z "$ADMIN_FILE" ]; then
+            echo "ERROR: admin.html ဖိုင်ကို Repository ထဲတွင် ရှာမတွေ့ပါ။"
+            exit 1
+          fi
+          cp "$ADMIN_FILE" admin-apk-build/www/index.html
+
+      - name: Initialize Capacitor & Add Android Platform
+        working-directory: admin-apk-build
+        run: |
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init "Vanguard Admin" "com.vanguard.admin" --web-dir www
+          npx cap add android
+          npx cap sync android
+
+      - name: Compile Standalone Android APK
+        working-directory: admin-apk-build/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Upload Standalone APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanguard-Admin-Standalone-APK
+          path: admin-apk-build/android/app/build/outputs/apk/debug/app-debug.apk
