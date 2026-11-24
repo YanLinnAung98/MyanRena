@@ -1,14 +1,17 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
-  CONNECT4_ASSETS,
+  CONNECT4_LOADING_TIMING,
+  CONNECT4_SLOT_NAMES,
   getConnect4BotName,
   KID_BOT_AVATAR_DATA_URI,
+  resolveMediaSlot,
+  type KidMood,
+  type ResolvedAsset,
 } from '../config/connect4Assets.ts';
 
 export { getConnect4BotName, KID_BOT_AVATAR_DATA_URI };
-
-export type KidMood = 'idle' | 'thinking' | 'dropping' | 'happy' | 'crying';
+export type { KidMood };
 
 export interface Connect4BoardProps {
   lang?: 'my' | 'en' | string;
@@ -19,18 +22,21 @@ export interface Connect4BoardProps {
   onLeaveFinished?: () => void;
 }
 
-const transparentCache = new Map<string, string>();
+const processedKidImageCache = new Map<string, string>();
 
 function isExternalUrl(url: string): boolean {
   return /^https?:\/\//i.test(url);
 }
 
-function removeExteriorWhiteBg(img: HTMLImageElement): string {
+/**
+ * Checks if image corners are solid near-white. If already transparent PNG/WebP, skips processing.
+ */
+function removeExteriorWhiteBgIfNeeded(img: HTMLImageElement): string {
   const w = img.naturalWidth || img.width;
   const h = img.naturalHeight || img.height;
   if (!w || !h) return img.src;
 
-  const maxDim = 512;
+  const maxDim = 560;
   const scale = Math.min(1, maxDim / Math.max(w, h));
   const cw = Math.max(1, Math.round(w * scale));
   const ch = Math.max(1, Math.round(h * scale));
@@ -45,19 +51,33 @@ function removeExteriorWhiteBg(img: HTMLImageElement): string {
   const imgData = ctx.getImageData(0, 0, cw, ch);
   const data = imgData.data;
 
-  const visited = new Uint8Array(cw * ch);
-  const queue = new Int32Array(cw * ch);
-  let head = 0;
-  let tail = 0;
+  // If corners are already transparent, return original src untouched
+  const cornerIdx = 0;
+  if (data[cornerIdx + 3] < 20) {
+    return img.src;
+  }
 
   const isNearWhite = (idx: number) => {
     const r = data[idx];
     const g = data[idx + 1];
     const b = data[idx + 2];
+    const a = data[idx + 3];
+    if (a < 20) return true;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    return min >= 224 && max - min <= 30;
+    return min >= 220 && max - min <= 34;
   };
+
+  // If top-left and top-right corners aren't white, skip background removal
+  const topRightIdx = (cw - 1) * 4;
+  if (!isNearWhite(0) && !isNearWhite(topRightIdx)) {
+    return img.src;
+  }
+
+  const visited = new Uint8Array(cw * ch);
+  const queue = new Int32Array(cw * ch);
+  let head = 0;
+  let tail = 0;
 
   const enqueue = (x: number, y: number) => {
     if (x < 0 || x >= cw || y < 0 || y >= ch) return;
@@ -89,6 +109,7 @@ function removeExteriorWhiteBg(img: HTMLImageElement): string {
     enqueue(x, y - 1);
   }
 
+  // Smooth 1px edge feathering
   for (let y = 1; y < ch - 1; y++) {
     for (let x = 1; x < cw - 1; x++) {
       const p = y * cw + x;
@@ -101,8 +122,8 @@ function removeExteriorWhiteBg(img: HTMLImageElement): string {
       ) {
         const idx = p * 4;
         const lum = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        if (lum > 200) {
-          data[idx + 3] = Math.round(((255 - lum) / 55) * 255);
+        if (lum > 195) {
+          data[idx + 3] = Math.round(((255 - lum) / 60) * 255);
         }
       }
     }
@@ -112,59 +133,168 @@ function removeExteriorWhiteBg(img: HTMLImageElement): string {
   return canvas.toDataURL('image/png');
 }
 
-function useTransparentKidSrc(candidates: readonly string[]): string | null {
-  const cacheKey = candidates[0];
-  const [resolvedSrc, setResolvedSrc] = useState<string | null>(
-    () => transparentCache.get(cacheKey) || null
-  );
+function prepareKidImage(url: string): Promise<string> {
+  const cached = processedKidImageCache.get(url);
+  if (cached) return Promise.resolve(cached);
 
-  useEffect(() => {
-    const cached = transparentCache.get(cacheKey);
-    if (cached) {
-      setResolvedSrc(cached);
-      return;
+  return new Promise((resolve) => {
+    const img = new Image();
+    if (isExternalUrl(url)) {
+      img.crossOrigin = 'anonymous';
     }
-
-    let cancelled = false;
-    let index = 0;
-
-    const tryLoad = () => {
-      if (cancelled || index >= candidates.length) return;
-      const url = candidates[index];
-      const img = new Image();
-      if (isExternalUrl(url)) {
-        img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      try {
+        const processed = removeExteriorWhiteBgIfNeeded(img);
+        processedKidImageCache.set(url, processed);
+        resolve(processed);
+      } catch {
+        processedKidImageCache.set(url, url);
+        resolve(url);
       }
-      img.onload = () => {
-        if (cancelled) return;
-        try {
-          const pngUrl = removeExteriorWhiteBg(img);
-          transparentCache.set(cacheKey, pngUrl);
-          setResolvedSrc(pngUrl);
-        } catch {
-          transparentCache.set(cacheKey, url);
-          setResolvedSrc(url);
-        }
-      };
-      img.onerror = () => {
-        index += 1;
-        tryLoad();
-      };
-      img.src = url;
     };
+    img.onerror = () => resolve(url);
+    img.src = url;
+  });
+}
 
-    tryLoad();
-    return () => {
-      cancelled = true;
+function preloadVideoElement(url: string, timeoutMs = 5000): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(timer);
+      resolve();
     };
-  }, [cacheKey, candidates]);
-
-  return resolvedSrc;
+    const timer = window.setTimeout(finish, timeoutMs);
+    const v = document.createElement('video');
+    v.preload = 'auto';
+    v.muted = true;
+    v.playsInline = true;
+    v.onloadeddata = finish;
+    v.oncanplay = finish;
+    v.onerror = finish;
+    v.src = url;
+    v.load();
+  });
 }
 
 /**
- * Fallback 3D-shaded Maung Pho Thar Head & Shoulders (if image assets are still loading or missing)
+ * Renders a kid video (.mp4 or .webm). If the video has a solid white background (e.g. Flow AI MP4),
+ * automatically keys out the white background onto a transparent canvas in real time.
  */
+const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [useCanvasKey, setUseCanvasKey] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    video.muted = true;
+    video.play().catch(() => {});
+
+    let rafId = 0;
+    let active = true;
+    let decided = false;
+    let needsKey = false;
+
+    const renderFrame = () => {
+      if (!active || !videoRef.current || !canvasRef.current) return;
+      const v = videoRef.current;
+      const c = canvasRef.current;
+      if (v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
+        const targetW = Math.min(360, v.videoWidth);
+        const targetH = Math.round((targetW / v.videoWidth) * v.videoHeight);
+        if (c.width !== targetW || c.height !== targetH) {
+          c.width = targetW;
+          c.height = targetH;
+        }
+        const ctx = c.getContext('2d', { willReadFrequently: true });
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, targetW, targetH);
+          try {
+            const frame = ctx.getImageData(0, 0, targetW, targetH);
+            const d = frame.data;
+            if (!decided) {
+              decided = true;
+              const r = d[0], g = d[1], b = d[2], a = d[3];
+              needsKey = a > 200 && Math.min(r, g, b) >= 225 && Math.max(r, g, b) - Math.min(r, g, b) <= 28;
+              setUseCanvasKey(needsKey);
+            }
+            if (needsKey) {
+              const w = targetW;
+              const h = targetH;
+              const visited = new Uint8Array(w * h);
+              const queue = new Int32Array(w * h);
+              let head = 0;
+              let tail = 0;
+              const isWhite = (idx: number) => {
+                const r = d[idx], g = d[idx + 1], b = d[idx + 2];
+                const min = Math.min(r, g, b);
+                const max = Math.max(r, g, b);
+                return min >= 222 && max - min <= 30;
+              };
+              const enq = (x: number, y: number) => {
+                if (x < 0 || x >= w || y < 0 || y >= h) return;
+                const p = y * w + x;
+                if (visited[p] || !isWhite(p * 4)) return;
+                visited[p] = 1;
+                queue[tail++] = p;
+              };
+              for (let x = 0; x < w; x++) { enq(x, 0); enq(x, h - 1); }
+              for (let y = 0; y < h; y++) { enq(0, y); enq(w - 1, y); }
+              while (head < tail) {
+                const p = queue[head++];
+                d[p * 4 + 3] = 0;
+                const x = p % w;
+                const y = (p - x) / w;
+                enq(x + 1, y); enq(x - 1, y); enq(x, y + 1); enq(x, y - 1);
+              }
+              ctx.putImageData(frame, 0, 0);
+            } else {
+              return; // Transparent webm or non-white bg: stop canvas loop & show raw video
+            }
+          } catch {
+            setUseCanvasKey(false);
+            return;
+          }
+        }
+      }
+      rafId = window.requestAnimationFrame(renderFrame);
+    };
+
+    rafId = window.requestAnimationFrame(renderFrame);
+    return () => {
+      active = false;
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [src]);
+
+  return (
+    <div className="relative w-full h-full flex items-end justify-center">
+      <video
+        ref={videoRef}
+        src={src}
+        crossOrigin={isExternalUrl(src) ? 'anonymous' : undefined}
+        autoPlay
+        loop={loop}
+        muted
+        playsInline
+        className={`w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)] ${
+          useCanvasKey ? 'opacity-0 absolute pointer-events-none' : 'opacity-100'
+        }`}
+      />
+      <canvas
+        ref={canvasRef}
+        className={`w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)] ${
+          useCanvasKey ? 'block' : 'hidden'
+        }`}
+      />
+    </div>
+  );
+};
+
 const PhoTharFallbackCharacter: React.FC<{ mood: KidMood }> = ({ mood }) => (
   <svg
     viewBox="0 0 220 220"
@@ -184,146 +314,47 @@ const PhoTharFallbackCharacter: React.FC<{ mood: KidMood }> = ({ mood }) => (
         <stop offset="0%" stopColor="#658bb8" />
         <stop offset="100%" stopColor="#314c70" />
       </linearGradient>
-      <radialGradient id="c4RedDisc" cx="35%" cy="30%" r="70%">
-        <stop offset="0%" stopColor="#fda4af" />
-        <stop offset="48%" stopColor="#ef4444" />
-        <stop offset="100%" stopColor="#991b1b" />
-      </radialGradient>
     </defs>
-
-    {/* Hoodie Body (hidden behind the board) */}
-    <path
-      d="M44 220 C48 158, 76 142, 110 142 C144 142, 172 158, 176 220 Z"
-      fill="url(#c4Hoodie)"
-    />
-    <path
-      d="M78 145 Q110 166 142 145"
-      stroke="#233854"
-      strokeWidth="7"
-      fill="none"
-      strokeLinecap="round"
-    />
-
-    {/* Neck */}
+    <path d="M44 220 C48 158, 76 142, 110 142 C144 142, 172 158, 176 220 Z" fill="url(#c4Hoodie)" />
     <rect x="96" y="124" width="28" height="24" rx="12" fill="#e5a67e" />
-
-    {/* Ears */}
     <circle cx="58" cy="96" r="13" fill="#ebb089" />
     <circle cx="162" cy="96" r="13" fill="#ebb089" />
-
-    {/* Head */}
     <ellipse cx="110" cy="92" rx="52" ry="50" fill="url(#c4Skin)" />
-
-    {/* Messy Dark Brown Hair */}
+    <path d="M52 90 C48 36, 80 18, 112 18 C146 18, 172 38, 168 90 C156 68, 142 56, 124 62 C114 48, 94 48, 80 64 C68 58, 58 72, 52 90 Z" fill="url(#c4Hair)" />
+    <ellipse cx="86" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
+    <ellipse cx="134" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
+    <circle cx="87" cy="93" r="6.2" fill="#3a2013" />
+    <circle cx="133" cy="93" r="6.2" fill="#3a2013" />
+    <circle cx="85" cy="90" r="2.5" fill="#ffffff" />
+    <circle cx="131" cy="90" r="2.5" fill="#ffffff" />
+    <path d="M74 74 Q86 68 98 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
+    <path d="M122 74 Q134 68 146 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
+    <ellipse cx="110" cy="103" rx="6" ry="4" fill="#df9b74" />
     <path
-      d="M52 90 C48 36, 80 18, 112 18 C146 18, 172 38, 168 90 C156 68, 142 56, 124 62 C114 48, 94 48, 80 64 C68 58, 58 72, 52 90 Z"
-      fill="url(#c4Hair)"
-    />
-    <path
-      d="M76 24 Q102 8 128 22 Q150 18 160 40"
-      stroke="#251711"
-      strokeWidth="7"
+      d={mood === 'crying' ? 'M95 125 Q110 112 125 125' : 'M94 116 Q110 128 126 116'}
+      stroke="#8f3a2e"
+      strokeWidth="3.8"
       fill="none"
       strokeLinecap="round"
     />
-
-    {/* Blush & Freckles */}
-    <ellipse cx="76" cy="108" rx="10" ry="5" fill="#f4847a" opacity="0.4" />
-    <ellipse cx="144" cy="108" rx="10" ry="5" fill="#f4847a" opacity="0.4" />
-    <circle cx="80" cy="105" r="1.4" fill="#b86b4b" />
-    <circle cx="86" cy="108" r="1.2" fill="#b86b4b" />
-    <circle cx="134" cy="108" r="1.2" fill="#b86b4b" />
-    <circle cx="140" cy="105" r="1.4" fill="#b86b4b" />
-
-    {/* Eyes & Eyebrows */}
-    {mood === 'happy' ? (
-      <>
-        <path d="M74 92 Q86 78 98 92" stroke="#221510" strokeWidth="4.5" fill="none" strokeLinecap="round" />
-        <path d="M122 92 Q134 78 146 92" stroke="#221510" strokeWidth="4.5" fill="none" strokeLinecap="round" />
-      </>
-    ) : mood === 'crying' ? (
-      <>
-        <path d="M74 74 L98 82" stroke="#2a1b14" strokeWidth="4" strokeLinecap="round" />
-        <path d="M146 74 L122 82" stroke="#2a1b14" strokeWidth="4" strokeLinecap="round" />
-        <ellipse cx="86" cy="92" rx="9" ry="9.5" fill="#ffffff" />
-        <ellipse cx="134" cy="92" rx="9" ry="9.5" fill="#ffffff" />
-        <circle cx="87" cy="93" r="6" fill="#3a2013" />
-        <circle cx="133" cy="93" r="6" fill="#3a2013" />
-        <circle cx="84.5" cy="90" r="2.4" fill="#ffffff" />
-        <circle cx="130.5" cy="90" r="2.4" fill="#ffffff" />
-        <ellipse cx="78" cy="106" rx="4" ry="7" fill="#7dd3fc" opacity="0.9" />
-        <ellipse cx="142" cy="106" rx="4" ry="7" fill="#7dd3fc" opacity="0.9" />
-      </>
-    ) : (
-      <>
-        <path d="M74 74 Q86 68 98 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
-        <path d="M122 74 Q134 68 146 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
-        <ellipse cx="86" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
-        <ellipse cx="134" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
-        <circle cx={mood === 'thinking' ? 89 : 87} cy={mood === 'thinking' ? 89 : 93} r="6.2" fill="#3a2013" />
-        <circle cx={mood === 'thinking' ? 137 : 133} cy={mood === 'thinking' ? 89 : 93} r="6.2" fill="#3a2013" />
-        <circle cx="85" cy="90" r="2.5" fill="#ffffff" />
-        <circle cx="131" cy="90" r="2.5" fill="#ffffff" />
-      </>
-    )}
-
-    {/* Nose */}
-    <ellipse cx="110" cy="103" rx="6" ry="4" fill="#df9b74" />
-
-    {/* Mouth */}
-    {mood === 'happy' ? (
-      <path d="M92 115 Q110 134 128 115 Z" fill="#9f1239" stroke="#7f1d1d" strokeWidth="2" />
-    ) : mood === 'crying' ? (
-      <path d="M95 125 Q110 112 125 125" stroke="#8f3a2e" strokeWidth="4" fill="none" strokeLinecap="round" />
-    ) : mood === 'thinking' ? (
-      <path d="M100 119 Q112 116 122 119" stroke="#8f3a2e" strokeWidth="3.5" fill="none" strokeLinecap="round" />
-    ) : (
-      <path d="M94 116 Q110 128 126 116" stroke="#8f3a2e" strokeWidth="3.8" fill="none" strokeLinecap="round" />
-    )}
-
-    {/* Peeking Hand + Red Disc when idle/dropping */}
-    {mood !== 'crying' && mood !== 'happy' && (
-      <g>
-        <circle cx="56" cy="132" r="14" fill="url(#c4RedDisc)" stroke="#fecdd3" strokeWidth="2" />
-        <circle cx="48" cy="138" r="10" fill="url(#c4Skin)" />
-      </g>
-    )}
   </svg>
 );
 
 const Connect4LoadingOverlay: React.FC<{
   lang: string;
-  onDone: () => void;
-}> = ({ lang, onDone }) => {
-  const [videoIdx, setVideoIdx] = useState(0);
-  const [videoFailed, setVideoFailed] = useState(false);
-  const [imgIdx, setImgIdx] = useState(0);
-  const [imgLoaded, setImgLoaded] = useState(false);
-  const [progress, setProgress] = useState(12);
+  progress: number;
+  media: ResolvedAsset;
+  stageLabel: string;
+  onSkip: () => void;
+}> = ({ lang, progress, media, stageLabel, onSkip }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
-    const start = Date.now();
-    const duration = 2200;
-    const tick = window.setInterval(() => {
-      const elapsed = Date.now() - start;
-      const pct = Math.min(100, Math.round(12 + (elapsed / duration) * 88));
-      setProgress(pct);
-      if (elapsed >= duration) {
-        window.clearInterval(tick);
-        onDone();
-      }
-    }, 60);
-
-    return () => window.clearInterval(tick);
-  }, [onDone]);
-
-  useEffect(() => {
     const v = videoRef.current;
-    if (!v || videoFailed) return;
+    if (!v || media.kind !== 'video') return;
     v.muted = true;
     v.play().catch(() => {});
-  }, [videoIdx, videoFailed]);
+  }, [media.kind, media.url]);
 
   return (
     <motion.div
@@ -332,54 +363,35 @@ const Connect4LoadingOverlay: React.FC<{
       transition={{ duration: 0.35 }}
       className="absolute inset-0 z-50 flex flex-col items-center justify-end overflow-hidden bg-gradient-to-b from-[#0b1530] via-[#080f22] to-[#050811]"
     >
-      {!videoFailed ? (
+      {media.kind === 'video' && media.url && (
         <video
-          key={CONNECT4_ASSETS.loadingVideo[videoIdx]}
+          key={media.url}
           ref={videoRef}
-          src={CONNECT4_ASSETS.loadingVideo[videoIdx]}
+          src={media.url}
           autoPlay
           loop
           muted
           playsInline
           preload="auto"
-          onCanPlay={(e) => {
-            e.currentTarget.play().catch(() => {});
-          }}
-          onError={() => {
-            if (videoIdx + 1 < CONNECT4_ASSETS.loadingVideo.length) {
-              setVideoIdx((i) => i + 1);
-            } else {
-              setVideoFailed(true);
-            }
-          }}
+          onLoadedData={(e) => e.currentTarget.play().catch(() => {})}
+          onCanPlay={(e) => e.currentTarget.play().catch(() => {})}
           className="absolute inset-0 w-full h-full object-cover"
         />
-      ) : (
-        imgIdx < CONNECT4_ASSETS.loadingImage.length && (
-          <img
-            src={CONNECT4_ASSETS.loadingImage[imgIdx]}
-            alt=""
-            onLoad={() => setImgLoaded(true)}
-            onError={() => {
-              setImgLoaded(false);
-              setImgIdx((i) => i + 1);
-            }}
-            className={`absolute inset-0 w-full h-full object-cover transition-opacity duration-300 ${
-              imgLoaded ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
-        )
+      )}
+
+      {media.kind === 'image' && media.url && (
+        <img
+          src={media.url}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover"
+        />
       )}
 
       <div className="absolute inset-0 bg-gradient-to-t from-[#050811] via-[#050811]/30 to-transparent pointer-events-none" />
 
       <div className="relative z-10 w-full max-w-md px-6 pb-8 sm:pb-10 flex flex-col items-center gap-3">
         <div className="flex items-center justify-between w-full text-xs sm:text-sm font-semibold text-amber-200/95 tracking-wide">
-          <span>
-            {lang === 'my'
-              ? '၄ လုံးတန်း 3D အခန်း ပြင်ဆင်နေပါသည်...'
-              : 'Preparing Connect 4 3D Arena...'}
-          </span>
+          <span>{stageLabel}</span>
           <span>{progress}%</span>
         </div>
 
@@ -387,20 +399,39 @@ const Connect4LoadingOverlay: React.FC<{
           <motion.div
             className="h-full rounded-full bg-gradient-to-r from-amber-500 via-yellow-300 to-amber-400"
             animate={{ width: `${progress}%` }}
-            transition={{ ease: 'easeOut', duration: 0.15 }}
+            transition={{ ease: 'easeOut', duration: 0.2 }}
           />
         </div>
 
-        <button
-          type="button"
-          onClick={onDone}
-          className="mt-1 px-4 py-1.5 rounded-full text-xs font-medium text-amber-100/80 hover:text-white bg-slate-900/60 hover:bg-slate-800/80 border border-amber-400/30 transition cursor-pointer"
-        >
-          {lang === 'my' ? 'ကျော်မည်' : 'Skip'}
-        </button>
+        {progress >= 90 && (
+          <button
+            type="button"
+            onClick={onSkip}
+            className="mt-1 px-4 py-1.5 rounded-full text-xs font-medium text-amber-100/80 hover:text-white bg-slate-900/60 hover:bg-slate-800/80 border border-amber-400/30 transition cursor-pointer"
+          >
+            {lang === 'my' ? 'ကျော်မည်' : 'Skip'}
+          </button>
+        )}
       </div>
     </motion.div>
   );
+};
+
+interface LoadedKidBundle {
+  idle: ResolvedAsset;
+  thinking: ResolvedAsset;
+  dropping: ResolvedAsset;
+  happy: ResolvedAsset;
+  crying: ResolvedAsset;
+}
+
+const EMPTY_ASSET: ResolvedAsset = { kind: 'none', url: null };
+const EMPTY_KID_BUNDLE: LoadedKidBundle = {
+  idle: EMPTY_ASSET,
+  thinking: EMPTY_ASSET,
+  dropping: EMPTY_ASSET,
+  happy: EMPTY_ASSET,
+  crying: EMPTY_ASSET,
 };
 
 export const Connect4Board: React.FC<Connect4BoardProps> = ({
@@ -412,15 +443,132 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   onLeaveFinished,
 }) => {
   const [hoverCol, setHoverCol] = useState<number | null>(null);
-  const [bgVideoIdx, setBgVideoIdx] = useState(0);
-  const [bgVideoFailed, setBgVideoFailed] = useState(false);
-  const [bgImgIdx, setBgImgIdx] = useState(0);
-  const [bgImgLoaded, setBgImgLoaded] = useState(false);
-  const [showIntro, setShowIntro] = useState(true);
+  const [loadingMedia, setLoadingMedia] = useState<ResolvedAsset>(EMPTY_ASSET);
+  const [roomBg, setRoomBg] = useState<ResolvedAsset>(EMPTY_ASSET);
+  const [kidAssets, setKidAssets] = useState<LoadedKidBundle>(EMPTY_KID_BUNDLE);
+  const [isLoadingScene, setIsLoadingScene] = useState(true);
+  const [loadProgress, setLoadProgress] = useState(10);
+  const [stageLabel, setStageLabel] = useState(
+    lang === 'my'
+      ? '၄ လုံးတန်း 3D အခန်း ပြင်ဆင်နေပါသည်...'
+      : 'Preparing Connect 4 3D Arena...'
+  );
 
+  // Strict Preload Gate: Loading View only closes AFTER c4-loading.mp4 shows AND Maung Pho Thar is 100% loaded
   useEffect(() => {
-    setShowIntro(true);
-  }, [match?.id]);
+    let mounted = true;
+    let closed = false;
+    const startedAt = Date.now();
+    setIsLoadingScene(true);
+    setLoadProgress(12);
+
+    const finishLoading = () => {
+      if (!mounted || closed) return;
+      closed = true;
+      const elapsed = Date.now() - startedAt;
+      const remaining = Math.max(0, CONNECT4_LOADING_TIMING.minDisplayMs - elapsed);
+      setLoadProgress(100);
+      window.setTimeout(() => {
+        if (mounted) setIsLoadingScene(false);
+      }, remaining);
+    };
+
+    const safetyTimer = window.setTimeout(
+      finishLoading,
+      CONNECT4_LOADING_TIMING.maxWaitMs
+    );
+
+    const runPreload = async () => {
+      // 1. Immediately resolve c4-loading.mp4 (video priority) so Loading View displays it right away
+      const loadingSlot = await resolveMediaSlot(CONNECT4_SLOT_NAMES.loading, 'video');
+      if (!mounted) return;
+      setLoadingMedia(loadingSlot);
+      setLoadProgress(28);
+
+      // 2. Resolve Room Background & Maung Pho Thar (idle) in parallel
+      setStageLabel(
+        lang === 'my'
+          ? 'မောင်ဖိုးသား 3D ဇာတ်ကောင် ဖွင့်နေပါသည်...'
+          : 'Loading Maung Pho Thar 3D...'
+      );
+      const [bgSlot, kidIdleRaw] = await Promise.all([
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.roomBg, 'video'),
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.idle, 'video'),
+      ]);
+      if (!mounted) return;
+      setRoomBg(bgSlot);
+      setLoadProgress(55);
+
+      // 3. Fully decode/process Maung Pho Thar (idle) + Room Background BEFORE closing Loading View
+      const prepareSingleKid = async (slot: ResolvedAsset): Promise<ResolvedAsset> => {
+        if (slot.kind === 'image' && slot.url) {
+          const processedUrl = await prepareKidImage(slot.url);
+          return { kind: 'image', url: processedUrl };
+        }
+        if (slot.kind === 'video' && slot.url) {
+          await preloadVideoElement(slot.url, 6000);
+          return slot;
+        }
+        return EMPTY_ASSET;
+      };
+
+      const preloadBgPromise =
+        bgSlot.kind === 'video' && bgSlot.url
+          ? preloadVideoElement(bgSlot.url, 4000)
+          : bgSlot.kind === 'image' && bgSlot.url
+          ? new Promise<void>((res) => {
+              const img = new Image();
+              img.onload = () => res();
+              img.onerror = () => res();
+              img.src = bgSlot.url!;
+            })
+          : Promise.resolve();
+
+      const [kidIdleReady] = await Promise.all([
+        prepareSingleKid(kidIdleRaw),
+        preloadBgPromise,
+      ]);
+      if (!mounted) return;
+
+      setKidAssets((prev) => ({ ...prev, idle: kidIdleReady }));
+      setLoadProgress(92);
+      setStageLabel(
+        lang === 'my' ? 'အဆင်သင့်ဖြစ်ပါပြီ!' : 'Ready to Play!'
+      );
+
+      // Loading screen can now finish (after minDisplayMs) because Maung Pho Thar is 100% ready!
+      finishLoading();
+
+      // 4. Preload remaining moods in background seamlessly
+      const [thinkingRaw, droppingRaw, happyRaw, cryingRaw] = await Promise.all([
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.thinking, 'video'),
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.dropping, 'video'),
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.happy, 'video'),
+        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.crying, 'video'),
+      ]);
+      const [thinking, dropping, happy, crying] = await Promise.all([
+        prepareSingleKid(thinkingRaw),
+        prepareSingleKid(droppingRaw),
+        prepareSingleKid(happyRaw),
+        prepareSingleKid(cryingRaw),
+      ]);
+      if (!mounted) return;
+      setKidAssets((prev) => ({
+        ...prev,
+        thinking,
+        dropping,
+        happy,
+        crying,
+      }));
+    };
+
+    runPreload();
+
+    return () => {
+      mounted = false;
+      window.clearTimeout(safetyTimer);
+    };
+  }, [match?.id, lang]);
 
   const grid: Array<Array<string | null>> = useMemo(() => {
     if (Array.isArray(match?.c4Board) && match.c4Board.length === 6) {
@@ -434,6 +582,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   const isFinished = match?.status === 'finished';
   const isPvp = Boolean(match?.isRealtimePvp && players.length >= 2);
   const isMyTurn =
+    !isLoadingScene &&
     !isFinished &&
     (isPvp
       ? match?.turnUserId === currentUserId
@@ -459,26 +608,11 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
     return 'idle';
   }, [isFinished, match?.isDraw, match?.winnerId, match?.botPhase, currentUserId]);
 
-  const kidIdleSrc = useTransparentKidSrc(CONNECT4_ASSETS.kid.idle);
-  const kidThinkingSrc = useTransparentKidSrc(CONNECT4_ASSETS.kid.thinking);
-  const kidDroppingSrc = useTransparentKidSrc(CONNECT4_ASSETS.kid.dropping);
-  const kidHappySrc = useTransparentKidSrc(CONNECT4_ASSETS.kid.happy);
-  const kidCryingSrc = useTransparentKidSrc(CONNECT4_ASSETS.kid.crying);
-
-  const activeKidSrc = useMemo(() => {
-    switch (kidMood) {
-      case 'thinking':
-        return kidThinkingSrc || kidIdleSrc;
-      case 'dropping':
-        return kidDroppingSrc || kidIdleSrc;
-      case 'happy':
-        return kidHappySrc || kidIdleSrc;
-      case 'crying':
-        return kidCryingSrc || kidIdleSrc;
-      default:
-        return kidIdleSrc;
-    }
-  }, [kidMood, kidIdleSrc, kidThinkingSrc, kidDroppingSrc, kidHappySrc, kidCryingSrc]);
+  const activeKidAsset: ResolvedAsset = useMemo(() => {
+    const moodAsset = kidAssets[kidMood];
+    if (moodAsset.kind !== 'none' && moodAsset.url) return moodAsset;
+    return kidAssets.idle;
+  }, [kidAssets, kidMood]);
 
   const winningSet = useMemo(() => {
     const set = new Set<string>();
@@ -521,56 +655,41 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden select-none bg-[radial-gradient(ellipse_at_top,#1b2b52_0%,#0c1428_55%,#060a14_100%)]">
       {/* 1. 3D ROOM BACKGROUND (Unchanged) */}
-      {!bgVideoFailed ? (
+      {roomBg.kind === 'video' && roomBg.url && (
         <video
-          key={CONNECT4_ASSETS.roomBgVideo[bgVideoIdx]}
-          src={CONNECT4_ASSETS.roomBgVideo[bgVideoIdx]}
+          key={roomBg.url}
+          src={roomBg.url}
           autoPlay
           loop
           muted
           playsInline
-          onCanPlay={(e) => {
-            e.currentTarget.play().catch(() => {});
-          }}
-          onError={() => {
-            if (bgVideoIdx + 1 < CONNECT4_ASSETS.roomBgVideo.length) {
-              setBgVideoIdx((i) => i + 1);
-            } else {
-              setBgVideoFailed(true);
-            }
-          }}
+          onCanPlay={(e) => e.currentTarget.play().catch(() => {})}
           className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none"
         />
-      ) : (
-        bgImgIdx < CONNECT4_ASSETS.roomBgImage.length && (
-          <img
-            src={CONNECT4_ASSETS.roomBgImage[bgImgIdx]}
-            alt=""
-            onLoad={() => setBgImgLoaded(true)}
-            onError={() => {
-              setBgImgLoaded(false);
-              setBgImgIdx((i) => i + 1);
-            }}
-            className={`absolute inset-0 w-full h-full object-cover object-center pointer-events-none transition-opacity duration-300 ${
-              bgImgLoaded ? 'opacity-100' : 'opacity-0'
-            }`}
-          />
-        )
       )}
-
+      {roomBg.kind === 'image' && roomBg.url && (
+        <img
+          src={roomBg.url}
+          alt=""
+          className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none"
+        />
+      )}
       <div className="absolute inset-0 bg-gradient-to-b from-[#060913]/40 via-transparent to-[#060913]/50 pointer-events-none" />
 
-      {/* 2. LOADING VIDEO OVERLAY */}
+      {/* 2. LOADING VIDEO OVERLAY (Stays open until Maung Pho Thar is 100% ready) */}
       <AnimatePresence>
-        {showIntro && (
+        {isLoadingScene && (
           <Connect4LoadingOverlay
             lang={lang}
-            onDone={() => setShowIntro(false)}
+            progress={loadProgress}
+            media={loadingMedia}
+            stageLabel={stageLabel}
+            onSkip={() => setIsLoadingScene(false)}
           />
         )}
       </AnimatePresence>
 
-      {/* 3. RESPONSIVE PLAY STAGE (Same board size, Maung Pho Thar seated naturally behind board) */}
+      {/* 3. RESPONSIVE PLAY STAGE (Board size unchanged; Maung Pho Thar head peeks naturally above board) */}
       <div className="relative z-10 w-full max-w-[min(94vw,430px)] sm:max-w-[min(92vw,470px)] px-2 sm:px-4 py-2 flex flex-col items-center justify-center">
         {/* Luxury Speech Bubble */}
         <motion.div
@@ -585,7 +704,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           <div className="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 rotate-45 bg-[#10182b]/90 border-r border-b border-amber-300/60" />
         </motion.div>
 
-        {/* BOT KID LAYER (z-10): Head peeks naturally above board; torso is hidden behind the solid board */}
+        {/* BOT KID LAYER (z-10): Head & face peek naturally over board; torso stays hidden behind board */}
         <motion.div
           animate={{
             x: kidShiftX,
@@ -604,11 +723,17 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               ease: 'easeInOut',
             },
           }}
-          className="relative z-10 w-[56%] sm:w-[54%] aspect-square -mb-[27%] sm:-mb-[26%] pointer-events-none flex items-end justify-center"
+          className="relative z-10 w-[56%] sm:w-[54%] aspect-square -mb-[22%] sm:-mb-[21%] pointer-events-none flex items-end justify-center"
         >
-          {activeKidSrc ? (
+          {activeKidAsset.kind === 'video' && activeKidAsset.url ? (
+            <KidVideoRenderer
+              key={activeKidAsset.url}
+              src={activeKidAsset.url}
+              loop={kidMood !== 'dropping'}
+            />
+          ) : activeKidAsset.kind === 'image' && activeKidAsset.url ? (
             <img
-              src={activeKidSrc}
+              src={activeKidAsset.url}
               alt="Maung Pho Thar"
               className="w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)]"
             />
@@ -617,9 +742,9 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           )}
         </motion.div>
 
-        {/* LUXURY 3D UPRIGHT CONNECT 4 BOARD (z-20, strictly hides kid's torso behind it) */}
+        {/* LUXURY 3D UPRIGHT CONNECT 4 BOARD (z-20, hides kid's torso behind it) */}
         <div className="relative z-20 w-full flex items-end justify-center">
-          {/* Floating Hover / Drop Preview Disc (Absolute above board rim so zero gap between kid and board) */}
+          {/* Floating Hover / Drop Preview Disc */}
           <div className="absolute -top-7 sm:-top-8 inset-x-0 z-30 flex justify-center pointer-events-none">
             <div className="w-[88%] h-6 sm:h-7 grid grid-cols-7 gap-1.5 px-3">
               {[0, 1, 2, 3, 4, 5, 6].map((col) => {
