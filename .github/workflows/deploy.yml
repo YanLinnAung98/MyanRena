@@ -35,7 +35,6 @@ jobs:
             exit 1
           fi
           APP_DIR=$(dirname "$PKG_PATH")
-          echo "Found project in: $APP_DIR"
           echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
 
       - name: Install dependencies
@@ -46,9 +45,10 @@ jobs:
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npx vite build
 
-      - name: Copy all public assets into dist/assets
+      - name: Copy public assets and Admin PWA files into dist
         run: |
-          TARGET_DIR="${{ steps.find_dir.outputs.app_dir }}/dist/assets"
+          DIST_DIR="${{ steps.find_dir.outputs.app_dir }}/dist"
+          TARGET_DIR="$DIST_DIR/assets"
           mkdir -p "$TARGET_DIR"
           for src in "public/assets" "assets" "${{ steps.find_dir.outputs.app_dir }}/public/assets"; do
             if [ -d "$src" ]; then
@@ -61,7 +61,14 @@ jobs:
           for f in "$TARGET_DIR"/*.JPG; do
             [ -e "$f" ] && cp -v "$f" "${f%.JPG}.jpg" || true
           done
-          ls -la "$TARGET_DIR"
+          for admin_file in admin.html admin-manifest.json admin-sw.js; do
+            for dir in "." "public" "${{ steps.find_dir.outputs.app_dir }}" "${{ steps.find_dir.outputs.app_dir }}/public"; do
+              if [ -f "$dir/$admin_file" ]; then
+                cp -v "$dir/$admin_file" "$DIST_DIR/$admin_file"
+                break
+              fi
+            done
+          done
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
