@@ -188,7 +188,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   const statusText = () => {
     if (userWon) {
       return lang === 'my'
-        ? '🎉 သင် အနိုင်ရရှိပါသည်!'
+        ? '🎉 သင် အနိုင်ရရှိပါသည်! မောင်ဖိုးသား ငိုနေပါပြီ'
         : '🎉 You Win! Mg Pho Thar is crying!';
     }
     if (botWon) {
@@ -256,10 +256,16 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         </motion.div>
       </div>
 
-      {/* 3. No-Scroll Responsive Stage: မောင်ဖိုးသား + 4-Row Board */}
+      {/* 3. No-Scroll Responsive Stage: မောင်ဖိုးသား (Natural Large Scale) + 4-Row Board */}
       <div className="relative z-20 w-full flex-1 min-h-0 flex flex-col items-center justify-end overflow-hidden">
-        {/* Kid Character Peeking Directly Behind Board */}
-        <div className="relative z-10 -mb-10 sm:-mb-11 w-full flex justify-center pointer-events-none shrink-0 scale-[0.78] sm:scale-95 origin-bottom">
+        {/* Kid Character: Natural Proportion (Large, Peeking Right Over Top of Board) */}
+        <div
+          className="relative z-10 -mb-6 sm:-mb-8 flex justify-center pointer-events-none shrink-0"
+          style={{
+            width: 'min(82vw, 390px)',
+            height: 'min(27dvh, 225px)',
+          }}
+        >
           <PhoTharMediaCharacter
             mood={kidMood}
             targetCol={botTargetCol}
@@ -267,15 +273,15 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           />
         </div>
 
-        {/* Custom PNG 3D Board Frame Mode (Bright Vivid Discs Inside Gold Rings) */}
+        {/* Custom PNG 3D Board Frame Mode */}
         {hasCustomBoardFrame ? (
           <div
             className="relative z-20 flex flex-col items-center shrink-0"
             style={{
-              width: 'min(95vw, 500px, calc(48dvh * 1.33))',
+              width: 'min(95vw, 500px, calc(46dvh * 1.33))',
             }}
           >
-            {/* Hover Preview Row Aligned to the Exact 7 Columns */}
+            {/* Hover Preview Row */}
             <div className="w-full px-[15.3%] h-5 sm:h-6 grid grid-cols-7 mb-0.5">
               {Array.from({ length: 7 }).map((_, c) => {
                 const showUserDisc = isUserTurn && hoverCol === c && grid[0][c] === null;
@@ -326,14 +332,14 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
                 }}
               />
 
-              {/* 3D PNG Board Frame (z-20) */}
+              {/* 3D PNG Board Frame */}
               <img
                 src={assets.boardOverlay.url!}
                 alt="3D Connect 4 Board"
                 className="pointer-events-none relative z-20 block w-full h-auto drop-shadow-[0_14px_24px_rgba(0,0,0,0.85)]"
               />
 
-              {/* Playable 7x6 Grid (z-30 ON TOP so discs are 100% Bright & Never Dimmed, Sized to Fit Inside Gold Rings) */}
+              {/* Playable 7x6 Grid (Bright Vivid Discs Inside Gold Rings) */}
               <div
                 className="absolute z-30 grid grid-cols-7 overflow-hidden"
                 style={{
