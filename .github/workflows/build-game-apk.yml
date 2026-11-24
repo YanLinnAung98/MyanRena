@@ -1,0 +1,134 @@
+name: Build Vanguard Arena Game APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-game-apk:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup Java 17 (for Android Gradle)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Locate package.json directory
+        id: find_dir
+        run: |
+          PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
+          if [ -z "$PKG_PATH" ]; then
+            echo "ERROR: package.json ဖိုင်ကို ရှာမတွေ့ပါ။"
+            exit 1
+          fi
+          APP_DIR=$(dirname "$PKG_PATH")
+          echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
+
+      - name: Install Game Dependencies & Build Vite Bundle
+        working-directory: ${{ steps.find_dir.outputs.app_dir }}
+        run: |
+          npm install --legacy-peer-deps
+          npx vite build
+
+      - name: Prepare Standalone Game Web Assets
+        run: |
+          DIST_DIR="${{ steps.find_dir.outputs.app_dir }}/dist"
+          mkdir -p game-apk-build/www
+          cp -r "$DIST_DIR"/. game-apk-build/www/
+          mkdir -p game-apk-build/www/assets
+          for src in "public/assets" "assets" "${{ steps.find_dir.outputs.app_dir }}/public/assets"; do
+            if [ -d "$src" ]; then
+              cp -rv "$src"/. game-apk-build/www/assets/ || true
+            fi
+          done
+          for f in game-apk-build/www/assets/*.jpeg; do
+            [ -e "$f" ] && cp -v "$f" "${f%.jpeg}.jpg" || true
+          done
+
+      - name: Initialize Capacitor (Package ID com.vanguard.arena)
+        working-directory: game-apk-build
+        run: |
+          npm init -y
+          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
+          npx cap init "Vanguard Arena" "com.vanguard.arena" --web-dir www
+          cat << 'EOF' > capacitor.config.json
+          {
+            "appId": "com.vanguard.arena",
+            "appName": "Vanguard Arena",
+            "webDir": "www",
+            "backgroundColor": "#070b14",
+            "server": {
+              "androidScheme": "https"
+            },
+            "android": {
+              "backgroundColor": "#070b14",
+              "allowMixedContent": true
+            }
+          }
+          EOF
+          npx cap add android
+          npx cap sync android
+
+      - name: Inject MLBB-Style True Immersive Full-Screen Mode
+        working-directory: game-apk-build
+        run: |
+          cat << 'EOF' > android/app/src/main/java/com/vanguard/arena/MainActivity.java
+          package com.vanguard.arena;
+
+          import android.os.Bundle;
+          import androidx.core.view.WindowCompat;
+          import androidx.core.view.WindowInsetsCompat;
+          import androidx.core.view.WindowInsetsControllerCompat;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  enableImmersiveMode();
+              }
+
+              @Override
+              public void onWindowFocusChanged(boolean hasFocus) {
+                  super.onWindowFocusChanged(hasFocus);
+                  if (hasFocus) {
+                      enableImmersiveMode();
+                  }
+              }
+
+              private void enableImmersiveMode() {
+                  WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
+                  WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
+                      getWindow(),
+                      getWindow().getDecorView()
+                  );
+                  if (controller != null) {
+                      controller.hide(WindowInsetsCompat.Type.systemBars());
+                      controller.setSystemBarsBehavior(
+                          WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                      );
+                  }
+              }
+          }
+          EOF
+
+      - name: Compile Standalone Game Android APK
+        working-directory: game-apk-build/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../Vanguard-Arena-Game.apk
+
+      - name: Upload Vanguard Arena Game APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Vanguard-Arena-Game-APK
+          path: game-apk-build/Vanguard-Arena-Game.apk
