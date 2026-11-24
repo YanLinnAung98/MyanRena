@@ -29,33 +29,17 @@ function isExternalUrl(url: string): boolean {
 }
 
 /**
- * Checks if image corners are solid near-white. If already transparent PNG/WebP, skips processing.
+ * Removes solid white exterior background via corner flood-fill + 1px anti-alias feathering.
  */
-function removeExteriorWhiteBgIfNeeded(img: HTMLImageElement): string {
-  const w = img.naturalWidth || img.width;
-  const h = img.naturalHeight || img.height;
-  if (!w || !h) return img.src;
-
-  const maxDim = 560;
-  const scale = Math.min(1, maxDim / Math.max(w, h));
-  const cw = Math.max(1, Math.round(w * scale));
-  const ch = Math.max(1, Math.round(h * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = cw;
-  canvas.height = ch;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) return img.src;
-
-  ctx.drawImage(img, 0, 0, cw, ch);
-  const imgData = ctx.getImageData(0, 0, cw, ch);
-  const data = imgData.data;
-
-  // If corners are already transparent, return original src untouched
-  const cornerIdx = 0;
-  if (data[cornerIdx + 3] < 20) {
-    return img.src;
-  }
+function keyOutWhiteBuffer(
+  data: Uint8ClampedArray,
+  w: number,
+  h: number
+): void {
+  const visited = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let head = 0;
+  let tail = 0;
 
   const isNearWhite = (idx: number) => {
     const r = data[idx];
@@ -65,70 +49,102 @@ function removeExteriorWhiteBgIfNeeded(img: HTMLImageElement): string {
     if (a < 20) return true;
     const max = Math.max(r, g, b);
     const min = Math.min(r, g, b);
-    return min >= 220 && max - min <= 34;
+    return min >= 216 && max - min <= 36;
   };
 
-  // If top-left and top-right corners aren't white, skip background removal
-  const topRightIdx = (cw - 1) * 4;
-  if (!isNearWhite(0) && !isNearWhite(topRightIdx)) {
-    return img.src;
-  }
-
-  const visited = new Uint8Array(cw * ch);
-  const queue = new Int32Array(cw * ch);
-  let head = 0;
-  let tail = 0;
-
   const enqueue = (x: number, y: number) => {
-    if (x < 0 || x >= cw || y < 0 || y >= ch) return;
-    const p = y * cw + x;
+    if (x < 0 || x >= w || y < 0 || y >= h) return;
+    const p = y * w + x;
     if (visited[p]) return;
-    const idx = p * 4;
-    if (!isNearWhite(idx)) return;
+    if (!isNearWhite(p * 4)) return;
     visited[p] = 1;
     queue[tail++] = p;
   };
 
-  for (let x = 0; x < cw; x++) {
+  for (let x = 0; x < w; x++) {
     enqueue(x, 0);
-    enqueue(x, ch - 1);
+    enqueue(x, h - 1);
   }
-  for (let y = 0; y < ch; y++) {
+  for (let y = 0; y < h; y++) {
     enqueue(0, y);
-    enqueue(cw - 1, y);
+    enqueue(w - 1, y);
   }
 
   while (head < tail) {
     const p = queue[head++];
     data[p * 4 + 3] = 0;
-    const x = p % cw;
-    const y = (p - x) / cw;
+    const x = p % w;
+    const y = (p - x) / w;
     enqueue(x + 1, y);
     enqueue(x - 1, y);
     enqueue(x, y + 1);
     enqueue(x, y - 1);
   }
 
-  // Smooth 1px edge feathering
-  for (let y = 1; y < ch - 1; y++) {
-    for (let x = 1; x < cw - 1; x++) {
-      const p = y * cw + x;
+  // Smooth 1px edge feathering to prevent white halo against dark bedroom background
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
       if (visited[p]) continue;
       if (
         visited[p - 1] ||
         visited[p + 1] ||
-        visited[p - cw] ||
-        visited[p + cw]
+        visited[p - w] ||
+        visited[p + w]
       ) {
         const idx = p * 4;
         const lum = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-        if (lum > 195) {
-          data[idx + 3] = Math.round(((255 - lum) / 60) * 255);
+        if (lum > 185) {
+          data[idx + 3] = Math.round(((255 - lum) / 70) * 255);
         }
       }
     }
   }
+}
 
+function removeExteriorWhiteBgIfNeeded(img: HTMLImageElement): string {
+  const nw = img.naturalWidth || img.width;
+  const nh = img.naturalHeight || img.height;
+  if (!nw || !nh) return img.src;
+
+  // Center-square crop if source image is widescreen (e.g. 16:9)
+  const isWide = nw > nh * 1.12;
+  const sx = isWide ? Math.floor((nw - nh) / 2) : 0;
+  const sw = isWide ? nh : nw;
+  const sh = nh;
+
+  const maxDim = 560;
+  const scale = Math.min(1, maxDim / Math.max(sw, sh));
+  const cw = Math.max(1, Math.round(sw * scale));
+  const ch = Math.max(1, Math.round(sh * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = cw;
+  canvas.height = ch;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return img.src;
+
+  ctx.drawImage(img, sx, 0, sw, sh, 0, 0, cw, ch);
+  const imgData = ctx.getImageData(0, 0, cw, ch);
+  const data = imgData.data;
+
+  // Already transparent PNG/WebP
+  if (data[3] < 20) {
+    return isWide ? canvas.toDataURL('image/png') : img.src;
+  }
+
+  const topRight = (cw - 1) * 4;
+  const cornerIsWhite = (i: number) =>
+    Math.min(data[i], data[i + 1], data[i + 2]) >= 216 &&
+    Math.max(data[i], data[i + 1], data[i + 2]) -
+      Math.min(data[i], data[i + 1], data[i + 2]) <=
+      36;
+
+  if (!cornerIsWhite(0) && !cornerIsWhite(topRight)) {
+    return isWide ? canvas.toDataURL('image/png') : img.src;
+  }
+
+  keyOutWhiteBuffer(data, cw, ch);
   ctx.putImageData(imgData, 0, 0);
   return canvas.toDataURL('image/png');
 }
@@ -157,7 +173,7 @@ function prepareKidImage(url: string): Promise<string> {
   });
 }
 
-function preloadVideoElement(url: string, timeoutMs = 5000): Promise<void> {
+function preloadVideoElement(url: string, timeoutMs = 5500): Promise<void> {
   return new Promise((resolve) => {
     let settled = false;
     const finish = () => {
@@ -180,10 +196,14 @@ function preloadVideoElement(url: string, timeoutMs = 5000): Promise<void> {
 }
 
 /**
- * Renders a kid video (.mp4 or .webm). If the video has a solid white background (e.g. Flow AI MP4),
- * automatically keys out the white background onto a transparent canvas in real time.
+ * Renders 3D Maung Pho Thar video (.mp4 / .webm).
+ * Automatically center-crops 16:9 widescreen Flow AI videos into a clean 1:1 character frame
+ * and keys out solid white backgrounds cleanly so the character sits naturally behind the board.
  */
-const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop }) => {
+const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({
+  src,
+  loop,
+}) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [useCanvasKey, setUseCanvasKey] = useState(false);
@@ -203,57 +223,46 @@ const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop 
       if (!active || !videoRef.current || !canvasRef.current) return;
       const v = videoRef.current;
       const c = canvasRef.current;
+
       if (v.readyState >= 2 && v.videoWidth > 0 && v.videoHeight > 0) {
-        const targetW = Math.min(360, v.videoWidth);
-        const targetH = Math.round((targetW / v.videoWidth) * v.videoHeight);
+        // Center-square crop for 16:9 widescreen videos so Maung Pho Thar is full-size, never shrunk
+        const isWide = v.videoWidth > v.videoHeight * 1.12;
+        const srcW = isWide ? v.videoHeight : v.videoWidth;
+        const srcH = v.videoHeight;
+        const sx = isWide ? Math.floor((v.videoWidth - srcW) / 2) : 0;
+
+        const targetSize = 384;
+        const targetW = targetSize;
+        const targetH = Math.round((srcH / srcW) * targetSize);
+
         if (c.width !== targetW || c.height !== targetH) {
           c.width = targetW;
           c.height = targetH;
         }
+
         const ctx = c.getContext('2d', { willReadFrequently: true });
         if (ctx) {
-          ctx.drawImage(v, 0, 0, targetW, targetH);
+          ctx.drawImage(v, sx, 0, srcW, srcH, 0, 0, targetW, targetH);
           try {
             const frame = ctx.getImageData(0, 0, targetW, targetH);
             const d = frame.data;
             if (!decided) {
               decided = true;
-              const r = d[0], g = d[1], b = d[2], a = d[3];
-              needsKey = a > 200 && Math.min(r, g, b) >= 225 && Math.max(r, g, b) - Math.min(r, g, b) <= 28;
+              const r = d[0],
+                g = d[1],
+                b = d[2],
+                a = d[3];
+              needsKey =
+                a > 200 &&
+                Math.min(r, g, b) >= 216 &&
+                Math.max(r, g, b) - Math.min(r, g, b) <= 36;
               setUseCanvasKey(needsKey);
             }
             if (needsKey) {
-              const w = targetW;
-              const h = targetH;
-              const visited = new Uint8Array(w * h);
-              const queue = new Int32Array(w * h);
-              let head = 0;
-              let tail = 0;
-              const isWhite = (idx: number) => {
-                const r = d[idx], g = d[idx + 1], b = d[idx + 2];
-                const min = Math.min(r, g, b);
-                const max = Math.max(r, g, b);
-                return min >= 222 && max - min <= 30;
-              };
-              const enq = (x: number, y: number) => {
-                if (x < 0 || x >= w || y < 0 || y >= h) return;
-                const p = y * w + x;
-                if (visited[p] || !isWhite(p * 4)) return;
-                visited[p] = 1;
-                queue[tail++] = p;
-              };
-              for (let x = 0; x < w; x++) { enq(x, 0); enq(x, h - 1); }
-              for (let y = 0; y < h; y++) { enq(0, y); enq(w - 1, y); }
-              while (head < tail) {
-                const p = queue[head++];
-                d[p * 4 + 3] = 0;
-                const x = p % w;
-                const y = (p - x) / w;
-                enq(x + 1, y); enq(x - 1, y); enq(x, y + 1); enq(x, y - 1);
-              }
+              keyOutWhiteBuffer(d, targetW, targetH);
               ctx.putImageData(frame, 0, 0);
             } else {
-              return; // Transparent webm or non-white bg: stop canvas loop & show raw video
+              return;
             }
           } catch {
             setUseCanvasKey(false);
@@ -261,6 +270,7 @@ const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop 
           }
         }
       }
+
       rafId = window.requestAnimationFrame(renderFrame);
     };
 
@@ -272,7 +282,7 @@ const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop 
   }, [src]);
 
   return (
-    <div className="relative w-full h-full flex items-end justify-center">
+    <div className="relative w-full h-full flex items-end justify-center overflow-hidden">
       <video
         ref={videoRef}
         src={src}
@@ -281,64 +291,19 @@ const KidVideoRenderer: React.FC<{ src: string; loop: boolean }> = ({ src, loop 
         loop={loop}
         muted
         playsInline
-        className={`w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)] ${
+        className={`w-full h-full object-cover object-top brightness-[0.96] contrast-[1.03] drop-shadow-[0_14px_24px_rgba(0,0,0,0.7)] ${
           useCanvasKey ? 'opacity-0 absolute pointer-events-none' : 'opacity-100'
         }`}
       />
       <canvas
         ref={canvasRef}
-        className={`w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)] ${
+        className={`w-full h-full object-contain object-bottom brightness-[0.96] contrast-[1.03] drop-shadow-[0_14px_24px_rgba(0,0,0,0.7)] ${
           useCanvasKey ? 'block' : 'hidden'
         }`}
       />
     </div>
   );
 };
-
-const PhoTharFallbackCharacter: React.FC<{ mood: KidMood }> = ({ mood }) => (
-  <svg
-    viewBox="0 0 220 220"
-    className="w-full h-full object-contain object-bottom drop-shadow-[0_12px_20px_rgba(0,0,0,0.6)]"
-  >
-    <defs>
-      <radialGradient id="c4Skin" cx="44%" cy="32%" r="65%">
-        <stop offset="0%" stopColor="#ffe4cc" />
-        <stop offset="68%" stopColor="#f2b892" />
-        <stop offset="100%" stopColor="#d18b62" />
-      </radialGradient>
-      <linearGradient id="c4Hair" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0%" stopColor="#3d281e" />
-        <stop offset="100%" stopColor="#140d0a" />
-      </linearGradient>
-      <linearGradient id="c4Hoodie" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0%" stopColor="#658bb8" />
-        <stop offset="100%" stopColor="#314c70" />
-      </linearGradient>
-    </defs>
-    <path d="M44 220 C48 158, 76 142, 110 142 C144 142, 172 158, 176 220 Z" fill="url(#c4Hoodie)" />
-    <rect x="96" y="124" width="28" height="24" rx="12" fill="#e5a67e" />
-    <circle cx="58" cy="96" r="13" fill="#ebb089" />
-    <circle cx="162" cy="96" r="13" fill="#ebb089" />
-    <ellipse cx="110" cy="92" rx="52" ry="50" fill="url(#c4Skin)" />
-    <path d="M52 90 C48 36, 80 18, 112 18 C146 18, 172 38, 168 90 C156 68, 142 56, 124 62 C114 48, 94 48, 80 64 C68 58, 58 72, 52 90 Z" fill="url(#c4Hair)" />
-    <ellipse cx="86" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
-    <ellipse cx="134" cy="92" rx="9.5" ry="10.5" fill="#ffffff" />
-    <circle cx="87" cy="93" r="6.2" fill="#3a2013" />
-    <circle cx="133" cy="93" r="6.2" fill="#3a2013" />
-    <circle cx="85" cy="90" r="2.5" fill="#ffffff" />
-    <circle cx="131" cy="90" r="2.5" fill="#ffffff" />
-    <path d="M74 74 Q86 68 98 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
-    <path d="M122 74 Q134 68 146 74" stroke="#2a1b14" strokeWidth="4" fill="none" strokeLinecap="round" />
-    <ellipse cx="110" cy="103" rx="6" ry="4" fill="#df9b74" />
-    <path
-      d={mood === 'crying' ? 'M95 125 Q110 112 125 125' : 'M94 116 Q110 128 126 116'}
-      stroke="#8f3a2e"
-      strokeWidth="3.8"
-      fill="none"
-      strokeLinecap="round"
-    />
-  </svg>
-);
 
 const Connect4LoadingOverlay: React.FC<{
   lang: string;
@@ -454,7 +419,6 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       : 'Preparing Connect 4 3D Arena...'
   );
 
-  // Strict Preload Gate: Loading View only closes AFTER c4-loading.mp4 shows AND Maung Pho Thar is 100% loaded
   useEffect(() => {
     let mounted = true;
     let closed = false;
@@ -466,7 +430,10 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       if (!mounted || closed) return;
       closed = true;
       const elapsed = Date.now() - startedAt;
-      const remaining = Math.max(0, CONNECT4_LOADING_TIMING.minDisplayMs - elapsed);
+      const remaining = Math.max(
+        0,
+        CONNECT4_LOADING_TIMING.minDisplayMs - elapsed
+      );
       setLoadProgress(100);
       window.setTimeout(() => {
         if (mounted) setIsLoadingScene(false);
@@ -479,13 +446,14 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
     );
 
     const runPreload = async () => {
-      // 1. Immediately resolve c4-loading.mp4 (video priority) so Loading View displays it right away
-      const loadingSlot = await resolveMediaSlot(CONNECT4_SLOT_NAMES.loading, 'video');
+      const loadingSlot = await resolveMediaSlot(
+        CONNECT4_SLOT_NAMES.loading,
+        'video'
+      );
       if (!mounted) return;
       setLoadingMedia(loadingSlot);
       setLoadProgress(28);
 
-      // 2. Resolve Room Background & Maung Pho Thar (idle) in parallel
       setStageLabel(
         lang === 'my'
           ? 'မောင်ဖိုးသား 3D ဇာတ်ကောင် ဖွင့်နေပါသည်...'
@@ -499,8 +467,9 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       setRoomBg(bgSlot);
       setLoadProgress(55);
 
-      // 3. Fully decode/process Maung Pho Thar (idle) + Room Background BEFORE closing Loading View
-      const prepareSingleKid = async (slot: ResolvedAsset): Promise<ResolvedAsset> => {
+      const prepareSingleKid = async (
+        slot: ResolvedAsset
+      ): Promise<ResolvedAsset> => {
         if (slot.kind === 'image' && slot.url) {
           const processedUrl = await prepareKidImage(slot.url);
           return { kind: 'image', url: processedUrl };
@@ -532,20 +501,19 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
 
       setKidAssets((prev) => ({ ...prev, idle: kidIdleReady }));
       setLoadProgress(92);
-      setStageLabel(
-        lang === 'my' ? 'အဆင်သင့်ဖြစ်ပါပြီ!' : 'Ready to Play!'
-      );
+      setStageLabel(lang === 'my' ? 'အဆင်သင့်ဖြစ်ပါပြီ!' : 'Ready to Play!');
 
-      // Loading screen can now finish (after minDisplayMs) because Maung Pho Thar is 100% ready!
       finishLoading();
 
-      // 4. Preload remaining moods in background seamlessly
-      const [thinkingRaw, droppingRaw, happyRaw, cryingRaw] = await Promise.all([
-        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.thinking, 'video'),
-        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.dropping, 'video'),
-        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.happy, 'video'),
-        resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.crying, 'video'),
-      ]);
+      // Background preload for remaining moods
+      const [thinkingRaw, droppingRaw, happyRaw, cryingRaw] = await Promise.all(
+        [
+          resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.thinking, 'video'),
+          resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.dropping, 'video'),
+          resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.happy, 'video'),
+          resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.crying, 'video'),
+        ]
+      );
       const [thinking, dropping, happy, crying] = await Promise.all([
         prepareSingleKid(thinkingRaw),
         prepareSingleKid(droppingRaw),
@@ -606,7 +574,13 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       return phase;
     }
     return 'idle';
-  }, [isFinished, match?.isDraw, match?.winnerId, match?.botPhase, currentUserId]);
+  }, [
+    isFinished,
+    match?.isDraw,
+    match?.winnerId,
+    match?.botPhase,
+    currentUserId,
+  ]);
 
   const activeKidAsset: ResolvedAsset = useMemo(() => {
     const moodAsset = kidAssets[kidMood];
@@ -617,7 +591,9 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
   const winningSet = useMemo(() => {
     const set = new Set<string>();
     if (Array.isArray(match?.winningCells)) {
-      match.winningCells.forEach(([r, c]: [number, number]) => set.add(`${r}-${c}`));
+      match.winningCells.forEach(([r, c]: [number, number]) =>
+        set.add(`${r}-${c}`)
+      );
     }
     return set;
   }, [match?.winningCells]);
@@ -630,18 +606,30 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
       if (match?.winnerId === currentUserId) {
         return lang === 'my' ? 'သင် အနိုင်ရရှိပါပြီ!' : 'You Won!';
       }
-      return lang === 'my' ? 'မောင်ဖိုးသား အနိုင်ရသွားပါပြီ!' : 'Maung Pho Thar Won!';
+      return lang === 'my'
+        ? 'မောင်ဖိုးသား အနိုင်ရသွားပါပြီ!'
+        : 'Maung Pho Thar Won!';
     }
     if (!isMyTurn) {
       if (kidMood === 'dropping') {
-        return lang === 'my' ? 'မောင်ဖိုးသား အကွက်ချနေသည်...' : 'Dropping disc...';
+        return lang === 'my'
+          ? 'မောင်ဖိုးသား အကွက်ချနေသည်...'
+          : 'Dropping disc...';
       }
       return lang === 'my' ? 'မောင်ဖိုးသား စဥ်းစားနေသည်...' : 'Thinking...';
     }
     return lang === 'my'
       ? 'သင့်အလှည့် — ကော်လံတစ်ခု နှိပ်ပါ'
       : 'Your Turn — Tap a column';
-  }, [isFinished, match?.isDraw, match?.winnerId, currentUserId, isMyTurn, kidMood, lang]);
+  }, [
+    isFinished,
+    match?.isDraw,
+    match?.winnerId,
+    currentUserId,
+    isMyTurn,
+    kidMood,
+    lang,
+  ]);
 
   const handleColClick = (col: number) => {
     if (!isMyTurn || grid[0]?.[col] !== null) return;
@@ -649,12 +637,16 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
     else if (onMove) onMove({ col });
   };
 
-  const botTargetCol = typeof match?.botTargetCol === 'number' ? match.botTargetCol : null;
-  const kidShiftX = kidMood === 'dropping' && botTargetCol !== null ? (botTargetCol - 3) * 18 : 0;
+  const botTargetCol =
+    typeof match?.botTargetCol === 'number' ? match.botTargetCol : null;
+  const kidShiftX =
+    kidMood === 'dropping' && botTargetCol !== null
+      ? (botTargetCol - 3) * 18
+      : 0;
 
   return (
     <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden select-none bg-[radial-gradient(ellipse_at_top,#1b2b52_0%,#0c1428_55%,#060a14_100%)]">
-      {/* 1. 3D ROOM BACKGROUND (Unchanged) */}
+      {/* 1. 3D ROOM BACKGROUND */}
       {roomBg.kind === 'video' && roomBg.url && (
         <video
           key={roomBg.url}
@@ -674,9 +666,9 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           className="absolute inset-0 w-full h-full object-cover object-center pointer-events-none"
         />
       )}
-      <div className="absolute inset-0 bg-gradient-to-b from-[#060913]/40 via-transparent to-[#060913]/50 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#060913]/38 via-transparent to-[#060913]/48 pointer-events-none" />
 
-      {/* 2. LOADING VIDEO OVERLAY (Stays open until Maung Pho Thar is 100% ready) */}
+      {/* 2. LOADING VIDEO OVERLAY */}
       <AnimatePresence>
         {isLoadingScene && (
           <Connect4LoadingOverlay
@@ -689,14 +681,14 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
         )}
       </AnimatePresence>
 
-      {/* 3. RESPONSIVE PLAY STAGE (Board size unchanged; Maung Pho Thar head peeks naturally above board) */}
+      {/* 3. RESPONSIVE PLAY STAGE */}
       <div className="relative z-10 w-full max-w-[min(94vw,430px)] sm:max-w-[min(92vw,470px)] px-2 sm:px-4 py-2 flex flex-col items-center justify-center">
         {/* Luxury Speech Bubble */}
         <motion.div
           key={statusText}
           initial={{ opacity: 0, y: -5, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="relative z-30 mb-1.5 px-4 py-1.5 rounded-2xl bg-[#10182b]/88 backdrop-blur-md border border-amber-300/60 shadow-[0_8px_24px_rgba(0,0,0,0.55)]"
+          className="relative z-30 mb-1 px-4 py-1.5 rounded-2xl bg-[#10182b]/88 backdrop-blur-md border border-amber-300/60 shadow-[0_8px_24px_rgba(0,0,0,0.55)]"
         >
           <span className="text-[11px] sm:text-sm font-semibold text-amber-100 tracking-wide whitespace-nowrap">
             {statusText}
@@ -704,7 +696,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           <div className="absolute left-1/2 -bottom-1.5 -translate-x-1/2 w-3 h-3 rotate-45 bg-[#10182b]/90 border-r border-b border-amber-300/60" />
         </motion.div>
 
-        {/* BOT KID LAYER (z-10): Head & face peek naturally over board; torso stays hidden behind board */}
+        {/* BOT KID LAYER (z-10): Full Pixar scale, head/shoulders naturally visible above board, torso hidden behind board */}
         <motion.div
           animate={{
             x: kidShiftX,
@@ -723,7 +715,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
               ease: 'easeInOut',
             },
           }}
-          className="relative z-10 w-[56%] sm:w-[54%] aspect-square -mb-[22%] sm:-mb-[21%] pointer-events-none flex items-end justify-center"
+          className="relative z-10 w-[68%] sm:w-[65%] aspect-square -mb-[27%] sm:-mb-[26%] pointer-events-none flex items-end justify-center"
         >
           {activeKidAsset.kind === 'video' && activeKidAsset.url ? (
             <KidVideoRenderer
@@ -735,21 +727,21 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
             <img
               src={activeKidAsset.url}
               alt="Maung Pho Thar"
-              className="w-full h-full object-contain object-bottom drop-shadow-[0_10px_18px_rgba(0,0,0,0.65)]"
+              className="w-full h-full object-contain object-bottom brightness-[0.96] contrast-[1.03] drop-shadow-[0_14px_24px_rgba(0,0,0,0.7)]"
             />
-          ) : (
-            <PhoTharFallbackCharacter mood={kidMood} />
-          )}
+          ) : null}
         </motion.div>
 
-        {/* LUXURY 3D UPRIGHT CONNECT 4 BOARD (z-20, hides kid's torso behind it) */}
+        {/* LUXURY 3D UPRIGHT CONNECT 4 BOARD (z-20, strictly in front of kid's torso) */}
         <div className="relative z-20 w-full flex items-end justify-center">
           {/* Floating Hover / Drop Preview Disc */}
           <div className="absolute -top-7 sm:-top-8 inset-x-0 z-30 flex justify-center pointer-events-none">
             <div className="w-[88%] h-6 sm:h-7 grid grid-cols-7 gap-1.5 px-3">
               {[0, 1, 2, 3, 4, 5, 6].map((col) => {
-                const showUserPreview = isMyTurn && hoverCol === col && grid[0]?.[col] === null;
-                const showBotPreview = kidMood === 'dropping' && botTargetCol === col;
+                const showUserPreview =
+                  isMyTurn && hoverCol === col && grid[0]?.[col] === null;
+                const showBotPreview =
+                  kidMood === 'dropping' && botTargetCol === col;
                 return (
                   <div key={col} className="flex items-center justify-center">
                     {showUserPreview && (
@@ -783,7 +775,7 @@ export const Connect4Board: React.FC<Connect4BoardProps> = ({
           </div>
 
           {/* Main Gold-Trimmed Navy Frame */}
-          <div className="relative z-10 flex-1 rounded-2xl p-[4px] sm:p-[5px] bg-gradient-to-b from-[#f3d48c] via-[#c79d4b] to-[#8c6827] shadow-[0_-6px_22px_rgba(0,0,0,0.6),0_18px_40px_rgba(0,0,0,0.75)]">
+          <div className="relative z-10 flex-1 rounded-2xl p-[4px] sm:p-[5px] bg-gradient-to-b from-[#f3d48c] via-[#c79d4b] to-[#8c6827] shadow-[0_-10px_28px_rgba(0,0,0,0.65),0_18px_40px_rgba(0,0,0,0.75)]">
             <div className="rounded-[12px] bg-gradient-to-b from-[#172542] via-[#101b33] to-[#0c1428] p-1.5 sm:p-2.5 shadow-[inset_0_4px_14px_rgba(0,0,0,0.65)]">
               <div className="grid grid-cols-7 gap-1 sm:gap-1.5">
                 {[0, 1, 2, 3, 4, 5, 6].map((col) => {
