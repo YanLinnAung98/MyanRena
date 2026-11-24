@@ -1,0 +1,19 @@
+{
+  "name": "Vanguard Master Admin",
+  "short_name": "VG Admin",
+  "description": "Dedicated Server & Game Control Center for Vanguard Arena Admin",
+  "start_url": "./admin.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#070b14",
+  "theme_color": "#f59e0b",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/2910/2910791.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
