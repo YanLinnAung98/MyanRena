@@ -89,7 +89,7 @@ async function resolveFirstMatch(
   kind: 'video' | 'image'
 ): Promise<string | null> {
   const exts =
-    kind === 'video' ? ['mp4', 'webm'] : ['png', 'webp', 'jpg', 'jpeg'];
+    kind === 'video' ? ['mp4', 'mov', 'webm'] : ['png', 'webp', 'jpg', 'jpeg'];
   const urls = buildUrls(baseNames, exts);
   const results = await Promise.all(urls.map((u) => probeUrl(u, kind)));
   return results.find((u): u is string => Boolean(u)) || null;
