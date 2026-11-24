@@ -190,7 +190,6 @@ export const Connect4LoadingScreen: React.FC<Connect4LoadingScreenProps> = ({
       transition={{ duration: 0.45, ease: 'easeOut' }}
       className="absolute inset-0 z-50 flex flex-col items-center justify-center overflow-hidden bg-[#070b18] px-5"
     >
-      {/* Replaceable Loading Video or Image Backdrop */}
       {media.kind === 'video' && media.url && (
         <video
           src={media.url}
@@ -211,10 +210,8 @@ export const Connect4LoadingScreen: React.FC<Connect4LoadingScreenProps> = ({
         />
       )}
 
-      {/* Dark Glass Overlay */}
       <div className="absolute inset-0 bg-gradient-to-b from-[#070b18]/70 via-[#0b132b]/65 to-[#070b18]/90 backdrop-blur-[2px]" />
 
-      {/* Center Content */}
       <div className="relative z-10 w-full max-w-xs flex flex-col items-center text-center space-y-4">
         <div className="relative w-28 h-24 rounded-2xl bg-gradient-to-b from-[#1e2946] to-[#0f172a] border-2 border-amber-300/75 shadow-[0_12px_32px_rgba(251,191,36,0.28)] p-2.5 flex flex-col justify-between">
           <div className="grid grid-cols-4 gap-1.5 h-full">
@@ -281,10 +278,233 @@ export const Connect4LoadingScreen: React.FC<Connect4LoadingScreenProps> = ({
 };
 
 /* ============================================================================
- * 3. PhoTharMediaCharacter
- * - public/assets/c4-kid-(idle|thinking|dropping|happy|crying).(mp4|webm|webp|png|jpg)
- *   ထည့်ထားလျှင် ထို Video/ပုံကို အလိုအလျောက် ပြသပေးမည်
- * - မထည့်ရသေးလျှင် Built-in SVG မောင်ဖိုးသားကို ပြသမည်
+ * 3. White-Background Remover for Kid Video / Image (Canvas Chroma-Key)
+ * - အဖြူရောင်နောက်ခံပါလာသည့် Video / Image များကို အလိုအလျောက် ဖျောက်ပေးမည်
+ * ============================================================================ */
+function stripWhiteFromImageData(imgData: ImageData, w: number, h: number) {
+  const data = imgData.data;
+  const visited = new Uint8Array(w * h);
+  const queue = new Int32Array(w * h);
+  let head = 0;
+  let tail = 0;
+
+  const isNearWhite = (idx4: number) => {
+    const r = data[idx4];
+    const g = data[idx4 + 1];
+    const b = data[idx4 + 2];
+    const maxC = Math.max(r, g, b);
+    const minC = Math.min(r, g, b);
+    return r > 224 && g > 224 && b > 224 && maxC - minC < 30;
+  };
+
+  const pushIfBg = (x: number, y: number) => {
+    const p = y * w + x;
+    if (visited[p]) return;
+    if (isNearWhite(p * 4)) {
+      visited[p] = 1;
+      queue[tail++] = p;
+    }
+  };
+
+  for (let x = 0; x < w; x++) {
+    pushIfBg(x, 0);
+    pushIfBg(x, h - 1);
+  }
+  for (let y = 0; y < h; y++) {
+    pushIfBg(0, y);
+    pushIfBg(w - 1, y);
+  }
+
+  while (head < tail) {
+    const p = queue[head++];
+    data[p * 4 + 3] = 0;
+    const x = p % w;
+    const y = (p - x) / w;
+    if (x > 0) pushIfBg(x - 1, y);
+    if (x < w - 1) pushIfBg(x + 1, y);
+    if (y > 0) pushIfBg(x, y - 1);
+    if (y < h - 1) pushIfBg(x, y + 1);
+  }
+
+  // Soft 1px edge feathering
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const p = y * w + x;
+      const idx4 = p * 4;
+      if (data[idx4 + 3] === 0) continue;
+      if (
+        data[(p - 1) * 4 + 3] === 0 ||
+        data[(p + 1) * 4 + 3] === 0 ||
+        data[(p - w) * 4 + 3] === 0 ||
+        data[(p + w) * 4 + 3] === 0
+      ) {
+        const avg = (data[idx4] + data[idx4 + 1] + data[idx4 + 2]) / 3;
+        if (avg > 200) {
+          data[idx4 + 3] = Math.round(data[idx4 + 3] * 0.35);
+        }
+      }
+    }
+  }
+}
+
+const WhiteKeyedVideoLayer: React.FC<{
+  url: string;
+  isActive: boolean;
+  loop: boolean;
+}> = ({ url, isActive, loop }) => {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const [canvasFailed, setCanvasFailed] = useState(false);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    if (isActive) {
+      if (!loop) video.currentTime = 0;
+      video.play().catch(() => {});
+    } else {
+      // Crossfade ပြီးမှ pause လုပ်မည်
+      const t = window.setTimeout(() => {
+        video.pause();
+      }, 340);
+      return () => window.clearTimeout(t);
+    }
+  }, [isActive, loop]);
+
+  useEffect(() => {
+    if (canvasFailed) return;
+    let rafId = 0;
+    let lastDraw = 0;
+
+    const renderFrame = (ts: number) => {
+      rafId = window.requestAnimationFrame(renderFrame);
+      if (!isActive || ts - lastDraw < 32) return; // ~30fps smooth & battery friendly
+      lastDraw = ts;
+
+      const video = videoRef.current;
+      const canvas = canvasRef.current;
+      if (!video || !canvas || video.readyState < 2) return;
+
+      const vw = video.videoWidth || 320;
+      const vh = video.videoHeight || 240;
+      const maxW = 360;
+      const scale = Math.min(1, maxW / vw);
+      const cw = Math.max(1, Math.round(vw * scale));
+      const ch = Math.max(1, Math.round(vh * scale));
+
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
+      }
+
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
+      if (!ctx) return;
+
+      try {
+        ctx.drawImage(video, 0, 0, cw, ch);
+        const imgData = ctx.getImageData(0, 0, cw, ch);
+        stripWhiteFromImageData(imgData, cw, ch);
+        ctx.putImageData(imgData, 0, 0);
+      } catch {
+        setCanvasFailed(true);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(renderFrame);
+    return () => window.cancelAnimationFrame(rafId);
+  }, [isActive, canvasFailed]);
+
+  return (
+    <div
+      style={{
+        opacity: isActive ? 1 : 0,
+        transition: 'opacity 320ms ease-in-out',
+        zIndex: isActive ? 2 : 1,
+      }}
+      className="pointer-events-none absolute inset-0 flex items-end justify-center"
+    >
+      <video
+        ref={videoRef}
+        src={url}
+        crossOrigin="anonymous"
+        loop={loop}
+        muted
+        playsInline
+        preload="auto"
+        className={
+          canvasFailed
+            ? 'w-full h-full object-contain object-bottom drop-shadow-[0_14px_24px_rgba(0,0,0,0.65)]'
+            : 'hidden'
+        }
+      />
+      {!canvasFailed && (
+        <canvas
+          ref={canvasRef}
+          className="w-full h-full object-contain object-bottom drop-shadow-[0_14px_24px_rgba(0,0,0,0.7)]"
+        />
+      )}
+    </div>
+  );
+};
+
+const WhiteKeyedImageLayer: React.FC<{
+  url: string;
+  isActive: boolean;
+}> = ({ url, isActive }) => {
+  const [processedSrc, setProcessedSrc] = useState<string>(url);
+
+  useEffect(() => {
+    let active = true;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      if (!active) return;
+      try {
+        const maxDim = 480;
+        const scale = Math.min(1, maxDim / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+        const w = Math.max(1, Math.round(img.naturalWidth * scale));
+        const h = Math.max(1, Math.round(img.naturalHeight * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return;
+        ctx.drawImage(img, 0, 0, w, h);
+        const imgData = ctx.getImageData(0, 0, w, h);
+        stripWhiteFromImageData(imgData, w, h);
+        ctx.putImageData(imgData, 0, 0);
+        setProcessedSrc(canvas.toDataURL('image/png'));
+      } catch {
+        setProcessedSrc(url);
+      }
+    };
+    img.src = url;
+    return () => {
+      active = false;
+    };
+  }, [url]);
+
+  return (
+    <div
+      style={{
+        opacity: isActive ? 1 : 0,
+        transition: 'opacity 320ms ease-in-out',
+        zIndex: isActive ? 2 : 1,
+      }}
+      className="pointer-events-none absolute inset-0 flex items-end justify-center"
+    >
+      <img
+        src={processedSrc}
+        alt="Mg Pho Thar"
+        className="w-full h-full object-contain object-bottom drop-shadow-[0_14px_24px_rgba(0,0,0,0.7)]"
+      />
+    </div>
+  );
+};
+
+/* ============================================================================
+ * 4. PhoTharMediaCharacter (Pre-mounted Smooth Crossfade Stack + Large Scale)
  * ============================================================================ */
 interface PhoTharMediaCharacterProps {
   mood: KidMood;
@@ -292,20 +512,24 @@ interface PhoTharMediaCharacterProps {
   kidMedia: Record<KidMood, ResolvedMediaAsset>;
 }
 
+const ALL_MOODS: KidMood[] = ['idle', 'thinking', 'dropping', 'happy', 'crying'];
+
 export const PhoTharMediaCharacter: React.FC<PhoTharMediaCharacterProps> = ({
   mood,
   targetCol,
   kidMedia,
 }) => {
-  // လက်ရှိ mood ဖိုင်မရှိသေးလျှင် idle ဖိုင်ကို fallback သုံးမည်
-  const activeMedia =
-    kidMedia[mood]?.kind !== 'none' ? kidMedia[mood] : kidMedia.idle;
+  const hasAnyCustomKid = ALL_MOODS.some((m) => kidMedia[m]?.kind !== 'none');
+
+  // လက်ရှိ mood အတွက် custom ဖိုင်မရှိသေးလျှင် idle ကို active ထားမည်
+  const resolvedActiveMood: KidMood =
+    kidMedia[mood]?.kind !== 'none' ? mood : 'idle';
 
   const shiftX =
-    mood === 'dropping' && targetCol !== null ? (targetCol - 3) * 28 : 0;
+    mood === 'dropping' && targetCol !== null ? (targetCol - 3) * 26 : 0;
 
   return (
-    <div className="relative w-60 h-36 sm:h-40 flex items-end justify-center">
+    <div className="relative w-full h-full flex items-end justify-center">
       {/* Thinking Bubble */}
       <AnimatePresence>
         {mood === 'thinking' && (
@@ -313,7 +537,7 @@ export const PhoTharMediaCharacter: React.FC<PhoTharMediaCharacterProps> = ({
             initial={{ opacity: 0, scale: 0.6, y: 8 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.6 }}
-            className="absolute top-0 right-2 z-20 px-3 py-1 rounded-2xl bg-slate-900/95 border border-amber-300/50 text-amber-200 text-xs font-bold shadow-lg flex items-center gap-1"
+            className="absolute top-1 right-4 z-30 px-3 py-1 rounded-2xl bg-slate-900/95 border border-amber-300/55 text-amber-200 text-xs font-bold shadow-lg flex items-center gap-1"
           >
             <span>အင်း</span>
             <motion.span
@@ -333,13 +557,13 @@ export const PhoTharMediaCharacter: React.FC<PhoTharMediaCharacterProps> = ({
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-20 pointer-events-none"
+            className="absolute inset-0 z-30 pointer-events-none"
           >
             {[
-              { x: 20, y: 8, color: '#fbbf24' },
-              { x: 205, y: 12, color: '#f43f5e' },
-              { x: 42, y: 52, color: '#38bdf8' },
-              { x: 188, y: 56, color: '#34d399' },
+              { x: '12%', y: '10%', color: '#fbbf24' },
+              { x: '84%', y: '12%', color: '#f43f5e' },
+              { x: '20%', y: '45%', color: '#38bdf8' },
+              { x: '78%', y: '48%', color: '#34d399' },
             ].map((sp, idx) => (
               <motion.div
                 key={idx}
@@ -353,55 +577,47 @@ export const PhoTharMediaCharacter: React.FC<PhoTharMediaCharacterProps> = ({
         )}
       </AnimatePresence>
 
-      {/* Custom MP4/WebM Video Character */}
-      {activeMedia.kind === 'video' && activeMedia.url ? (
+      {hasAnyCustomKid ? (
         <motion.div
           animate={{
             x: shiftX,
-            y: mood === 'happy' ? [0, -10, 0] : 0,
+            y: mood === 'happy' ? [0, -10, 0] : [0, -2.5, 0],
           }}
           transition={{
-            x: { type: 'spring', stiffness: 210, damping: 20 },
-            y: { repeat: mood === 'happy' ? Infinity : 0, duration: 0.6 },
+            x: { type: 'spring', stiffness: 190, damping: 20 },
+            y: {
+              repeat: Infinity,
+              duration: mood === 'happy' ? 0.6 : 2.6,
+              ease: 'easeInOut',
+            },
           }}
-          className="relative w-56 h-40 flex items-end justify-center"
+          className="relative w-full h-full"
         >
-          <video
-            key={activeMedia.url}
-            src={activeMedia.url}
-            autoPlay
-            loop={mood !== 'dropping'}
-            muted
-            playsInline
-            className="w-full h-full object-contain drop-shadow-[0_12px_22px_rgba(0,0,0,0.65)]"
-          />
+          {ALL_MOODS.map((m) => {
+            const media = kidMedia[m];
+            if (!media || media.kind === 'none' || !media.url) return null;
+            const isActive = m === resolvedActiveMood;
+
+            if (media.kind === 'video') {
+              return (
+                <WhiteKeyedVideoLayer
+                  key={`${m}-${media.url}`}
+                  url={media.url}
+                  isActive={isActive}
+                  loop={m !== 'dropping'}
+                />
+              );
+            }
+            return (
+              <WhiteKeyedImageLayer
+                key={`${m}-${media.url}`}
+                url={media.url}
+                isActive={isActive}
+              />
+            );
+          })}
         </motion.div>
-      ) : activeMedia.kind === 'image' && activeMedia.url ? (
-        /* Custom Image Character (PNG/WebP/JPG) */
-        <motion.img
-          key={activeMedia.url}
-          src={activeMedia.url}
-          alt="Mg Pho Thar"
-          animate={
-            mood === 'happy'
-              ? { y: [0, -12, 0], rotate: [-3, 3, -3], x: 0 }
-              : mood === 'crying'
-              ? { y: [0, 2, 0], x: [-2, 2, -2] }
-              : mood === 'thinking'
-              ? { rotate: [-3, 3, -3], x: 0 }
-              : mood === 'dropping'
-              ? { x: shiftX, y: 4 }
-              : { y: [0, -3, 0], x: 0 }
-          }
-          transition={{
-            repeat: mood === 'dropping' ? 0 : Infinity,
-            duration: mood === 'happy' ? 0.55 : mood === 'crying' ? 0.35 : 2.3,
-            ease: 'easeInOut',
-          }}
-          className="w-56 h-40 object-contain drop-shadow-[0_12px_22px_rgba(0,0,0,0.65)]"
-        />
       ) : (
-        /* Built-in SVG Fallback Character */
         <PhoTharSvgFallback mood={mood} targetCol={targetCol} />
       )}
     </div>
@@ -417,7 +633,7 @@ const PhoTharSvgFallback: React.FC<{ mood: KidMood; targetCol: number | null }> 
   return (
     <motion.svg
       viewBox="0 0 220 175"
-      className="w-52 h-36 sm:w-56 sm:h-40 drop-shadow-[0_12px_22px_rgba(0,0,0,0.65)]"
+      className="w-full h-full drop-shadow-[0_12px_22px_rgba(0,0,0,0.65)]"
       animate={
         mood === 'happy'
           ? { y: [0, -12, 0], rotate: [-2.5, 2.5, -2.5] }
