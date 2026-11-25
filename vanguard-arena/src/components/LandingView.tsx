@@ -24,7 +24,6 @@ import { soundEngine } from '../utils/sound.ts';
 
 interface LandingViewProps {
   lang: Language;
-  onChangeLang: (lang: Language) => void;
   onlineCount: number;
   landingContent: LandingContent;
   onAuthenticated: (token: string, user: UserProfile, rememberMe: boolean) => void;
@@ -41,7 +40,6 @@ function makeSafePlayerId(rawUsername: string): string {
 
 export const LandingView: React.FC<LandingViewProps> = ({
   lang,
-  onChangeLang,
   onlineCount,
   landingContent,
   onAuthenticated,
