@@ -1896,7 +1896,10 @@ const allowedOrigins = new Set(
 
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    const ownOrigin = `${process.env.RENDER_EXTERNAL_URL || ''}`.replace(/\/$/, '');
+    if (!origin || allowedOrigins.has(origin) || (ownOrigin && origin === ownOrigin)) {
+      return callback(null, true);
+    }
     return callback(new Error('Origin is not allowed by the CORS policy.'));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -2272,9 +2275,24 @@ function getSocialPayload(userId: string) {
     createdAtMs: Date.parse(String(row.created_at)),
   });
 
+  const friends = accepted.map((item) => String(item.friend_id));
+  const blockedIds = blocked.map((item) => String(item.blocked_id));
+  const relatedIds = Array.from(new Set([
+    ...friends,
+    ...blockedIds,
+    ...incomingRows.map((row) => String(row.requester_id)),
+    ...outgoingRows.map((row) => String(row.addressee_id)),
+    ...messages.map((row) => String(row.sender_id === userId ? row.receiver_id : row.sender_id)),
+  ])).filter((id) => id && id !== userId);
+  const relatedUsers = relatedIds.length
+    ? (db.prepare(`SELECT * FROM users WHERE id IN (${relatedIds.map(() => '?').join(',')})`)
+        .all(...relatedIds) as Record<string, unknown>[]).map(rowToUser)
+    : [];
+
   return {
-    friends: accepted.map((item) => String(item.friend_id)),
-    blocked: blocked.map((item) => String(item.blocked_id)),
+    friends,
+    blocked: blockedIds,
+    relatedUsers,
     incomingRequests: incomingRows.map((row) => requestShape(row, false)),
     outgoingRequests: outgoingRows.map((row) => requestShape(row, true)),
     messages: messages.reverse().map((row) => ({
