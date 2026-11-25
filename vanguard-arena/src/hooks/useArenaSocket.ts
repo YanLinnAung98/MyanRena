@@ -792,7 +792,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       setTournaments(list);
     });
 
-    const unsubRooms = onSnapshot(collection(db, 'rooms'), (snap) => {
+    const unsubRooms = onSnapshot(query(collection(db, 'rooms'), where('status', '==', 'waiting'), where('isMatchmaking', '==', true)), (snap) => {
       const list: any[] = [];
       snap.forEach((d) => {
         const data = d.data();
@@ -908,7 +908,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
       if (isFirebaseConfigured && db) {
         try {
-          const snap = await getDocs(collection(db, 'rooms'));
+          const snap = await getDocs(query(collection(db, 'rooms'), where('status', '==', 'waiting'), where('isMatchmaking', '==', true)));
           let waitingRoom: any = null;
           snap.forEach((d) => {
             const r = d.data();
