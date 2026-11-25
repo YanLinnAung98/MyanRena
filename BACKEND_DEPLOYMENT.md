@@ -1,17 +1,12 @@
 # MyanRena Backend Deployment
 
-The GitHub Pages deployment is a static/offline-compatible frontend. It cannot host the Node.js API, SQLite database, or WebSocket server. The Render Blueprint in `render.yaml` is configured for the **$0 Free web-service plan** so the backend can be tested without a hosting charge. This is a hobby/test deployment, not durable production hosting.
+The GitHub Pages deployment is the current **$0 hosting option**. It serves the static frontend, but it cannot host the Node.js API, SQLite database, or WebSocket server. Render's Blueprint in `render.yaml` is configured for the Free plan only as an optional test target; the connected Render workspace rejected Free service creation with `need_payment_info` / HTTP 402, so **no Render service was created and no hosting resource was started**. Do not switch this project to a paid Render plan.
 
-## Deploy with Render
+## Render status (optional; not the $0 production path)
 
-1. Push this repository to GitHub and keep the deployment branch as `main`.
-2. In Render, choose **New → Blueprint**, connect `YanLinnAung98/MyanRena`, and select `main`.
-3. Review the `myanrena-api` service created from `render.yaml`. The Blueprint uses Render's Free web-service plan in Singapore and Node.js 24.22.1. It has no persistent disk and uses `/tmp/myanrena-data` only for temporary SQLite files.
-4. Set `ADMIN_INITIAL_PASSWORD` in Render's secret/environment settings. Use a unique password with at least 12 characters. Never commit the value to this repository.
-5. Set `FIREBASE_SERVICE_ACCOUNT_JSON` to the Firebase Admin service-account JSON when Google/Firebase ID-token verification is required. Store the JSON only as a Render secret. Username/password authentication does not need this secret.
-6. Keep `DATA_DIR=/tmp/myanrena-data` for the free test deployment. **Do not store real player accounts or valuable match history here:** Render Free files are ephemeral and SQLite data is lost after restart, redeploy, or spin-down.
-7. Deploy the service and check `https://<your-render-domain>/healthz`. A healthy service returns JSON with `ok: true`.
-8. Use the Render service URL as the main app URL. Add any custom frontend origin to `CORS_ORIGINS` if the frontend and API are hosted on different domains.
+The current Render Blueprint has `plan: free`, `autoSync: false`, and no persistent disk. The Render workspace currently has no services. Attempts to create even the Free web service were rejected with HTTP 402 (`need_payment_info`). Keep it unapplied; do not add billing information or choose a paid plan just to deploy this app.
+
+If Render later permits a zero-cost service without payment details, treat it as a throwaway functional test only. Set `ADMIN_INITIAL_PASSWORD` to a unique secret of at least 12 characters. Keep `DATA_DIR=/tmp/myanrena-data`; never put real player data there.
 
 ## Important deployment notes
 
@@ -23,6 +18,14 @@ The GitHub Pages deployment is a static/offline-compatible frontend. It cannot h
 - The default administrator username is `yanlinnaung`. The administrator password is supplied only through `ADMIN_INITIAL_PASSWORD`.
 - The administrator password exists only in the `ADMIN_INITIAL_PASSWORD` deployment secret. On an existing database, startup rotates the administrator password to the configured secret when it differs and revokes existing administrator sessions. If an administrator account already exists, the server will refuse to start when this secret is missing.
 - The CI workflow starts the Node server and smoke-tests health, registration, login, social data, and authenticated WebSocket state before publishing the static Pages artifact.
+
+## Firebase / Firestore status
+
+The frontend contains Firebase client configuration for project `arena-25951` and initializes the Firebase Web SDK. However, the current sign-up/sign-in flow in `src/components/LandingView.tsx` is browser-local: it derives a local player ID and stores a PBKDF2 password hash and Recovery PIN hash in `localStorage`. It does **not** call Firebase Authentication.
+
+The checked-in `firestore.rules` requires a signed-in Firebase user with a verified email for profile writes (`isVerified()`) and enforces a strict public-profile schema. The current browser-local sign-in does not create that Firebase Auth identity, so the current app authentication model and those rules are not aligned. Do not loosen the rules to public writes; that would expose player data and moderation controls. Do not claim that accounts, profiles, social data, or matches are safely cloud-backed until Firebase Authentication, the Firestore document schema, and rules are migrated and tested together.
+
+The Firebase ChatGPT plugin is installed, but no Firebase project-management or rules-deployment actions are exposed in this working session. The live Firebase Auth providers, deployed rules, and Firestore collections have therefore not been independently verified or changed. Preserve the existing Firebase project and data.
 
 ## Free-tier limits and durable-data requirement
 
