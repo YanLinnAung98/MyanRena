@@ -779,8 +779,10 @@ interface QueuedEntry {
 }
 const matchmakingQueues: Record<GameType, QueuedEntry[]> = {
   connect4: [],
+  tictactoe: [],
   ttt: [],
   rps: [],
+  sakarhtar: [],
   sakar_htar: [],
 };
 const sakarQuickQueue: QueuedEntry[] = [];
@@ -1969,12 +1971,7 @@ app.post('/api/auth/login', (req, res) => {
   }
 
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run(
-    token,
-    user.id,
-    user.role,
-    new Date().toISOString()
-  );
+  db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run([token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString()]);
   res.json({ token, user });
 });
 
@@ -2014,12 +2011,7 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(403).json({ error: 'This account has been suspended by an administrator.' });
     }
     const token = crypto.randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run(
-      token,
-      user.id,
-      user.role,
-      new Date().toISOString()
-    );
+    db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run([token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString()]);
     res.json({ token, user });
   } catch (err) {
     console.error('Google auth verification failed:', err);
@@ -3581,7 +3573,7 @@ async function bootstrap() {
     const client: SocketClient = {
       ws,
       userId: user.id,
-      role: user.role,
+      role: user.role === 'admin' ? 'admin' : 'user',
       inPlayLobby: false,
       token: session.token,
       pingMs: 22,
