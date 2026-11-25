@@ -37,13 +37,6 @@ export const TTTBoard: React.FC<TTTBoardProps> = ({
     soundEngine.playMove();
     onMove({ index });
   };
-  const handleMove = (index: number) => {
-  // အကွက်နှိပ်လိုက်တာနဲ့ အသံမြည်အောင် ဒီကုဒ်လေးကို ထည့်ပါ
-  soundEngine.playMove(); 
-  
-  // (ကျန်တဲ့ X, O မှတ်တဲ့ ကုဒ်တွေ ဆက်ရေးပါ...)
-}
-
   return (
     <div className="w-full max-w-[400px] mx-auto touch-game-lock">
       {/* Holographic Obsidian-Glass 3x3 Arena */}
