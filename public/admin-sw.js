@@ -1,15 +1,16 @@
-const ADMIN_CACHE = 'vanguard-admin-v1';
-const ADMIN_ASSETS = ['./admin.html', './admin-manifest.json'];
+const ADMIN_CACHE = 'myanrena-admin-redirect-v2';
 
-self.addEventListener('install', (event) => {
+self.addEventListener('install', () => self.skipWaiting());
+
+self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches.open(ADMIN_CACHE).then((cache) => cache.addAll(ADMIN_ASSETS))
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((key) => key.startsWith('vanguard-admin-')).map((key) => caches.delete(key))))
+      .then(() => self.clients.claim())
   );
-  self.skipWaiting();
 });
 
 self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
-  );
+  if (event.request.method !== 'GET') return;
+  event.respondWith(fetch(event.request));
 });
