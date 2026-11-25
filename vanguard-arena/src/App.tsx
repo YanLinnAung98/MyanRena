@@ -474,7 +474,6 @@ function VanguardAppCore() {
         )}
         <LandingView
           lang={lang}
-          onChangeLang={handleChangeLang}
           onlineCount={publicOnlineCount}
           landingContent={publicLandingContent}
           onAuthenticated={handleAuthenticated}
