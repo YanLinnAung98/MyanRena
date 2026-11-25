@@ -16,7 +16,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import { deleteDoc, doc, setDoc } from 'firebase/firestore';
+import { deleteDoc, doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
