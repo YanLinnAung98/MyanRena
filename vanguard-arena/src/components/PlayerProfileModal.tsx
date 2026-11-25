@@ -57,6 +57,9 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     const store = readServerlessStore();
     return store.users[userId] || Object.values(store.users || {}).find((u: any) => u.gameId === userId) || null;
   });
+  const [profileLoading, setProfileLoading] = React.useState(false);
+  const [profileLoadError, setProfileLoadError] = React.useState('');
+  const [retryLoad, setRetryLoad] = React.useState(0);
   const [copiedId, setCopiedId] = React.useState(false);
   const [dmText, setDmText] = React.useState('');
   const [sendingDm, setSendingDm] = React.useState(false);
@@ -65,42 +68,81 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const [reportReason, setReportReason] = React.useState('');
   const [shareOpen, setShareOpen] = React.useState(false);
 
-  // Supports lookup by either User ID or Game ID (for Deep-Linked Social Share URLs)
+  // Keep the public profile fresh and always resolve loading/error states.
   React.useEffect(() => {
     let active = true;
+    const localMatch =
+      allUsers.find((u) => u.id === userId || u.gameId === userId) ||
+      Object.values(readServerlessStore().users || {}).find((u: any) => u.id === userId || u.gameId === userId) ||
+      null;
+
+    setTargetUser(localMatch);
+    setProfileLoadError('');
+    setProfileLoading(true);
+
     const loadLatest = async () => {
-      if (!isFirebaseConfigured || !db) return;
-      const snap = await getDoc(doc(db, 'users', userId)).catch(() => null);
-      if (snap && snap.exists() && active) {
-        setTargetUser({ id: snap.id, ...snap.data() });
-        return;
-      }
-      const qSnap = await getDocs(
-        query(collection(db, 'users'), where('gameId', '==', userId))
-      ).catch(() => null);
-      if (qSnap && !qSnap.empty && active) {
-        const d = qSnap.docs[0];
-        setTargetUser({ id: d.id, ...d.data() });
+      try {
+        if (!isFirebaseConfigured || !db) {
+          if (!localMatch) {
+            setProfileLoadError(lang === 'my' ? 'ဒီကစားသမား၏ Profile ကို မတွေ့ပါ။' : 'This player profile could not be found.');
+          }
+          return;
+        }
+
+        let found: any = null;
+        const directSnap = await getDoc(doc(db, 'users', userId));
+        if (directSnap.exists()) {
+          found = { id: directSnap.id, ...directSnap.data() };
+        } else {
+          const byGameId = await getDocs(query(collection(db, 'users'), where('gameId', '==', userId)));
+          if (!byGameId.empty) {
+            const playerDoc = byGameId.docs[0];
+            found = { id: playerDoc.id, ...playerDoc.data() };
+          }
+        }
+
+        if (active && found) {
+          setTargetUser(found);
+        } else if (active && !localMatch) {
+          setProfileLoadError(lang === 'my' ? 'ဒီကစားသမား၏ Profile ကို မတွေ့ပါ။' : 'This player profile could not be found.');
+        }
+      } catch (error) {
+        console.error('Unable to load player profile:', error);
+        if (active && !localMatch) {
+          setProfileLoadError(lang === 'my' ? 'Profile ကို ဖွင့်မရပါ။ Internet ချိတ်ဆက်မှုကို စစ်ပြီး ပြန်စမ်းပါ။' : 'Could not load this profile. Check your connection and try again.');
+        }
+      } finally {
+        if (active) setProfileLoading(false);
       }
     };
-    loadLatest();
+
+    void loadLatest();
     return () => {
       active = false;
     };
-  }, [userId]);
+  }, [userId, allUsers, lang, retryLoad]);
 
   if (!targetUser) {
     return (
       <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
-        <div className="cyber-panel rounded-2xl p-6 text-center space-y-3 max-w-xs w-full">
-          <div className="text-xs text-slate-300">Loading player profile...</div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 rounded-xl bg-white/10 text-xs text-white cursor-pointer"
-          >
-            Close
-          </button>
+        <div className="w-full max-w-sm cyber-panel rounded-2xl border border-white/10 p-6 text-center space-y-3" role="dialog" aria-modal="true" aria-labelledby="profile-load-title">
+          <div className="mx-auto w-11 h-11 rounded-2xl bg-amber-500/10 border border-amber-400/20 flex items-center justify-center">
+            {profileLoading ? <span className="w-5 h-5 rounded-full border-2 border-amber-300/30 border-t-amber-300 animate-spin" /> : <Flag className="w-5 h-5 text-amber-300" />}
+          </div>
+          <h3 id="profile-load-title" className="text-sm font-bold text-white">
+            {profileLoading ? (lang === 'my' ? 'Profile ဖွင့်နေပါသည်' : 'Loading profile') : (lang === 'my' ? 'Profile မရရှိပါ' : 'Profile unavailable')}
+          </h3>
+          <p className="text-xs leading-relaxed text-slate-400">
+            {profileLoading ? (lang === 'my' ? 'ကစားသမား အချက်အလက်များကို ရယူနေပါသည်။' : 'Fetching player information.') : (profileLoadError || (lang === 'my' ? 'ထပ်မံစမ်းကြည့်ပါ။' : 'Please try again.'))}
+          </p>
+          <div className="grid grid-cols-2 gap-2 pt-1">
+            <button type="button" onClick={onClose} className="h-10 rounded-xl bg-white/10 text-xs font-bold text-white cursor-pointer">
+              {lang === 'my' ? 'ပိတ်မည်' : 'Close'}
+            </button>
+            <button type="button" disabled={profileLoading} onClick={() => setRetryLoad((value) => value + 1)} className="h-10 rounded-xl cyber-cta-gold text-xs font-extrabold text-slate-950 disabled:opacity-50 cursor-pointer">
+              {lang === 'my' ? 'ပြန်စမ်းမည်' : 'Try again'}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -112,25 +154,33 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const isFriend = friends.includes(targetUser.id);
   const isBlocked = blocked.includes(targetUser.id);
   const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 90000);
+  const targetDisplayName = String(targetDisplayName || targetUser.username || (lang === 'my' ? 'ကစားသမား' : 'Player'));
+  const targetBio = typeof targetUser.bio === 'string' ? targetUser.bio.trim() : '';
   const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
-  const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts : [];
+  const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts.filter(Boolean) : [];
 
-  const totalMatches = (targetUser.wins || 0) + (targetUser.losses || 0) + (targetUser.draws || 0);
+  const totalMatches = (Number(targetUser.wins) || 0) + (Number(targetUser.losses) || 0) + (Number(targetUser.draws) || 0);
   const winRate = totalMatches > 0 ? Math.round(((targetUser.wins || 0) / totalMatches) * 100) : 0;
 
   const persistMyRelations = async (nextFriends: string[], nextBlocked: string[], toastMsg: string) => {
     const updated = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
     saveActiveSessionUser(updated);
     onUserUpdated?.(updated);
+    let cloudSynced = true;
     if (isFirebaseConfigured && db) {
-      await setDoc(
-        doc(db, 'users', currentUser.id),
-        stripUndefined({ friends: nextFriends, blocked: nextBlocked }),
-        { merge: true }
-      ).catch(() => {});
+      try {
+        await setDoc(
+          doc(db, 'users', currentUser.id),
+          stripUndefined({ friends: nextFriends, blocked: nextBlocked }),
+          { merge: true }
+        );
+      } catch (error) {
+        console.error('Unable to sync player relations:', error);
+        cloudSynced = false;
+      }
     }
     soundEngine.playClick?.();
-    onNotify?.('success', toastMsg);
+    onNotify?.(cloudSynced ? 'success' : 'info', cloudSynced ? toastMsg : (lang === 'my' ? `${toastMsg} (ဒီစက်တွင်သာ သိမ်းထားပြီး Cloud ချိတ်ဆက်မှု မအောင်မြင်ပါ။)` : `${toastMsg} (saved locally; cloud sync failed).`));
   };
 
   const handleToggleFriend = () => {
@@ -145,8 +195,8 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
         Array.from(new Set([...friends, targetUser.id])),
         blocked.filter((id) => id !== targetUser.id),
         lang === 'my'
-          ? `${targetUser.displayName} ကို မိတ်ဆွေအဖြစ် ထည့်သွင်းပြီးပါပြီ!`
-          : `Added ${targetUser.displayName} as friend!`
+          ? `${targetDisplayName} ကို မိတ်ဆွေအဖြစ် ထည့်သွင်းပြီးပါပြီ!`
+          : `Added ${targetDisplayName} as friend!`
       );
     }
   };
@@ -162,7 +212,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
       persistMyRelations(
         friends.filter((id) => id !== targetUser.id),
         Array.from(new Set([...blocked, targetUser.id])),
-        lang === 'my' ? `${targetUser.displayName} ကို Block လုပ်ပြီးပါပြီ။` : `Blocked ${targetUser.displayName}.`
+        lang === 'my' ? `${targetDisplayName} ကို Block လုပ်ပြီးပါပြီ။` : `Blocked ${targetDisplayName}.`
       );
     }
   };
@@ -186,7 +236,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
         fromUserId: currentUser.id,
         fromName: currentUser.displayName,
         toUserId: targetUser.id,
-        toName: targetUser.displayName,
+        toName: targetDisplayName,
         text: dmText.trim(),
         createdAtMs: Date.now(),
       });
@@ -210,7 +260,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
       reporterId: currentUser.id,
       reporterName: currentUser.displayName,
       targetUserId: targetUser.id,
-      targetName: targetUser.displayName,
+      targetName: targetDisplayName,
       reason: reportReason.trim(),
       status: 'pending',
       createdAtMs: Date.now(),
@@ -227,12 +277,15 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     <>
       <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4">
         <motion.div
-          initial={{ scale: 0.93, opacity: 0 }}
+          role="dialog"
+          aria-modal="true"
+          aria-label={lang === 'my' ? `${targetDisplayName} ၏ Profile` : `${targetDisplayName}'s profile`}
+          initial={{ scale: 0.97, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="w-full max-w-md rounded-2xl cyber-panel border border-amber-400/50 overflow-hidden shadow-2xl max-h-[92dvh] flex flex-col"
+          className="w-full max-w-2xl rounded-2xl cyber-panel border border-amber-400/35 overflow-hidden shadow-2xl max-h-[92dvh] flex flex-col"
         >
           {/* Banner Header */}
-          <div className="relative h-28 sm:h-32 w-full shrink-0 bg-[#070b14]">
+          <div className="relative h-36 sm:h-44 w-full shrink-0 bg-[#070b14]">
             <img src={bannerSrc} alt="Player Banner" className="w-full h-full object-cover" />
             <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-black/30" />
 
@@ -279,14 +332,14 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
                 avatarUrl={targetUser.avatarUrl}
                 frameId={targetUser.frameId}
                 frames={frames}
-                displayName={targetUser.displayName}
+                displayName={targetDisplayName}
                 size="lg"
                 status={isOnline ? 'online' : 'offline'}
               />
               <div className="min-w-0 pb-0.5 flex-1">
                 <div className="flex items-center gap-1.5">
                   <h3 className="text-base font-display font-bold text-white truncate">
-                    {targetUser.displayName}
+                    {targetDisplayName}
                   </h3>
                   <RankTierIcon tier={targetUser.rank || 'silver'} className="w-5 h-5 shrink-0" />
                 </div>
@@ -310,8 +363,8 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
                 {lang === 'my' ? 'ကိုယ်ရေးအကျဉ်း (Bio)' : 'Player Bio'}
               </div>
               <p className="text-xs text-slate-200 leading-relaxed">
-                {targetUser.bio && targetUser.bio.trim()
-                  ? targetUser.bio
+                {targetBio
+                  ? targetBio
                   : lang === 'my'
                   ? 'Vanguard Arena တွင် ယှဉ်ပြိုင်နေသော ကစားသမားတစ်ဦးဖြစ်ပါသည်။'
                   : 'Competing live in Vanguard Arena.'}
@@ -326,10 +379,14 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
               </div>
             ) : null}
             {/* Stats */}
-            <div className="grid grid-cols-5 gap-1.5 text-center bg-[#070b14] p-2.5 rounded-xl border border-white/10 text-xs">
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5 text-center bg-[#070b14] p-2.5 rounded-xl border border-white/10 text-xs">
               <div>
                 <div className="text-[10px] text-slate-400">XP</div>
                 <div className="font-mono font-bold text-amber-400">{targetUser.xp || 0}</div>
+              </div>
+              <div>
+                <div className="text-[10px] text-slate-400">Matches</div>
+                <div className="font-mono font-bold text-white">{totalMatches}</div>
               </div>
               <div>
                 <div className="text-[10px] text-slate-400">Win</div>
@@ -417,7 +474,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
                       type="text"
                       value={dmText}
                       onChange={(e) => setDmText(e.target.value)}
-                      placeholder={lang === 'my' ? `${targetUser.displayName} ထံ စာတိုပို့မည်...` : 'Send quick message...'}
+                      placeholder={lang === 'my' ? `${targetDisplayName} ထံ စာတိုပို့မည်...` : 'Send quick message...'}
                       className="flex-1 h-10 px-3 rounded-xl bg-[#070b14] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                     />
                     <button
