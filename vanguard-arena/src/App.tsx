@@ -326,7 +326,7 @@ function VanguardAppCore() {
     });
     const data = await res.json();
     if (!res.ok) socket.pushToast('error', data.error || 'Unable to start bot match.');
-    else if (data.match) socket.setActiveMatch(data.match);
+    else if (data.match && !USE_SERVER_API) socket.setActiveMatch(data.match);
   };
 
   const handleJoinTournament = async (tid: string) => {
