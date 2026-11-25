@@ -5,6 +5,8 @@ import { getBestTTTMove, getTTTOutcome, type TTTMark } from './ticTacToe.ts';
 test('detects all win directions and a full-board draw', () => {
   assert.equal(getTTTOutcome(['X', 'X', 'X', 'O', null, 'O', null, null, null]), 'X');
   assert.equal(getTTTOutcome(['O', null, 'X', 'O', 'X', null, 'O', null, null]), 'O');
+  assert.equal(getTTTOutcome(['X', null, 'O', null, 'X', 'O', 'O', null, 'X']), 'X');
+  assert.equal(getTTTOutcome(['X', null, 'O', null, 'O', 'X', 'O', 'X', null]), 'O');
   assert.equal(getTTTOutcome(['X', 'O', 'X', 'X', 'O', 'O', 'O', 'X', 'X']), 'DRAW');
   assert.equal(getTTTOutcome(Array(9).fill(null)), null);
 });
