@@ -351,6 +351,17 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     }
   }, [notifications, token]);
 
+  const sendServerMessage = useCallback((payload: Record<string, unknown>) => {
+    if (!USE_SERVER_API) return false;
+    const socket = wsRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      pushToast('error', 'Realtime server is reconnecting. Please try again.');
+      return false;
+    }
+    socket.send(JSON.stringify(payload));
+    return true;
+  }, [pushToast]);
+
   const setAdminSocketMode = useCallback((mode: 'admin' | 'lobby') => {
     if (USE_SERVER_API && wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({ type: 'admin:mode', mode }));
@@ -456,7 +467,185 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     };
   }, [token, activeMatch?.id, currentRoom?.id, resolveCurrentPlayer]);
 
-  // 2. REAL-TIME USERS, RANKING & ADMIN NOTIFICATIONS LISTENER
+  // 2. SERVER-AUTHORITATIVE REALTIME TRANSPORT
+  useEffect(() => {
+    if (!USE_SERVER_API || !token) return;
+
+    let mounted = true;
+    let retryTimer: number | null = null;
+    let socket: WebSocket | null = null;
+    let retryAttempt = 0;
+
+    const connect = () => {
+      if (!mounted) return;
+      setConnectionState('connecting');
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(token)}`;
+      try {
+        socket = new WebSocket(wsUrl);
+        wsRef.current = socket;
+      } catch (error: any) {
+        setConnectionState('disconnected');
+        setCloudError(error?.message || 'Unable to open realtime connection.');
+        scheduleReconnect();
+        return;
+      }
+
+      socket.onopen = () => {
+        if (!mounted) return;
+        retryAttempt = 0;
+        setConnectionState('connected');
+        setCloudError(null);
+        socket?.send(JSON.stringify({ type: 'match:sync' }));
+      };
+
+      socket.onmessage = (event) => {
+        if (!mounted) return;
+        let message: any;
+        try {
+          message = JSON.parse(String(event.data));
+        } catch {
+          return;
+        }
+
+        switch (message.type) {
+          case 'init': {
+            if (message.user) onUserUpdate(message.user as UserProfile);
+            if (Array.isArray(message.frames)) setFrames(message.frames);
+            if (message.featureLocks) setFeatureLocks(message.featureLocks);
+            if (message.matchmakingSettings) setMatchmakingSettings(message.matchmakingSettings);
+            if (Array.isArray(message.onlinePlayers)) setOnlinePlayers(message.onlinePlayers);
+            if (Array.isArray(message.leaderboard)) setLeaderboard(message.leaderboard);
+            if (Array.isArray(message.tournaments)) setTournaments(message.tournaments);
+            if (message.landingContent) setLandingContent(getPatchedLandingContent(message.landingContent));
+            if (Array.isArray(message.openRooms)) setOpenRooms(message.openRooms);
+            if (typeof message.sakarQueueCount === 'number') setSakarQuickCount(message.sakarQueueCount);
+            if (Array.isArray(message.warnings)) {
+              const warnings = message.warnings.map((warning: any) => ({
+                id: String(warning.id),
+                title: warning.title || 'Account notice',
+                reason: warning.reason || warning.message || '',
+              }));
+              setPendingWarnings(warnings);
+            }
+            setConnectionState('connected');
+            setCloudError(null);
+            break;
+          }
+          case 'auth:error':
+            clearBotTimers();
+            setCloudError(message.error || 'Your session has expired.');
+            onKicked(message.error || 'Your session has expired. Please sign in again.');
+            break;
+          case 'user:update':
+            if (message.user) onUserUpdate(message.user as UserProfile);
+            break;
+          case 'presence:update':
+            if (Array.isArray(message.onlinePlayers)) setOnlinePlayers(message.onlinePlayers);
+            break;
+          case 'rooms:update':
+            if (Array.isArray(message.openRooms)) setOpenRooms(message.openRooms);
+            break;
+          case 'queue:tick':
+            if (message.queue) {
+              setQueueStatus(message.queue);
+              setQueuedGame(message.queue.gameType);
+            }
+            break;
+          case 'queue:timeout':
+          case 'queue:cancelled':
+            setQueueStatus(null);
+            setQueuedGame(null);
+            setSakarQuickCount(0);
+            if (message.type === 'queue:timeout') {
+              pushToast('info', 'No opponent was found before the search timed out.');
+            }
+            break;
+          case 'sakar:queue':
+            setSakarQuickCount(Number(message.count || 0));
+            break;
+          case 'match:state':
+            if (message.match) {
+              const mapped = mapServerMatchToClient(message.match);
+              setActiveMatch(mapped);
+              setCurrentRoom(null);
+              setQueueStatus(null);
+              setQueuedGame(null);
+              setMatchChat([]);
+              setMatchChat((message.match.chat || []).map(mapServerChatMessage));
+            }
+            break;
+          case 'match:chat':
+            if (message.message) setMatchChat((previous) => [...previous, mapServerChatMessage(message.message)]);
+            break;
+          case 'match:left':
+            setActiveMatch(null);
+            setMatchChat([]);
+            break;
+          case 'room:state':
+            setCurrentRoom(message.room || null);
+            setRoomChat(Array.isArray(message.chat) ? message.chat.map(mapServerChatMessage) : []);
+            break;
+          case 'room:chat':
+            if (message.message) setRoomChat((previous) => [...previous, mapServerChatMessage(message.message)]);
+            break;
+          case 'challenge:received':
+            setPendingChallenge(message.invite || null);
+            break;
+          case 'toast':
+            pushToast(message.level || 'info', message.message || '');
+            break;
+          case 'ping':
+            socket?.send(JSON.stringify({ type: 'pong', ts: message.ts }));
+            break;
+          case 'ping:ack':
+            if (typeof message.pingMs === 'number') setPingMs(message.pingMs);
+            break;
+          case 'announcement':
+            if (message.announcement) {
+              setAnnouncement({
+                title: message.announcement.title || 'Announcement',
+                message: message.announcement.message || '',
+              });
+            }
+            break;
+          default:
+            break;
+        }
+      };
+
+      socket.onerror = () => {
+        if (mounted) setCloudError('Realtime connection interrupted.');
+      };
+
+      socket.onclose = () => {
+        if (!mounted) return;
+        if (wsRef.current === socket) wsRef.current = null;
+        setConnectionState('disconnected');
+        scheduleReconnect();
+      };
+    };
+
+    const scheduleReconnect = () => {
+      if (!mounted || retryTimer !== null) return;
+      const delay = Math.min(15000, 1000 * (2 ** Math.min(retryAttempt, 4)));
+      retryAttempt += 1;
+      retryTimer = window.setTimeout(() => {
+        retryTimer = null;
+        connect();
+      }, delay);
+    };
+
+    connect();
+    return () => {
+      mounted = false;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      if (wsRef.current === socket) wsRef.current = null;
+      if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
+    };
+  }, [token, onUserUpdate, onKicked, pushToast, clearBotTimers]);
+
+  // 3. REAL-TIME USERS, RANKING & ADMIN NOTIFICATIONS LISTENER
   useEffect(() => {
     if (!token || USE_SERVER_API) return;
     const myId = token.replace(/^token_/, '').replace(/^local_/, '');
