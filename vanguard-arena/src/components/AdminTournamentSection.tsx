@@ -407,7 +407,18 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
         writeServerlessStore(store);
       }
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'users', targetUser.id), userPatch, { merge: true });
+        await setDoc(
+          doc(db, 'users', targetUser.id),
+          {
+            xp: userPatch.xp,
+            rank: userPatch.rank,
+            gifts: userPatch.gifts,
+            unlockedFrames: userPatch.unlockedFrames,
+            unlockedBanners: userPatch.unlockedBanners,
+            updatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
       }
 
       const winnerRec: TournamentWinnerRecord = stripUndefined({
