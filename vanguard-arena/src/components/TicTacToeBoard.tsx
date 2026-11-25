@@ -44,23 +44,25 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
   onMove,
   onLeaveFinished,
 }) => {
-  const board: Array<string | null> = useMemo(() =>
-    Array.isArray(match?.tttBoard) && match.tttBoard.length === 9
-      ? match.tttBoard
-      : Array(9).fill(null),
-  [match?.tttBoard]);
+  const board: Array<string | null> = useMemo(() => {
+    const source = Array.isArray(match?.tttBoard) ? match.tttBoard : match?.state?.board;
+    if (!Array.isArray(source) || source.length !== 9) return Array(9).fill(null);
+    return source.map((cell: unknown) => cell === 'X' || cell === 1 ? 'X' : cell === 'O' || cell === 2 ? 'O' : null);
+  }, [match?.tttBoard, match?.state?.board]);
 
-  const players = Array.isArray(match?.players) ? match.players : [];
+  const players = Array.isArray(match?.players)
+    ? match.players
+    : [match?.player1, match?.player2].filter(Boolean);
   const opponent = players.find((player: any) => player?.id !== currentUserId);
   const opponentName = opponent?.displayName || getTicTacToeBotName(lang, match?.difficulty);
   const currentPlayer = players.find((player: any) => player?.id === currentUserId);
   const currentPlayerName = currentPlayer?.displayName || (lang === 'my' ? 'သင်' : 'You');
 
   const isFinished = match?.status === 'finished';
-  const isPvp = Boolean(match?.isRealtimePvp && players.length >= 2);
+  const isPvp = Boolean((match?.isRealtimePvp || match?.mode === 'pvp' || match?.mode === 'matchmaking') && players.length >= 2 && !opponent?.isBot);
   const isMyTurn = !isFinished && (!isPvp || match?.turnUserId === currentUserId);
-  const isDraw = Boolean(match?.isDraw);
-  const didWin = match?.winnerId === currentUserId;
+  const isDraw = Boolean(match?.isDraw || match?.state?.winner === 'draw');
+  const didWin = match?.winnerId === currentUserId || (match?.state?.winner === 1 && match?.player1?.id === currentUserId) || (match?.state?.winner === 2 && match?.player2?.id === currentUserId);
 
   const winningIndices = useMemo(() => {
     for (const [a, b, c] of WIN_LINES) {
@@ -82,7 +84,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
       : (lang === 'my' ? 'ပြိုင်ဘက် အလှည့်...' : "Opponent's Turn...");
 
   const handlePress = (index: number) => {
-    if (!isMyTurn || board[index] !== null) return;
+    if (!isMyTurn || isFinished || board[index] !== null) return;
     if (onSelectCell) onSelectCell(index);
     else if (onCellClick) onCellClick(index);
     else onMove?.({ index });
