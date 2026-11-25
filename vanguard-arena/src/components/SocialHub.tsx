@@ -38,6 +38,7 @@ interface SocialHubProps {
   allUsers: UserProfile[];
   frames: any[];
   featureLocks: Record<string, boolean>;
+  socialRefreshTick?: number;
   initialChatUserId?: string | null;
   onClearInitialChat?: () => void;
   onUserUpdated: (user: UserProfile) => void;
@@ -48,6 +49,8 @@ interface SocialHubProps {
 
 export const SocialHub: React.FC<SocialHubProps> = ({
   lang,
+  token,
+  socialRefreshTick = 0,
   currentUser,
   allUsers,
   frames,
@@ -66,6 +69,8 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [outgoingRequests, setOutgoingRequests] = React.useState<any[]>([]);
   const [chatInput, setChatInput] = React.useState('');
   const [copiedMyId, setCopiedMyId] = React.useState(false);
+  const [serverSearchResults, setServerSearchResults] = React.useState<UserProfile[]>([]);
+  const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
 
   React.useEffect(() => {
     if (initialChatUserId) {
@@ -75,8 +80,43 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     }
   }, [initialChatUserId, onClearInitialChat]);
 
-  // Real-Time Direct Messages & Friend Requests Listeners
+  const applySocialPayload = React.useCallback((payload: any) => {
+    setMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+    setIncomingRequests(Array.isArray(payload?.incomingRequests) ? payload.incomingRequests : []);
+    setOutgoingRequests(Array.isArray(payload?.outgoingRequests) ? payload.outgoingRequests : []);
+    const friends = Array.isArray(payload?.friends) ? payload.friends : [];
+    const blocked = Array.isArray(payload?.blocked) ? payload.blocked : [];
+    const currentFriends = Array.isArray(currentUser.friends) ? currentUser.friends : [];
+    const currentBlocked = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
+    const sameFriends = currentFriends.length === friends.length && currentFriends.every((id) => friends.includes(id));
+    const sameBlocked = currentBlocked.length === blocked.length && currentBlocked.every((id) => blocked.includes(id));
+    if (!sameFriends || !sameBlocked) {
+      const updated = { ...currentUser, friends, blocked };
+      saveActiveSessionUser(updated);
+      onUserUpdated(updated);
+    }
+  }, [currentUser, onUserUpdated]);
+
+  const refreshServerSocial = React.useCallback(async () => {
+    if (!USE_SERVER_API || !token) return;
+    try {
+      const response = await fetch('/api/social', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) return;
+      applySocialPayload(await response.json());
+    } catch (error) {
+      console.warn('Social data refresh failed:', error);
+    }
+  }, [token, applySocialPayload]);
+
+  // Authenticated backend accounts use the server database; offline mode retains Firestore listeners.
   React.useEffect(() => {
+    if (USE_SERVER_API) {
+      void refreshServerSocial();
+      const interval = window.setInterval(() => void refreshServerSocial(), 7000);
+      return () => window.clearInterval(interval);
+    }
     if (!isFirebaseConfigured || !db) return;
 
     const unsubMsgs = onSnapshot(collection(db, 'messages'), (snap) => {
@@ -110,15 +150,41 @@ export const SocialHub: React.FC<SocialHubProps> = ({
       unsubMsgs();
       unsubReqs();
     };
-  }, [currentUser.id]);
+  }, [currentUser.id, token, socialRefreshTick, refreshServerSocial]);
+
+  React.useEffect(() => {
+    if (!USE_SERVER_API || !token) return;
+    const query = searchQuery.trim();
+    if (query.length < 2) {
+      setServerSearchResults([]);
+      return;
+    }
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (active && response.ok) setServerSearchResults(Array.isArray(data.users) ? data.users : []);
+      } catch (error) {
+        console.warn('Player search failed:', error);
+      }
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [searchQuery, token]);
+
 
   const friendIds: string[] = Array.isArray(currentUser.friends) ? currentUser.friends : [];
   const blockedIds: string[] = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
 
-  const otherUsers = React.useMemo(
-    () => allUsers.filter((u) => u.id !== currentUser.id),
-    [allUsers, currentUser.id]
-  );
+  const otherUsers = React.useMemo(() => {
+    const source = USE_SERVER_API && searchQuery.trim().length >= 2 ? serverSearchResults : allUsers;
+    return source.filter((u) => u.id !== currentUser.id);
+  }, [allUsers, currentUser.id, serverSearchResults, searchQuery]);
 
   const friendProfiles = otherUsers.filter((u) => friendIds.includes(u.id) && !blockedIds.includes(u.id));
   const blockedProfiles = otherUsers.filter((u) => blockedIds.includes(u.id));
