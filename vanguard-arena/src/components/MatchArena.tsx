@@ -97,8 +97,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       <div
         className={
           isFullBleed
-            ? 'absolute top-2 inset-x-3 z-40 max-w-3xl mx-auto cyber-panel bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl'
-            : 'cyber-panel flex items-center justify-between gap-3 px-3 sm:px-5 py-3 rounded-2xl border border-amber-300/20 shrink-0 shadow-[0_12px_36px_rgba(0,0,0,.24)]'
+            ? 'absolute top-2 inset-x-3 z-40 max-w-3xl mx-auto cyber-panel mr-match-scoreboard bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl'
+            : 'cyber-panel mr-match-scoreboard flex items-center justify-between gap-3 px-3 sm:px-5 py-3 rounded-2xl border border-amber-300/20 shrink-0 shadow-[0_12px_36px_rgba(0,0,0,.24)]'
         }
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -117,7 +117,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
               key={p1Score}
               initial={{ scale: 1.35 }}
               animate={{ scale: 1 }}
-              className="text-xs font-mono font-bold text-amber-400"
+              className="mr-player-score text-xs font-mono font-bold text-amber-300"
             >
               {p1Score}
             </motion.div>
@@ -143,7 +143,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
               key={p2Score}
               initial={{ scale: 1.35 }}
               animate={{ scale: 1 }}
-              className="text-xs font-mono font-bold text-sky-400"
+              className="mr-player-score text-xs font-mono font-bold text-sky-300"
             >
               {p2Score}
             </motion.div>
