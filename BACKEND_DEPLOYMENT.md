@@ -6,7 +6,7 @@ The GitHub Pages deployment is a static/offline-compatible frontend. It cannot h
 
 1. Push this repository to GitHub and keep the deployment branch as `main`.
 2. In Render, choose **New → Blueprint**, connect `YanLinnAung98/MyanRena`, and select `main`.
-3. Review the `myanrena-api` service created from `render.yaml`. The blueprint uses the Singapore region, Node.js 24.12, and a persistent disk mounted at `/var/data`.
+3. Review the `myanrena-api` service created from `render.yaml`. The blueprint uses the Singapore region, Node.js 24.22.1, and a persistent disk mounted at `/var/data`.
 4. Set `ADMIN_INITIAL_PASSWORD` in Render's secret/environment settings. Use a unique password with at least 12 characters. Never commit the value to this repository.
 5. Set `FIREBASE_SERVICE_ACCOUNT_JSON` to the Firebase Admin service-account JSON when Google/Firebase ID-token verification is required. Store the JSON only as a Render secret. Username/password authentication does not need this secret.
 6. Keep `DATA_DIR=/var/data`. Do not remove the persistent disk or move SQLite data to an ephemeral directory.
