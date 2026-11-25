@@ -1,6 +1,18 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  createUserWithEmailAndPassword,
+  deleteUser,
+  sendEmailVerification,
+  sendPasswordResetEmail,
+  setPersistence,
+  browserLocalPersistence,
+  browserSessionPersistence,
+  signInWithEmailAndPassword,
+  updateProfile,
+} from 'firebase/auth';
+import { doc, getDoc, runTransaction, serverTimestamp } from 'firebase/firestore';
+import {
   ArrowRight,
   Check,
   Copy,
@@ -15,7 +27,7 @@ import {
 
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { stripUndefined } from '../lib/firebase.ts';
+import { auth, db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import { normalizeGameId, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
@@ -90,6 +102,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const t = TRANSLATIONS[lang];
   const [authMode, setAuthMode] = React.useState<'signin' | 'signup'>('signin');
   const [username, setUsername] = React.useState('');
+  const [email, setEmail] = React.useState('');
   const [password, setPassword] = React.useState('');
   const [showPass, setShowPass] = React.useState(false);
   const [displayName, setDisplayName] = React.useState('');
@@ -185,6 +198,90 @@ export const LandingView: React.FC<LandingViewProps> = ({
               : 'Password must be at least 8 characters.'
           );
         }
+      }
+
+      if (!USE_SERVER_API && isFirebaseConfigured && auth && db && authMode === 'signup') {
+        const cleanEmail = email.trim().toLowerCase();
+        if (!/^[a-z0-9_]{3,24}$/.test(cleanUser)) {
+          throw new Error(
+            lang === 'my'
+              ? 'Username ကို အင်္ဂလိပ်စာလုံးအသေး၊ ဂဏန်း၊ underscore ဖြင့် ၃ မှ ၂၄ လုံးအထိ ထည့်ပါ။'
+              : 'Use 3-24 lowercase letters, numbers, or underscores for your username.'
+          );
+        }
+        if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(cleanEmail)) {
+          throw new Error(lang === 'my' ? 'မှန်ကန်သော Email လိပ်စာ ထည့်ပါ။' : 'Enter a valid email address.');
+        }
+
+        const credential = await createUserWithEmailAndPassword(auth, cleanEmail, cleanPass);
+        try {
+          const uid = credential.user.uid;
+          const newUser = buildPlayerProfile({
+            id: uid,
+            username: cleanUser,
+            displayName: displayName.trim() || username.trim(),
+            gameId: `MR-${Math.floor(100000 + Math.random() * 900000)}`,
+            xp: 1000,
+            rank: 'Silver',
+          });
+          const usernameRef = doc(db, 'usernames', cleanUser);
+          const userRef = doc(db, 'users', uid);
+          await runTransaction(db, async (transaction) => {
+            const usernameSnap = await transaction.get(usernameRef);
+            if (usernameSnap.exists()) {
+              throw new Error(lang === 'my' ? 'ဒီ Username ကို အသုံးပြုပြီးသားပါ။' : 'That username is already taken.');
+            }
+            transaction.set(usernameRef, {
+              uid,
+              username: cleanUser,
+              createdAt: serverTimestamp(),
+            });
+            transaction.set(userRef, {
+              uid,
+              username: cleanUser,
+              gameId: newUser.gameId,
+              displayName: newUser.displayName,
+              avatarUrl: newUser.avatarUrl,
+              frameId: newUser.frameId,
+              xp: newUser.xp,
+              wins: newUser.wins || 0,
+              losses: newUser.losses || 0,
+              draws: newUser.draws || 0,
+              updatedAt: serverTimestamp(),
+            });
+          });
+          await updateProfile(credential.user, { displayName: newUser.displayName });
+          await sendEmailVerification(credential.user).catch((verificationError) => {
+            console.warn('Firebase verification email could not be sent:', verificationError);
+          });
+          saveActiveSessionUser(newUser);
+          soundEngine.playNotify();
+          onAuthenticated(`token_${uid}`, newUser, rememberMe);
+        } catch (registrationError) {
+          await deleteUser(credential.user).catch(() => {});
+          throw registrationError;
+        }
+        return;
+      }
+
+      if (!USE_SERVER_API && isFirebaseConfigured && auth && db && authMode === 'signin' && cleanUser.includes('@')) {
+        await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
+        const credential = await signInWithEmailAndPassword(auth, cleanUser, cleanPass);
+        const uid = credential.user.uid;
+        const profileSnap = await getDoc(doc(db, 'users', uid));
+        if (!profileSnap.exists()) {
+          throw new Error(lang === 'my' ? 'Cloud Profile မတွေ့ပါ။ Support ကို ဆက်သွယ်ပါ။' : 'Cloud profile not found. Please contact support.');
+        }
+        const profileData = profileSnap.data();
+        const playerProfile = buildPlayerProfile({
+          ...profileData,
+          id: uid,
+          username: String(profileData.username || cleanUser.split('@')[0]),
+        });
+        saveActiveSessionUser(playerProfile);
+        soundEngine.playNotify();
+        onAuthenticated(`token_${uid}`, playerProfile, rememberMe);
+        return;
       }
 
       if (USE_SERVER_API) {
@@ -340,6 +437,13 @@ export const LandingView: React.FC<LandingViewProps> = ({
       const cleanUser = recUsername.trim().toLowerCase();
       if (recNewPassword.trim().length < 8) {
         throw new Error(lang === 'my' ? 'စကားဝှက်အသစ် အနည်းဆုံး ၈ လုံးထားပါ။' : 'New password must be at least 8 characters.');
+      }
+      if (!USE_SERVER_API && isFirebaseConfigured && auth && cleanUser.includes('@')) {
+        await sendPasswordResetEmail(auth, cleanUser);
+        setRecSuccess(lang === 'my'
+          ? 'Password Reset Link ကို Email သို့ ပို့ပြီးပါပြီ။ Inbox/Spam ကို စစ်ဆေးပါ။'
+          : 'Password reset link sent. Check your inbox and spam folder.');
+        return;
       }
       if (!/^\d{6}$/.test(recPin.trim())) {
         throw new Error(lang === 'my' ? 'Recovery PIN ၆ လုံးကို မှန်ကန်စွာ ရိုက်ထည့်ပါ။' : 'Enter your 6-digit Recovery PIN.');
@@ -498,7 +602,11 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
               <form onSubmit={handleSubmit} className="space-y-3">
                 <div>
-                  <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.username}</label>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">
+                    {authMode === 'signin' && !USE_SERVER_API && isFirebaseConfigured
+                      ? (lang === 'my' ? 'Email (သို့) Browser Username' : 'Email or local username')
+                      : t.auth.username}
+                  </label>
                   <input
                     type="text"
                     required
@@ -523,13 +631,33 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   </div>
                 )}
 
+                {authMode === 'signup' && !USE_SERVER_API && isFirebaseConfigured && (
+                  <div>
+                    <label className="block text-xs font-medium text-slate-300 mb-1">
+                      {lang === 'my' ? 'Email လိပ်စာ' : 'Email address'}
+                    </label>
+                    <input
+                      type="email"
+                      required
+                      autoComplete="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="name@example.com"
+                      className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
+                    />
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      {lang === 'my' ? 'အခြားဖုန်း/ကွန်ပျူတာမှလည်း ဝင်နိုင်ရန် Email အမှန်ကို အသုံးပြုပါ။' : 'Use a real email so you can sign in on other devices and reset your password.'}
+                    </p>
+                  </div>
+                )}
+
                 <div>
                   <label className="block text-xs font-medium text-slate-300 mb-1">{t.auth.password}</label>
                   <div className="relative">
                     <input
                       type={showPass ? 'text' : 'password'}
                       required
-                      minLength={4}
+                      minLength={8}
                       autoComplete={authMode === 'signin' ? 'current-password' : 'new-password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
@@ -593,7 +721,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <Lock className="w-3 h-3 text-amber-400" />
                 <span>{USE_SERVER_API
                   ? (lang === 'my' ? 'လုံခြုံသော Hosted Backend ဖြင့် ချိတ်ဆက်ထားပါသည်' : 'Connected to secured hosted backend')
-                  : (lang === 'my' ? 'အကောင့်ကို ဒီ Browser ထဲတွင်သာ သိမ်းဆည်းထားသည်' : 'Account is stored in this browser only')}</span>
+                  : isFirebaseConfigured
+                    ? (lang === 'my' ? 'Firebase Cloud Account — Device အများအပြားမှ ဝင်နိုင်သည်' : 'Firebase cloud account — sign in across devices')
+                    : (lang === 'my' ? 'အကောင့်ကို ဒီ Browser ထဲတွင်သာ သိမ်းဆည်းထားသည်' : 'Account is stored in this browser only')}</span>
               </div>
             </div>
           </div>
@@ -678,9 +808,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   required
                   value={recUsername}
                   onChange={(e) => setRecUsername(e.target.value)}
-                  placeholder={t.auth.usernamePlaceholder}
+                  placeholder={!USE_SERVER_API && isFirebaseConfigured
+                    ? (lang === 'my' ? 'Firebase Email (သို့) Local Username' : 'Firebase email or local username')
+                    : t.auth.usernamePlaceholder}
                   className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
+                {!( !USE_SERVER_API && isFirebaseConfigured && recUsername.includes('@')) && (
                 <input
                   type="text"
                   required
@@ -693,12 +826,13 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <input
                   type="password"
                   required
-                  minLength={USE_SERVER_API ? 8 : 4}
+                  minLength={8}
                   value={recNewPassword}
                   onChange={(e) => setRecNewPassword(e.target.value)}
                   placeholder={t.auth.newPasswordLabel}
                   className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
+                )}
                 {recError && <div className="text-xs text-rose-300">{recError}</div>}
                 {recSuccess && <div className="text-xs text-emerald-300">{recSuccess}</div>}
                 <button
