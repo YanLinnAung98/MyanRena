@@ -285,6 +285,28 @@ export const GameBadgeIcon: React.FC<{ gameType?: string; className?: string }> 
   );
 };
 
+export const MyanRenaCrestIcon: React.FC<IconProps> = ({ className = 'w-7 h-7' }) => (
+  <svg viewBox="0 0 64 64" className={className} fill="none" aria-hidden="true">
+    <defs>
+      <linearGradient id="myanrena-crest-gold" x1="8" y1="5" x2="56" y2="59" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#fff0b8" />
+        <stop offset=".48" stopColor="#e9bd68" />
+        <stop offset="1" stopColor="#9d642b" />
+      </linearGradient>
+      <linearGradient id="myanrena-crest-core" x1="16" y1="12" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+        <stop stopColor="#1e3857" />
+        <stop offset="1" stopColor="#091322" />
+      </linearGradient>
+    </defs>
+    <path d="M32 3.5 55 15v18c0 13.5-8.5 22.5-23 27.5C17.5 55.5 9 46.5 9 33V15L32 3.5Z" fill="url(#myanrena-crest-core)" stroke="url(#myanrena-crest-gold)" strokeWidth="2.4" />
+    <path d="M18 25 32 12l14 13h-7l-7-6-7 6h-7Z" fill="url(#myanrena-crest-gold)" />
+    <path d="M21 28h22v3H21z" fill="#ffe1a0" fillOpacity=".8" />
+    <path d="M23 34 32 48l9-14h-5l-4 6-4-6h-5Z" fill="url(#myanrena-crest-gold)" />
+    <path d="M16 18 32 9l16 9" stroke="#fff3cf" strokeOpacity=".4" strokeWidth="1.2" strokeLinecap="round" />
+    <circle cx="32" cy="53" r="1.6" fill="#ffe1a0" />
+  </svg>
+);
+
 export const VanguardCrestIcon: React.FC<IconProps> = ({ className = 'w-6 h-6' }) => (
   <svg viewBox="0 0 64 64" className={className} fill="none">
     <defs>
