@@ -283,7 +283,8 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
     if (!manualAddUserId) return;
     const current = Array.isArray(tr.participants) ? tr.participants : [];
     if (current.includes(manualAddUserId)) return;
-    if (current.length >= tr.bracketSize) {
+    const bracketCapacity = tr.bracketSize || tr.maxPlayers || 8;
+    if (current.length >= bracketCapacity) {
       onNotify('error', 'Bracket လူပြည့်သွားပါပြီ။');
       return;
     }
