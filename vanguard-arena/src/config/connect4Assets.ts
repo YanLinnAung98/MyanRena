@@ -6,6 +6,13 @@ export interface ResolvedAsset {
   url: string | null;
 }
 
+// Backward-compatible name used by the current Connect 4 media presentation.
+export type ResolvedMediaAsset = ResolvedAsset;
+
+export const CONNECT4_ASSET_CONFIG = {
+  background: { crossfadeSec: 0.85 },
+} as const;
+
 const RAW_ROOT =
   'https://raw.githubusercontent.com/YanLinnAung98/MyanRena/main/public/assets/';
 const RAW_SUB =
