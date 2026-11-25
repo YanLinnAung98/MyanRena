@@ -309,9 +309,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const unlockedBanners = Array.isArray(user.unlockedBanners) ? user.unlockedBanners : [];
 
   return (
-    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">\n<div className="flex items-end justify-between gap-3"><div><div className="text-[10px] font-black tracking-[.22em] text-amber-200/80">MYANRENA • PLAYER IDENTITY</div><h1 className="mt-1 text-2xl sm:text-3xl font-black tracking-tight text-white">{lang === "my" ? "ကစားသမား ပရိုဖိုင်" : "Player Profile"}</h1><p className="mt-1 text-xs sm:text-sm text-slate-400">{lang === "my" ? "ကိုယ့်ရဲ့အမှတ်အသား၊ အလှဆင်မှုနှင့် ကိုယ်ရေးအချက်အလက်ကို စီမံပါ။" : "Manage your identity, showcase and player details."}</p></div></div>
+    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
+<div className="flex items-end justify-between gap-3"><div><div className="text-[10px] font-black tracking-[.22em] text-amber-200/80">MYANRENA • PLAYER IDENTITY</div><h1 className="mt-1 text-2xl sm:text-3xl font-black tracking-tight text-white">{lang === "my" ? "ကစားသမား ပရိုဖိုင်" : "Player Profile"}</h1><p className="mt-1 text-xs sm:text-sm text-slate-400">{lang === "my" ? "ကိုယ့်ရဲ့အမှတ်အသား၊ အလှဆင်မှုနှင့် ကိုယ်ရေးအချက်အလက်ကို စီမံပါ။" : "Manage your identity, showcase and player details."}</p></div></div>
       {/* Live Profile Banner + Avatar Header + Share Profile Button */}
-      <div className="cyber-panel rounded-[1.5rem] overflow-hidden border border-amber-300/25 shadow-[0_22px_55px_rgba(0,0,0,.28)]">
+      <div className="cyber-panel mr-page-hero rounded-[1.5rem] overflow-hidden border border-amber-300/25 shadow-[0_22px_55px_rgba(0,0,0,.28)]">
         <div className="relative h-36 sm:h-44 w-full bg-[#070b14]">
           <img src={activeBannerSrc} alt="Profile Banner" className="w-full h-full object-cover" />
           <div className="absolute inset-0 bg-gradient-to-t from-[#0b101d] via-[#0b101d]/30 to-transparent" />

@@ -365,7 +365,7 @@ export const GameArenaSetupView: React.FC<GameArenaSetupViewProps> = ({
                     whileHover={m.locked ? undefined : { y: -2 }}
                     whileTap={m.locked ? undefined : { scale: 0.96 }}
                     onClick={() => handleSelectMode(m.id)}
-                    className={`relative rounded-2xl cyber-panel border border-white/15 ${m.ring} bg-gradient-to-b ${m.accent} p-2.5 sm:p-4 flex flex-col items-center text-center gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg`}
+                    className={`mr-interactive-card relative rounded-2xl cyber-panel border border-white/15 ${m.ring} bg-gradient-to-b ${m.accent} p-2.5 sm:p-4 flex flex-col items-center text-center gap-1.5 sm:gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg`}
                   >
                     {m.locked && (
                       <span className="absolute top-1.5 right-1.5 text-rose-400">
