@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'motion/react';
 import { CloudDownload, ShieldCheck, Sparkles } from 'lucide-react';
 import {
   BOOT_CONFIG,
+  bootAssetPath,
   downloadInGameResources,
   fetchServerDataManifest,
   getCachedDataVersion,
@@ -206,14 +207,20 @@ export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComp
                     className="w-full h-full object-cover"
                   />
                 ) : studioMedia.kind === 'image' && studioMedia.url ? (
-                  <motion.img
-                    src={studioMedia.url}
-                    alt="Vanguard Studio"
-                    initial={{ scale: 1.06, opacity: 0.2 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ duration: 2.2, ease: 'easeOut' }}
-                    className="w-full h-full object-cover"
-                  />
+                  <picture className="block w-full h-full">
+                    <source
+                      media="(max-width: 767px), (orientation: portrait)"
+                      srcSet={bootAssetPath('assets/boot-studio-mobile.svg')}
+                    />
+                    <motion.img
+                      src={studioMedia.url}
+                      alt="MyanRena Game Studio"
+                      initial={{ scale: 1.06, opacity: 0.2 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 2.2, ease: 'easeOut' }}
+                      className="w-full h-full object-cover"
+                    />
+                  </picture>
                 ) : (
                   /* Fallback Studio Emblem (ပုံ/Video မထည့်ရသေးလျှင် အလိုအလျောက်ပေါ်မည်) */
                   <motion.div
@@ -268,14 +275,20 @@ export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComp
                       className="w-full h-full object-cover"
                     />
                   ) : loadingMedia.kind === 'image' && loadingMedia.url ? (
-                    <motion.img
-                      src={loadingMedia.url}
-                      alt="Vanguard Arena Loading"
-                      initial={{ scale: 1.04 }}
-                      animate={{ scale: 1 }}
-                      transition={{ duration: 3.5, ease: 'easeOut' }}
-                      className="w-full h-full object-cover"
-                    />
+                    <picture className="block w-full h-full">
+                      <source
+                        media="(max-width: 767px), (orientation: portrait)"
+                        srcSet={bootAssetPath('assets/boot-loading-mobile.svg')}
+                      />
+                      <motion.img
+                        src={loadingMedia.url}
+                        alt="MyanRena Arena Loading"
+                        initial={{ scale: 1.04 }}
+                        animate={{ scale: 1 }}
+                        transition={{ duration: 3.5, ease: 'easeOut' }}
+                        className="w-full h-full object-cover"
+                      />
+                    </picture>
                   ) : (
                     <div className="w-full h-full bg-[radial-gradient(circle_at_50%_30%,#1e293b_0%,#070b14_75%)]" />
                   )}
