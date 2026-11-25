@@ -292,6 +292,66 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.blockerId == request.auth.uid;
     }
 
+    // Public matchmaking queue rooms. Only waiting matchmaking tickets are discoverable.
+    match /rooms/{roomId} {
+      function isRoomParticipant(data) {
+        return isSignedIn()
+          && data.players is list
+          && data.players.size() >= 1
+          && data.players.size() <= 2
+          && data.players.hasAny([{'id': request.auth.uid}]);
+      }
+      allow get: if isValidId(roomId) && (isRoomParticipant(existing()) || isAdmin());
+      allow list: if isAdmin() || (
+        isSignedIn()
+        && resource.data.status == 'waiting'
+        && resource.data.isMatchmaking == true
+      );
+      allow create: if isValidId(roomId) && isVerified()
+        && request.resource.data.keys().hasAll(['id', 'code', 'gameType', 'isMatchmaking', 'hostId', 'maxPlayers', 'players', 'status', 'activeMatchId'])
+        && request.resource.data.keys().hasOnly(['id', 'code', 'gameType', 'isMatchmaking', 'hostId', 'maxPlayers', 'players', 'status', 'activeMatchId', 'chat'])
+        && request.resource.data.id == roomId
+        && request.resource.data.code is string && request.resource.data.code.size() <= 24
+        && request.resource.data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar']
+        && request.resource.data.isMatchmaking == true
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.maxPlayers == 2
+        && request.resource.data.players is list
+        && request.resource.data.players.size() == 1
+        && request.resource.data.players[0].id == request.auth.uid
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.activeMatchId == null;
+      allow update: if isValidId(roomId) && isVerified()
+        && isRoomParticipant(existing())
+        && request.resource.data.id == existing().id
+        && request.resource.data.hostId == existing().hostId
+        && request.resource.data.gameType == existing().gameType
+        && request.resource.data.isMatchmaking == existing().isMatchmaking
+        && request.resource.data.maxPlayers == existing().maxPlayers
+        && (
+          (
+            existing().status == 'waiting'
+            && existing().players.size() == 1
+            && request.resource.data.status == 'playing'
+            && request.resource.data.players is list
+            && request.resource.data.players.size() == 2
+            && request.resource.data.players[0].id == existing().hostId
+            && request.resource.data.players[1].id == request.auth.uid
+            && request.resource.data.activeMatchId is string
+            && request.resource.data.diff(existing()).affectedKeys().hasOnly(['players', 'status', 'activeMatchId'])
+          ) ||
+          (
+            request.resource.data.diff(existing()).affectedKeys().hasOnly(['chat'])
+            && request.resource.data.chat is list
+            && request.resource.data.chat.size() <= 500
+          )
+        );
+      allow delete: if isValidId(roomId) && (
+        isAdmin() ||
+        (isSignedIn() && existing().hostId == request.auth.uid && existing().status == 'waiting')
+      );
+    }
+
     // Match History Records
     match /matches/{matchId} {
       function isMatchParticipant(data) {
