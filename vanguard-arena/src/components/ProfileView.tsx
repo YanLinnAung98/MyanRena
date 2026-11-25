@@ -15,7 +15,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { collection, doc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
@@ -134,28 +134,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const cloudDb = db;
     if (isFirebaseConfigured && cloudDb) {
       try {
-        // Never copy login credentials or recovery secrets into a public profile document.
-      const { password: _password, recoveryPin: _recoveryPin, ...cloudSafeUser } = fullUserPayload as UserProfile & {
-        password?: string;
-        recoveryPin?: string;
-      };
+        // Sync only approved public profile fields. Never write passwords, recovery data,
+      // moderation flags, inventory, or client-editable XP/statistics to the public user document.
+      const cloudSafeUser = stripUndefined({
+        uid: user.id,
+        username: user.username,
+        gameId: user.gameId,
+        displayName: fullUserPayload.displayName,
+        avatarUrl: fullUserPayload.avatarUrl,
+        frameId: fullUserPayload.frameId,
+        bio: fullUserPayload.bio,
+        favoriteGame: fullUserPayload.favoriteGame,
+        bannerId: fullUserPayload.bannerId,
+        bannerUrl: fullUserPayload.bannerUrl,
+        country: fullUserPayload.country,
+        showCountry: fullUserPayload.showCountry,
+        xp: user.xp,
+        wins: user.wins || 0,
+        losses: user.losses || 0,
+        draws: user.draws || 0,
+        updatedAt: serverTimestamp(),
+      });
       await setDoc(doc(cloudDb, 'users', user.id), cloudSafeUser, { merge: true });
-
-        // Also sync any matching Firestore doc by gameId or username (in case legacy doc ID differed)
-        if (user.gameId) {
-          const snap = await getDocs(
-            query(collection(cloudDb, 'users'), where('gameId', '==', user.gameId))
-          ).catch(() => null);
-          if (snap) {
-            const updates: Promise<any>[] = [];
-            snap.forEach((d) => {
-              if (d.id !== user.id) {
-                updates.push(setDoc(doc(cloudDb, 'users', d.id), cleanPatch, { merge: true }));
-              }
-            });
-            if (updates.length > 0) await Promise.all(updates);
-          }
-        }
       } catch (err: any) {
         cloudOk = false;
         onNotify(
