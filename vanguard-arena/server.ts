@@ -339,15 +339,17 @@ function seedDatabase() {
     throw new Error('The configured ADMIN_USERNAME is already assigned to a non-admin account.');
   }
 
-  if (existingAdmin && verifyPassword('163104', existingAdmin.password_hash)) {
-    const replacementPassword = adminInitialPassword || crypto.randomBytes(36).toString('base64url');
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
-      hashPassword(replacementPassword),
-      existingAdmin.id
-    );
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existingAdmin.id);
+  if (existingAdmin) {
     if (!adminInitialPassword) {
-      console.warn('Legacy default admin password has been disabled. Set ADMIN_INITIAL_PASSWORD to regain admin access.');
+      throw new Error('Set ADMIN_INITIAL_PASSWORD in the deployment environment before starting the administrator-enabled server.');
+    }
+    if (!verifyPassword(adminInitialPassword, existingAdmin.password_hash)) {
+      db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+        hashPassword(adminInitialPassword),
+        existingAdmin.id
+      );
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existingAdmin.id);
+      console.warn('Administrator password rotated from the deployment secret; existing administrator sessions were revoked.');
     }
   } else if (!existingAdmin && adminInitialPassword) {
     db.prepare(`
