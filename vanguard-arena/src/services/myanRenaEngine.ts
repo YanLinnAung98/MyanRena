@@ -116,98 +116,13 @@ export function computeXpDelta(outcome: 'win' | 'loss' | 'draw'): number {
   return -20;
 }
 
-// 2. Stealth Admin & Player Authentication (yanlinnaung / 163104)
+// 2. Authentication is backend-only; no client-side administrator shortcut.
 export async function authenticateUser(
-  rawUsername: string,
-  rawPassword: string
+  _rawUsername: string,
+  _rawPassword: string
 ): Promise<PlayerProfile> {
-  const username = rawUsername.trim().toLowerCase();
-  const password = rawPassword.trim();
-
-  if (!username || !password) {
-    throw new Error('အကောင့်အမည်နှင့် စကားဝှက် ပြည့်စုံစွာ ရိုက်ထည့်ပါ။');
-  }
-
-  // Stealth Admin Check: No visible Admin Login button in UI
-  const isStealthAdmin = username === 'yanlinnaung' && password === '163104';
-  const uid = isStealthAdmin ? 'admin_yanlinnaung' : `player_${username}`;
-
-  if (isFirebaseConfigured && db) {
-    const userRef = doc(db, 'users', uid);
-    const snap = await getDoc(userRef);
-
-    if (snap.exists()) {
-      const data = snap.data() as PlayerProfile & { passwordHash?: string };
-      if (!isStealthAdmin && data.passwordHash && data.passwordHash !== password) {
-        throw new Error('စကားဝှက် မှားယွင်းနေပါသည်။');
-      }
-      if (data.status === 'banned') {
-        throw new Error('သင့်အကောင့်ကို Admin မှ အပြီးပိတ်သိမ်း (Ban) ထားပါသည်။');
-      }
-      if (data.status === 'suspended') {
-        throw new Error('သင့်အကောင့်ကို ယာယီပိတ်ထား (Suspended) ပါသည်။');
-      }
-      if (isStealthAdmin && !data.isAdmin) {
-        await updateDoc(userRef, { isAdmin: true });
-        data.isAdmin = true;
-      }
-      return data;
-    }
-
-    const newProfile: PlayerProfile & { passwordHash: string } = {
-      uid,
-      username,
-      passwordHash: password,
-      displayName: isStealthAdmin ? 'Yan Lin Naung (Master)' : rawUsername.trim(),
-      gameCode: isStealthAdmin
-        ? 'MR-163104'
-        : 'MR-' + Math.floor(100000 + Math.random() * 900000),
-      avatar: isStealthAdmin ? '👑' : '🐉',
-      frameId: isStealthAdmin ? 'legend-gold' : 'bronze-basic',
-      xp: isStealthAdmin ? 3000 : 1000,
-      rank: isStealthAdmin ? 'Legend' : 'Silver',
-      wins: 0,
-      losses: 0,
-      draws: 0,
-      isAdmin: isStealthAdmin,
-      status: 'active',
-      friends: [],
-      blocked: [],
-    };
-    await setDoc(userRef, newProfile);
-    return newProfile;
-  }
-
-  // LocalStorage Fallback if Firebase Config is not yet added
-  const localKey = `myanrena_user_${uid}`;
-  const existing = localStorage.getItem(localKey);
-  if (existing) {
-    const parsed = JSON.parse(existing);
-    if (isStealthAdmin) parsed.isAdmin = true;
-    return parsed;
-  }
-
-  const fallbackProfile: PlayerProfile = {
-    uid,
-    username,
-    displayName: isStealthAdmin ? 'Yan Lin Naung (Master)' : rawUsername.trim(),
-    gameCode: isStealthAdmin ? 'MR-163104' : 'MR-' + Math.floor(100000 + Math.random() * 900000),
-    avatar: isStealthAdmin ? '👑' : '🐉',
-    frameId: isStealthAdmin ? 'legend-gold' : 'bronze-basic',
-    xp: isStealthAdmin ? 3000 : 1000,
-    rank: isStealthAdmin ? 'Legend' : 'Silver',
-    wins: 0,
-    losses: 0,
-    draws: 0,
-    isAdmin: isStealthAdmin,
-    status: 'active',
-    friends: [],
-    blocked: [],
-  };
-  localStorage.setItem(localKey, JSON.stringify(fallbackProfile));
-  return fallbackProfile;
+  throw new Error('Please sign in through the secure MyanRena application backend.');
 }
-
 // 3. Aegis Bot AI Engine (Easy, Medium, Hard)
 export const AegisBotEngine = {
   pickTTT(board: string[], difficulty: BotDifficulty): number {
