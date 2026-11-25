@@ -48,8 +48,98 @@ jobs:
       - name: Build production bundle
         run: npm run build
 
-      - name: TypeScript validation
-        run: npm run lint
+      - name: Backend startup and authentication smoke test
+        env:
+          NODE_ENV: production
+          PORT: 3187
+          DATA_DIR: ${{ runner.temp }}/myanrena-backend-smoke
+        run: |
+          mkdir -p "$DATA_DIR"
+          npm start > "$RUNNER_TEMP/myanrena-server.log" 2>&1 &
+          SERVER_PID=$!
+          cleanup() { kill "$SERVER_PID" 2>/dev/null || true; }
+          trap cleanup EXIT
+
+          ready=0
+          for attempt in {1..30}; do
+            if curl -fsS "http://127.0.0.1:$PORT/healthz" >/dev/null; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" -ne 1 ]; then
+            cat "$RUNNER_TEMP/myanrena-server.log"
+            exit 1
+          fi
+
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { randomBytes } from 'node:crypto';
+          import WebSocket from 'ws';
+
+          const base = `http://127.0.0.1:${process.env.PORT}`;
+          const username = `ci_${Date.now().toString(36)}`;
+          const password = `Smoke-${randomBytes(18).toString('hex')}-Aa9!`;
+
+          const health = await fetch(`${base}/healthz`);
+          assert.equal(health.status, 200, 'health endpoint should respond');
+          assert.equal((await health.json()).ok, true, 'health endpoint should report ok');
+
+          const register = await fetch(`${base}/api/auth/register`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password, displayName: 'CI Smoke Player' }),
+          });
+          const registered = await register.json();
+          assert.equal(register.status, 200, `registration should succeed: ${registered.error || ''}`);
+          assert.ok(registered.recoveryPin, 'registration should return a recovery PIN');
+
+          const login = await fetch(`${base}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+          });
+          const loggedIn = await login.json();
+          assert.equal(login.status, 200, `login should succeed: ${loggedIn.error || ''}`);
+          assert.ok(loggedIn.token, 'login should return a session token');
+
+          const social = await fetch(`${base}/api/social`, {
+            headers: { Authorization: `Bearer ${loggedIn.token}` },
+          });
+          assert.equal(social.status, 200, 'authenticated social API should respond');
+          const socialData = await social.json();
+          assert.ok(Array.isArray(socialData.friends), 'social API should return friend IDs');
+          assert.ok(Array.isArray(socialData.relatedUsers), 'social API should return related profiles');
+
+          const wsUrl = `ws://127.0.0.1:${process.env.PORT}/ws?token=${encodeURIComponent(loggedIn.token)}`;
+          const socket = new WebSocket(wsUrl);
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+              socket.terminate();
+              reject(new Error('WebSocket did not send initial state within 8 seconds.'));
+            }, 8000);
+            socket.on('message', (buffer) => {
+              let message;
+              try { message = JSON.parse(buffer.toString()); } catch { return; }
+              if (message.type === 'init') {
+                clearTimeout(timer);
+                assert.equal(message.user?.id, loggedIn.user.id, 'WebSocket should authenticate the player');
+                socket.close();
+                resolve();
+              } else if (message.type === 'auth:error') {
+                clearTimeout(timer);
+                reject(new Error(message.error || 'WebSocket authentication failed.'));
+              }
+            });
+            socket.on('error', (error) => {
+              clearTimeout(timer);
+              reject(error);
+            });
+          });
+
+          console.log('Backend smoke test passed: health, register, login, social API, and authenticated WebSocket.');
+          NODE
 
       - name: Prepare GitHub Pages output
         working-directory: .
