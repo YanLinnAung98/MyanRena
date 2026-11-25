@@ -250,7 +250,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
               updatedAt: serverTimestamp(),
             });
           });
-          await updateProfile(credential.user, { displayName: newUser.displayName });
+          await updateProfile(credential.user, { displayName: newUser.displayName }).catch((profileError) => {
+            console.warn('Firebase Auth display name could not be updated:', profileError);
+          });
           await sendEmailVerification(credential.user).catch((verificationError) => {
             console.warn('Firebase verification email could not be sent:', verificationError);
           });
