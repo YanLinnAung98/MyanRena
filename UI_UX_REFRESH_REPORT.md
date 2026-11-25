@@ -35,9 +35,9 @@ Updated `vanguard-arena/src/styles/cyberArena.css` with an additive shared UI qu
 - Added small-screen control sizing to reduce mobile input zoom and improve tap targets.
 - Strengthened reduced-motion handling, including disabling CTA shimmer.
 
-The change is deliberately additive and does not rewrite game components or alter game mechanics.
+The shared styling layer is additive. A subsequent component-level redesign now replaces the actual Lobby screen layout while preserving its existing game-selection and setup callbacks.
 
-## 4. Recommended next design passes
+### Component-level redesign completed in the follow-up commit\n\nUpdated `vanguard-arena/src/components/LobbyView.tsx` with a visible screen redesign:\n\n- Added a branded game-center hero with clear headline, explanatory copy and primary jump-to-games action.\n- Added live community/player and open-room summary panels using existing props.\n- Added player XP and rank identity panel using the current profile.\n- Rebuilt all four game cards with clearer artwork stage, game category, player count, numbered arena label, description and play affordance.\n- Improved responsive layout and visual hierarchy for mobile and desktop.\n- Preserved existing game setup navigation, feature locks and callbacks.\n\n## 4. Recommended next design passes
 
 | Priority | Area | Recommended work |
 |---|---|---|
