@@ -41,7 +41,7 @@ service cloud.firestore {
 
     function isValidUserPublic(data, userId) {
       return data.keys().hasAll(['uid', 'username', 'gameId', 'displayName', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'username', 'gameId', 'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame', 'bannerId', 'bannerUrl', 'country', 'showCountry', 'rank', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'gameId', 'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame', 'bannerId', 'bannerUrl', 'country', 'showCountry', 'rank', 'gifts', 'unlockedFrames', 'unlockedBanners', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
         && data.uid is string && data.uid == userId && data.uid.size() <= 128
         && data.username is string && data.username.matches('^[a-z0-9_]{3,24}$')
         && data.gameId is string && data.gameId.size() >= 4 && data.gameId.size() <= 20
@@ -55,6 +55,9 @@ service cloud.firestore {
         && (!('country' in data) || (data.country is string && data.country.size() <= 56))
         && (!('showCountry' in data) || data.showCountry is bool)
         && (!('rank' in data) || (data.rank is string && data.rank.size() <= 20))
+        && (!('gifts' in data) || (data.gifts is list && data.gifts.size() <= 100))
+        && (!('unlockedFrames' in data) || (data.unlockedFrames is list && data.unlockedFrames.size() <= 100))
+        && (!('unlockedBanners' in data) || (data.unlockedBanners is list && data.unlockedBanners.size() <= 100))
         && data.xp is number && data.xp >= 0 && data.xp <= 10000000
         && data.wins is number && data.wins >= 0 && data.wins <= 1000000
         && data.losses is number && data.losses >= 0 && data.losses <= 1000000
@@ -206,8 +209,8 @@ service cloud.firestore {
             isAdmin()
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
-              'displayName', 'frameId', 'bio', 'bannerId', 'rank',
-              'xp', 'wins', 'losses', 'draws', 'updatedAt'
+              'displayName', 'frameId', 'bio', 'bannerId', 'rank', 'gifts',
+              'unlockedFrames', 'unlockedBanners', 'xp', 'wins', 'losses', 'draws', 'updatedAt'
             ])
           )
         );
