@@ -321,7 +321,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     try {
       await setDoc(
         doc(db, 'users', editingUser.id),
-        { ...patch, updatedAt: serverTimestamp() },
+        {
+          displayName: patch.displayName,
+          bio: patch.bio,
+          xp: patch.xp,
+          rank: patch.rank,
+          frameId: patch.frameId,
+          bannerId: patch.bannerId,
+          wins: patch.wins,
+          losses: patch.losses,
+          draws: patch.draws,
+          updatedAt: serverTimestamp(),
+        },
         { merge: true }
       );
       const store = readServerlessStore();
