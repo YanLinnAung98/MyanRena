@@ -299,7 +299,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         bio: bio.trim().slice(0, 180),
         favoriteGame,
         gender,
-        ageRange: ageRange || undefined,
+        ageRange: ageRange || '',
         country: country.trim().slice(0, 56),
         showGender,
         showAgeRange,
