@@ -331,6 +331,16 @@ function VanguardAppCore() {
 
   const handleJoinTournament = async (tid: string) => {
     if (!user) return;
+    if (USE_SERVER_API) {
+      const response = await fetch(`/api/tournaments/${encodeURIComponent(tid)}/join`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token || ''}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) socket.pushToast('error', data.error || 'Unable to join tournament.');
+      else socket.pushToast('success', 'ပြိုင်ပွဲစာရင်း သွင်းပြီးပါပြီ!');
+      return;
+    }
     if (socket.featureLocks.tournaments) {
       socket.pushToast('error', 'ပြိုင်ပွဲစနစ်ကို Admin မှ ယာယီပိတ်ထားပါသည်။');
       return;
@@ -343,6 +353,16 @@ function VanguardAppCore() {
 
   const handleLeaveTournament = async (tid: string) => {
     if (!user) return;
+    if (USE_SERVER_API) {
+      const response = await fetch(`/api/tournaments/${encodeURIComponent(tid)}/leave`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token || ''}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) socket.pushToast('error', data.error || 'Unable to leave tournament.');
+      else socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
+      return;
+    }
     if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, 'tournaments', tid), { participants: arrayRemove(user.id) }).catch(() => {});
     }
@@ -352,6 +372,17 @@ function VanguardAppCore() {
   // Strictly sends a Pending Mutual Friend Request (never auto-adds without recipient acceptance)
   const handleSendFriendRequest = async (targetUserId: string) => {
     if (!user || targetUserId === user.id) return;
+    if (USE_SERVER_API) {
+      const response = await fetch('/api/social/requests', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token || ''}` },
+        body: JSON.stringify({ targetUserId }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) socket.pushToast('error', data.error || 'Unable to send friend request.');
+      else socket.pushToast('success', 'Friend Request ပေးပို့ပြီးပါပြီ။');
+      return;
+    }
     const target = mergedLeaderboard.find((u) => u.id === targetUserId);
     const reqId = `${user.id}__${targetUserId}`;
     const payload = stripUndefined({
@@ -452,7 +483,7 @@ function VanguardAppCore() {
     const data = await res.json();
     if (data.match) {
       socket.setCurrentRoom(null);
-      socket.setActiveMatch(data.match);
+      if (!USE_SERVER_API) socket.setActiveMatch(data.match);
     }
   };
 
@@ -784,6 +815,7 @@ function VanguardAppCore() {
             allUsers={mergedLeaderboard}
             frames={socket.frames}
             featureLocks={socket.featureLocks}
+            socialRefreshTick={socket.socialRefreshTick}
             initialChatUserId={initialChatUserId}
             onClearInitialChat={() => setInitialChatUserId(null)}
             onUserUpdated={handleUserProfileUpdated}
