@@ -209,7 +209,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
               : 'Use 3-24 lowercase letters, numbers, or underscores for your username.'
           );
         }
-        if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(cleanEmail)) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
           throw new Error(lang === 'my' ? 'မှန်ကန်သော Email လိပ်စာ ထည့်ပါ။' : 'Enter a valid email address.');
         }
 
@@ -833,7 +833,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
                 </React.Fragment>)}
-                {recError && <div className="text-xs text-rose-300">{recError}</div>
+                {recError && <div className="text-xs text-rose-300">{recError}</div>}
                 {recSuccess && <div className="text-xs text-emerald-300">{recSuccess}</div>}
                 <button
                   type="submit"
