@@ -89,8 +89,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
     <div
       className={
         isFullBleed
-          ? 'fixed inset-x-0 top-14 bottom-0 z-20 w-screen flex flex-col justify-between overflow-hidden overscroll-none'
-          : 'fixed inset-x-0 top-14 bottom-0 max-w-3xl mx-auto px-2 sm:px-3 py-1.5 sm:py-2 flex flex-col justify-between overflow-hidden overscroll-none'
+          ? 'fixed inset-x-0 top-14 bottom-0 z-20 w-screen flex flex-col justify-between overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
+          : 'fixed inset-x-0 top-14 bottom-0 max-w-5xl mx-auto px-3 sm:px-5 py-3 sm:py-4 flex flex-col justify-between gap-3 overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
       }
     >
       {/* Cyber Scoreboard Header */}
@@ -98,7 +98,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         className={
           isFullBleed
             ? 'absolute top-2 inset-x-3 z-40 max-w-3xl mx-auto cyber-panel bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl'
-            : 'cyber-panel flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/25 shrink-0'
+            : 'cyber-panel flex items-center justify-between gap-3 px-3 sm:px-5 py-3 rounded-2xl border border-amber-300/20 shrink-0 shadow-[0_12px_36px_rgba(0,0,0,.24)]'
         }
       >
         <div className="flex items-center gap-2 min-w-0">
@@ -163,7 +163,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         className={
           isFullBleed
             ? 'flex-1 min-h-0 w-full h-full'
-            : 'flex-1 min-h-0 flex items-center justify-center py-1 overflow-hidden'
+            : 'relative flex-1 min-h-0 flex items-center justify-center py-2 sm:py-3 overflow-hidden rounded-[1.5rem] border border-white/[0.08] bg-[radial-gradient(ellipse_at_50%_15%,rgba(232,185,92,.08),transparent_52%),linear-gradient(145deg,rgba(18,30,49,.72),rgba(7,12,21,.92))] shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_18px_45px_rgba(0,0,0,.2)]'
         }
       >
         {/* 1. FULL-SCREEN VILLAGE DIRT TIC-TAC-TOE WITH MA PU TU */}
@@ -219,7 +219,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
         className={
           isFullBleed
             ? 'absolute bottom-2 inset-x-3 z-40 max-w-3xl mx-auto flex items-center justify-between gap-2'
-            : 'flex items-center justify-between gap-2 shrink-0'
+            : 'flex items-center justify-between gap-3 shrink-0 rounded-2xl border border-white/[0.08] bg-[#111b2b]/90 p-2 shadow-[0_12px_30px_rgba(0,0,0,.22)]'
         }
       >
         <button
