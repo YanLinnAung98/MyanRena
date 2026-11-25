@@ -231,6 +231,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
           passwordOk = foundRecord.password === cleanPass;
           if (passwordOk) {
             foundRecord.passwordHash = await hashLocalSecret(cleanPass);
+            if (typeof foundRecord.recoveryPin === 'string' && !foundRecord.recoveryPinHash) {
+              foundRecord.recoveryPinHash = await hashLocalSecret(foundRecord.recoveryPin);
+            }
             delete foundRecord.password;
             delete foundRecord.recoveryPin;
             localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(foundRecord));
