@@ -50,8 +50,8 @@ interface GameArenaSetupViewProps {
   onJoinRoom: (roomIdOrCode: string) => void;
 }
 
-const GAME_META: Record<
-  GameType,
+const GAME_META_BASE: Record<
+  'connect4' | 'tictactoe' | 'rps' | 'sakarhtar',
   {
     titleMy: string;
     titleEn: string;
@@ -153,6 +153,12 @@ const GAME_META: Record<
     winXp: 75,
     drawXp: 25,
   },
+};
+
+const GAME_META: Record<GameType, (typeof GAME_META_BASE)['connect4']> = {
+  ...GAME_META_BASE,
+  ttt: GAME_META_BASE.tictactoe,
+  sakar_htar: GAME_META_BASE.sakarhtar,
 };
 
 export const GameArenaSetupView: React.FC<GameArenaSetupViewProps> = ({
