@@ -82,6 +82,7 @@ jobs:
           path: ${{ steps.find_dir.outputs.app_dir }}/dist
 
   deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
