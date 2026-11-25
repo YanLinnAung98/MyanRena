@@ -166,7 +166,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     const updated = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
     saveActiveSessionUser(updated);
     onUserUpdated?.(updated);
-    let cloudSynced = true;
+    let cloudSynced = false;
     if (isFirebaseConfigured && db) {
       try {
         await setDoc(
@@ -217,12 +217,19 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     }
   };
 
-  const handleCopyGameId = () => {
-    navigator.clipboard?.writeText(targetUser.gameId || targetUser.id);
-    soundEngine.playClick?.();
-    setCopiedId(true);
-    onNotify?.('success', `Copied ID: ${targetUser.gameId}`);
-    setTimeout(() => setCopiedId(false), 1800);
+  const handleCopyGameId = async () => {
+    const value = String(targetUser.gameId || targetUser.id || '');
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('CLIPBOARD_UNAVAILABLE');
+      await navigator.clipboard.writeText(value);
+      soundEngine.playClick?.();
+      setCopiedId(true);
+      onNotify?.('success', `Copied ID: ${value}`);
+      window.setTimeout(() => setCopiedId(false), 1800);
+    } catch (error) {
+      console.error('Unable to copy player ID:', error);
+      onNotify?.('error', lang === 'my' ? 'Game ID ကို Copy မလုပ်နိုင်ပါ။ Browser Permission ကို စစ်ပါ။' : 'Could not copy the Game ID. Check browser permissions.');
+    }
   };
 
   const handleQuickDm = async (e: React.FormEvent) => {
@@ -230,6 +237,10 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
     if (!dmText.trim() || isBlocked) return;
     setSendingDm(true);
     try {
+      if (!isFirebaseConfigured || !db) {
+        onNotify?.('error', lang === 'my' ? 'စာတိုပို့ရန် Cloud Server ချိတ်ဆက်မှု မရရှိသေးပါ။' : 'Messaging is unavailable because the cloud service is not connected.');
+        return;
+      }
       const dmId = `dm_${Date.now()}_${Math.floor(Math.random() * 999)}`;
       const msg = stripUndefined({
         id: dmId,
@@ -246,6 +257,9 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
       setDmText('');
       soundEngine.playNotify?.();
       onNotify?.('success', lang === 'my' ? 'စာတို ပေးပို့ပြီးပါပြီ!' : 'Message sent!');
+    } catch (error) {
+      console.error('Quick message failed:', error);
+      onNotify?.('error', lang === 'my' ? 'စာတိုပို့မရပါ။ Connection ကို စစ်ပြီး ပြန်စမ်းပါ။' : 'Message could not be sent. Check the connection and try again.');
     } finally {
       setSendingDm(false);
     }
@@ -265,12 +279,19 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
       status: 'pending',
       createdAtMs: Date.now(),
     });
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'reports', rid), payload).catch(() => {});
+    if (!isFirebaseConfigured || !db) {
+      onNotify?.('error', lang === 'my' ? 'Report ပေးပို့ရန် Cloud Server ချိတ်ဆက်မှု မရရှိသေးပါ။' : 'The cloud service is unavailable, so the report could not be sent.');
+      return;
     }
-    setReportReason('');
-    setReportOpen(false);
-    onNotify?.('info', lang === 'my' ? 'Admin ထံ Report ပေးပို့ပြီးပါပြီ။' : 'Report sent to Administrator.');
+    try {
+      await setDoc(doc(db, 'reports', rid), payload);
+      setReportReason('');
+      setReportOpen(false);
+      onNotify?.('success', lang === 'my' ? 'Admin ထံ Report ပေးပို့ပြီးပါပြီ။' : 'Report sent to Administrator.');
+    } catch (error) {
+      console.error('Player report failed:', error);
+      onNotify?.('error', lang === 'my' ? 'Report ပေးပို့မရပါ။ နောက်တစ်ကြိမ် ပြန်စမ်းပါ။' : 'Could not send the report. Please try again.');
+    }
   };
 
   return (
