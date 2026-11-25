@@ -39,7 +39,6 @@ import { MyanRenaCrestIcon } from './components/PremiumIcons.tsx';
 import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
 import { GameBootSequence } from './components/GameBootSequence.tsx';
 import { LandingView } from './components/LandingView.tsx';
-import { LanguageSwitcher } from './components/LanguageSwitcher.tsx';
 import { LobbyView } from './components/LobbyView.tsx';
 import { MatchArena } from './components/MatchArena.tsx';
 import { MatchmakingOverlay } from './components/MatchmakingOverlay.tsx';
@@ -475,7 +474,6 @@ function VanguardAppCore() {
         )}
         <LandingView
           lang={lang}
-          onChangeLang={handleChangeLang}
           onlineCount={publicOnlineCount}
           landingContent={publicLandingContent}
           onAuthenticated={handleAuthenticated}
@@ -624,7 +622,6 @@ function VanguardAppCore() {
               )}
             </button>
 
-            <LanguageSwitcher lang={lang} onChange={handleChangeLang} />
 
             <div className="hidden sm:flex items-center gap-1 text-[11px] font-mono px-2.5 py-1.5 rounded-lg bg-[#0d1322] border border-emerald-500/25 text-emerald-300">
               <Wifi className="w-3 h-3 text-emerald-400" />

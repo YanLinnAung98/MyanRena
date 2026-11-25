@@ -21,11 +21,9 @@ import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
-import { LanguageSwitcher } from './LanguageSwitcher.tsx';
 
 interface LandingViewProps {
   lang: Language;
-  onChangeLang: (lang: Language) => void;
   onlineCount: number;
   landingContent: LandingContent;
   onAuthenticated: (token: string, user: UserProfile, rememberMe: boolean) => void;
@@ -42,7 +40,6 @@ function makeSafePlayerId(rawUsername: string): string {
 
 export const LandingView: React.FC<LandingViewProps> = ({
   lang,
-  onChangeLang,
   onlineCount,
   landingContent,
   onAuthenticated,
@@ -375,7 +372,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <LanguageSwitcher lang={lang} onChange={onChangeLang} />
             <button
               type="button"
               onClick={toggleMute}
