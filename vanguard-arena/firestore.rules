@@ -476,6 +476,89 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Player reports: users may submit reports about other users; only admins review and resolve them.
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(reportId) && isVerified()
+        && request.resource.data.keys().hasAll(['id', 'reporterId', 'reporterName', 'targetUserId', 'targetName', 'reason', 'status', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'reporterId', 'reporterName', 'targetUserId', 'targetName', 'reason', 'status', 'createdAtMs', 'resolvedAtMs'])
+        && request.resource.data.id == reportId
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reporterName is string
+        && request.resource.data.reporterName.size() <= 64
+        && request.resource.data.targetUserId is string
+        && request.resource.data.targetUserId != request.auth.uid
+        && request.resource.data.targetName is string
+        && request.resource.data.targetName.size() <= 64
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() >= 3
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAtMs is number;
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAtMs'])
+        && request.resource.data.status in ['pending', 'resolved', 'dismissed']
+        && request.resource.data.resolvedAtMs is number;
+      allow delete: if isAdmin();
+    }
+
+    // Admin-created player warnings; recipients can read and acknowledge only.
+    match /warnings/{warningId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(warningId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'userId', 'title', 'reason', 'acknowledged', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'userId', 'title', 'reason', 'acknowledged', 'createdAtMs'])
+        && request.resource.data.id == warningId
+        && request.resource.data.userId is string
+        && request.resource.data.title is string && request.resource.data.title.size() <= 160
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 1 && request.resource.data.reason.size() <= 2000
+        && request.resource.data.acknowledged == false
+        && request.resource.data.createdAtMs is number;
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acknowledged'])
+        && request.resource.data.acknowledged is bool;
+      allow delete: if isAdmin();
+    }
+
+    // Quiz content is public to signed-in players and writable only by admins.
+    match /riddles/{riddleId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(riddleId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'category', 'question', 'options', 'answerIndex', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'category', 'question', 'options', 'answerIndex', 'createdAtMs'])
+        && request.resource.data.id == riddleId
+        && request.resource.data.category is string && request.resource.data.category.size() <= 64
+        && request.resource.data.question is string && request.resource.data.question.size() >= 1 && request.resource.data.question.size() <= 1000
+        && request.resource.data.options is list && request.resource.data.options.size() == 4
+        && request.resource.data.answerIndex is int && request.resource.data.answerIndex >= 0 && request.resource.data.answerIndex <= 3
+        && request.resource.data.createdAtMs is number;
+      allow delete: if isValidId(riddleId) && isAdmin();
+    }
+
+    // Shared system settings. Client reads are required for game configuration and landing content.
+    match /system/{systemId} {
+      allow get: if isSignedIn() || systemId == 'landing';
+      allow list: if false;
+      allow create, update: if isValidId(systemId) && isAdmin()
+        && request.resource.data.size() <= 80;
+      allow delete: if isValidId(systemId) && isAdmin();
+    }
+
+    // Admin audit trail is private to administrators.
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(logId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'admin', 'action', 'detail', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'admin', 'action', 'detail', 'createdAtMs'])
+        && request.resource.data.id == logId
+        && request.resource.data.admin is string && request.resource.data.admin.size() <= 64
+        && request.resource.data.action is string && request.resource.data.action.size() <= 80
+        && request.resource.data.detail is string && request.resource.data.detail.size() <= 500
+        && request.resource.data.createdAtMs is number;
+      allow update, delete: if isAdmin();
+    }
+
     // Admin registry
     match /admins/{adminId} {
       allow get: if isValidId(adminId) && isOwner(adminId);
