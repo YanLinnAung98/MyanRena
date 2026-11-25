@@ -26,6 +26,7 @@ import {
 import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { SVG_FRAME_TEMPLATES } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
+import { getBestTTTMove, getTTTOutcome, type TTTMark } from '../games/ticTacToe.ts';
 import type {
   GameType,
   LandingContent,
@@ -71,40 +72,8 @@ function addDismissedNotiId(id: string) {
   } catch {}
 }
 
-function checkTTTWinner(board: Array<string | null>): 'X' | 'O' | 'DRAW' | null {
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  for (const [a, b, c] of lines) {
-    if (board[a] && board[a] === board[b] && board[a] === board[c]) return board[a] as 'X' | 'O';
-  }
-  return board.every((c) => c !== null) ? 'DRAW' : null;
-}
-
-function pickSmartTTTMove(board: Array<string | null>, difficulty: string): number {
-  const empty = board.map((v, i) => (v === null ? i : -1)).filter((i) => i !== -1);
-  if (empty.length === 0) return -1;
-  if (difficulty === 'easy') return empty[Math.floor(Math.random() * empty.length)];
-  const lines = [
-    [0, 1, 2], [3, 4, 5], [6, 7, 8],
-    [0, 3, 6], [1, 4, 7], [2, 5, 8],
-    [0, 4, 8], [2, 4, 6],
-  ];
-  for (const mark of ['O', 'X']) {
-    for (const [a, b, c] of lines) {
-      const vals = [board[a], board[b], board[c]];
-      if (vals.filter((v) => v === mark).length === 2 && vals.includes(null)) {
-        if (board[a] === null) return a;
-        if (board[b] === null) return b;
-        if (board[c] === null) return c;
-      }
-    }
-  }
-  if (difficulty === 'hard' && board[4] === null) return 4;
-  return empty[Math.floor(Math.random() * empty.length)];
-}
+const checkTTTWinner = (board: Array<string | null>) => getTTTOutcome(board as TTTMark[]);
+const pickSmartTTTMove = (board: Array<string | null>, difficulty: string) => getBestTTTMove(board as TTTMark[], difficulty);
 
 function checkConnect4Winner(
   grid: Array<Array<string | null>>
@@ -686,64 +655,56 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
       if (gType === 'tictactoe') {
         const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
-        const idx = typeof move === 'number' ? move : move?.index ?? -1;
-        if (idx < 0 || idx > 8 || board[idx] !== null) return;
+        const idx = typeof move === 'number' ? move : Number(move?.index ?? -1);
+        if (!Number.isInteger(idx) || idx < 0 || idx > 8 || board[idx] !== null) return;
+        if (isPvp && (!me?.id || next.turnUserId !== me.id || !p1?.id || !p2?.id)) return;
+        if (!isPvp && me?.id !== p1?.id) return;
 
         soundEngine.playClick();
-
-        if (isPvp) {
-          if (next.turnUserId !== me?.id) return;
-          board[idx] = me?.id === p1.id ? 'X' : 'O';
-          next.tttBoard = board;
-          next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
-          const outcome = checkTTTWinner(board);
-          if (outcome) {
-            next.status = 'finished';
-            if (outcome === 'DRAW') {
-              next.isDraw = true;
-              soundEngine.playDraw();
-            } else {
-              next.winnerId = outcome === 'X' ? p1.id : p2.id;
-              next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-              if (next.winnerId === me?.id) soundEngine.playWin();
-              else soundEngine.playLose();
-            }
-          }
-          setActiveMatch(next);
-          if (isFirebaseConfigured && db) await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch(() => {});
-          return;
-        }
-
-        board[idx] = 'X';
+        const moverMark = isPvp && me?.id === p2.id ? 'O' : 'X';
+        board[idx] = moverMark;
         let outcome = checkTTTWinner(board);
-        if (!outcome) {
+
+        if (!isPvp && !outcome) {
           const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
-          if (botPick >= 0) {
+          if (botPick >= 0 && board[botPick] === null) {
             board[botPick] = 'O';
             outcome = checkTTTWinner(board);
           }
         }
+
         next.tttBoard = board;
+        if (isPvp && !outcome) next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
+
         if (outcome) {
           next.status = 'finished';
+          next.turnUserId = null;
           if (outcome === 'DRAW') {
             next.isDraw = true;
             soundEngine.playDraw();
             applyXpDelta('draw', next.id);
           } else {
-            const p1Won = outcome === 'X';
-            next.winnerId = p1Won ? p1.id : p2.id;
-            next.scores[next.winnerId] = (next.scores[next.winnerId] || 0) + 1;
-            if (p1Won) soundEngine.playWin();
+            const winnerId = outcome === 'X' ? p1.id : p2.id;
+            next.winnerId = winnerId;
+            next.scores = { ...next.scores, [winnerId]: (next.scores?.[winnerId] || 0) + 1 };
+            const didCurrentPlayerWin = winnerId === me?.id;
+            if (didCurrentPlayerWin) soundEngine.playWin();
             else soundEngine.playLose();
-            applyXpDelta(p1Won ? 'win' : 'loss', next.id);
+            applyXpDelta(didCurrentPlayerWin ? 'win' : 'loss', next.id);
           }
         }
+
         setActiveMatch(next);
+        if (isPvp && isFirebaseConfigured && db) {
+          await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch((error) => {
+            console.error('Tic-Tac-Toe match sync failed:', error);
+            pushToast('error', 'Move could not sync. Please check your connection.');
+          });
+        }
         return;
       }
 
-      if (gType === 'connect4') {
+            if (gType === 'connect4') {
         const grid: Array<Array<string | null>> = next.c4Board.map((r: any) => [...r]);
         const col = typeof move === 'number' ? move : move?.col ?? -1;
         if (col < 0 || col > 6) return;
