@@ -1,34 +1,39 @@
+
 import React from 'react';
 import { ChevronRight, Lock, Sparkles, Swords } from 'lucide-react';
-import type { GameType, LandingContent, Language, Tournament, UserProfile } from '../types.ts';
+import type { GameType, LandingContent, Language, UserProfile } from '../types.ts';
 import { GameStage3D, TiltCard3D } from './Game3DVisuals.tsx';
 import { GameBadgeIcon } from './PremiumIcons.tsx';
-import { TournamentBillboard } from './TournamentBillboard.tsx';
+import { GameArenaSetupView } from './GameArenaSetupView.tsx';
+
+type Difficulty = 'easy' | 'medium' | 'hard';
+type TurnTimeLimit = 15 | 20 | 30;
 
 interface LobbyViewProps {
   lang: Language;
   landingContent?: LandingContent;
-  currentUserId?: string;
+  currentUser?: UserProfile | null;
+  onlinePlayers?: UserProfile[];
   frames: any[];
   featureLocks: Record<string, boolean>;
-  tournaments: Tournament[];
-  allUsers: UserProfile[];
-  onSelectGame: (gameType: GameType) => void;
+  matchmakingSettings?: any;
+  queuedGame: GameType | null;
+  sakarQuickCount?: number;
+  openRooms: any[];
+  onStartBot: (gameType: GameType, difficulty: Difficulty, bestOf: 3 | 5, turnTimeLimit: TurnTimeLimit) => void | Promise<void>;
+  onJoinQueue: (gameType: GameType, bestOf: 3 | 5, turnTimeLimit: TurnTimeLimit) => void | Promise<void>;
+  onLeaveQueue: () => void | Promise<void>;
+  onStartSakarSolo: () => void | Promise<void>;
+  onJoinSakarQuick?: () => void;
+  onStartSakarQuickNow?: () => void;
+  onCreateSakarRoom: (title: string, maxPlayers: number, gameType: GameType) => void | Promise<void>;
+  onJoinSakarRoom: (roomIdOrCode: string) => void | Promise<void>;
+  onSendChallenge?: (userId: string, gameType: GameType) => void;
   onInspectPlayer: (userId: string) => void;
-  onOpenTournaments: () => void;
-  onEnterTournamentMatch?: (tournament: Tournament, matchupId?: string) => void;
+  onAddFriend?: (userId: string) => void;
 }
 
-const FULL_GAME_CARDS: Array<{
-  id: GameType;
-  titleMy: string;
-  titleEn: string;
-  taglineMy: string;
-  taglineEn: string;
-  badgeText: string;
-  glow: string;
-  borderAccent: string;
-}> = [
+const FULL_GAME_CARDS = [
   {
     id: 'connect4',
     titleMy: '၄ လုံးတန်း (Connect 4)',
@@ -69,74 +74,92 @@ const FULL_GAME_CARDS: Array<{
     glow: 'rgba(251, 191, 36, 0.38)',
     borderAccent: 'hover:border-amber-400/70',
   },
-];
+] as const;
 
 export const LobbyView: React.FC<LobbyViewProps> = ({
   lang,
-  currentUserId,
-  frames,
   featureLocks,
-  tournaments,
-  allUsers,
-  onSelectGame,
-  onInspectPlayer,
-  onOpenTournaments,
-  onEnterTournamentMatch,
+  queuedGame,
+  openRooms,
+  onStartBot,
+  onJoinQueue,
+  onLeaveQueue,
+  onStartSakarSolo,
+  onCreateSakarRoom,
+  onJoinSakarRoom,
 }) => {
-  const safeTourneys = Array.isArray(tournaments) ? tournaments : [];
-  const safeUsers = Array.isArray(allUsers) ? allUsers : [];
+  const [selectedGame, setSelectedGame] = React.useState<GameType | null>(null);
+
+  if (selectedGame) {
+    return (
+      <GameArenaSetupView
+        lang={lang}
+        gameType={selectedGame}
+        featureLocks={featureLocks}
+        openRooms={Array.isArray(openRooms) ? openRooms : []}
+        queuedGame={queuedGame}
+        onBack={() => setSelectedGame(null)}
+        onJoinQueue={onJoinQueue}
+        onLeaveQueue={onLeaveQueue}
+        onStartBot={onStartBot}
+        onStartSakarSolo={onStartSakarSolo}
+        onCreateRoom={onCreateSakarRoom}
+        onJoinRoom={onJoinSakarRoom}
+      />
+    );
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-5">
-      {/* 1. LIVE PREMIUM TOURNAMENT BILLBOARD (Only renders when an active/featured tournament exists) */}
-      <TournamentBillboard
-        lang={lang}
-        tournaments={safeTourneys}
-        allUsers={safeUsers}
-        currentUserId={currentUserId}
-        frames={frames}
-        onInspectPlayer={onInspectPlayer}
-        onOpenTournaments={onOpenTournaments}
-        onEnterTournamentMatch={onEnterTournamentMatch}
-      />
-
-      {/* 2. CLEAN FULL-SIZE 3D INTERACTIVE GAME CARDS */}
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
           <h3 className="text-sm sm:text-base font-display font-bold text-white flex items-center gap-2">
             <Swords className="w-4 h-4 text-amber-400" />
-            <span>{lang === 'my' ? 'ကစားလိုသော ဂိမ်းကို ရွေးချယ်ပါ' : 'Choose Your Game Arena'}</span>
+            <span>
+              {lang === 'my'
+                ? 'ကစားလိုသော ဂိမ်းကို ရွေးချယ်ပါ'
+                : 'Choose Your Game Arena'}
+            </span>
           </h3>
+
           <span className="text-[11px] text-amber-300/90 flex items-center gap-1">
             <Sparkles className="w-3.5 h-3.5" />
-            {lang === 'my' ? 'နှိပ်ဝင်၍ စိတ်ကြိုက်ပြင်ဆင် ဆော့ပါ' : 'Tap card to configure & play'}
+            {lang === 'my'
+              ? 'နှိပ်ဝင်၍ စိတ်ကြိုက်ပြင်ဆင် ဆော့ပါ'
+              : 'Tap card to configure & play'}
           </span>
         </div>
 
         <div className="grid sm:grid-cols-2 gap-4">
-          {FULL_GAME_CARDS.map((g) => {
-            const locked = Boolean(featureLocks?.[g.id]);
+          {FULL_GAME_CARDS.map((game) => {
+            const locked = Boolean(featureLocks?.[game.id]);
+
             return (
               <TiltCard3D
-                key={g.id}
+                key={game.id}
                 disabled={locked}
-                glowColor={g.glow}
-                onClick={() => onSelectGame(g.id)}
-                className={`cyber-panel overflow-hidden border border-white/15 ${g.borderAccent} shadow-xl`}
+                glowColor={game.glow}
+                onClick={() => {
+                  if (!locked) {
+                    setSelectedGame(game.id);
+                  }
+                }}
+                className={`cyber-panel overflow-hidden border border-white/15 ${game.borderAccent} shadow-xl`}
               >
                 <div className="relative flex flex-col h-full">
                   <div className="relative overflow-hidden">
-                    <GameStage3D gameType={g.id} compact />
+                    <GameStage3D gameType={game.id} compact />
 
                     <div className="absolute top-3 left-3 right-3 z-10 flex items-center justify-between">
                       <span className="px-2.5 py-1 rounded-xl bg-black/70 backdrop-blur-md border border-white/15 text-[10px] font-mono font-bold text-amber-300 flex items-center gap-1.5">
-                        <GameBadgeIcon gameType={g.id} className="w-4 h-4" />
-                        <span>{g.badgeText}</span>
+                        <GameBadgeIcon gameType={game.id} className="w-4 h-4" />
+                        <span>{game.badgeText}</span>
                       </span>
 
                       {locked && (
                         <span className="px-2.5 py-1 rounded-xl bg-rose-600/90 text-[10px] font-bold text-white flex items-center gap-1">
-                          <Lock className="w-3 h-3" /> Locked
+                          <Lock className="w-3 h-3" />
+                          Locked
                         </span>
                       )}
                     </div>
@@ -145,10 +168,11 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                   <div className="p-4 bg-gradient-to-b from-[#0c1324] to-[#070b14] flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <h4 className="text-base sm:text-lg font-display font-extrabold text-white truncate">
-                        {lang === 'my' ? g.titleMy : g.titleEn}
+                        {lang === 'my' ? game.titleMy : game.titleEn}
                       </h4>
+
                       <p className="text-xs text-slate-400 truncate mt-0.5">
-                        {lang === 'my' ? g.taglineMy : g.taglineEn}
+                        {lang === 'my' ? game.taglineMy : game.taglineEn}
                       </p>
                     </div>
 
