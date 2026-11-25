@@ -15,7 +15,7 @@ import {
   UserPlus,
   X,
 } from 'lucide-react';
-import { collection, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
+import { collection, deleteDoc, doc, getDoc, getDocs, query, setDoc, where } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import { readServerlessStore, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { GameType, Language, PlayerGift, UserProfile } from '../types.ts';
@@ -162,59 +162,88 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const totalMatches = (Number(targetUser.wins) || 0) + (Number(targetUser.losses) || 0) + (Number(targetUser.draws) || 0);
   const winRate = totalMatches > 0 ? Math.round(((targetUser.wins || 0) / totalMatches) * 100) : 0;
 
-  const persistMyRelations = async (nextFriends: string[], nextBlocked: string[], toastMsg: string) => {
-    const updated = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
-    saveActiveSessionUser(updated);
-    onUserUpdated?.(updated);
-    let cloudSynced = false;
-    if (isFirebaseConfigured && db) {
-      try {
-        await setDoc(
-          doc(db, 'users', currentUser.id),
-          stripUndefined({ friends: nextFriends, blocked: nextBlocked }),
-          { merge: true }
-        );
-        cloudSynced = true;
-      } catch (error) {
-        console.error('Unable to sync player relations:', error);
-        cloudSynced = false;
+  const handleToggleFriend = async () => {
+    if (!isFirebaseConfigured || !db) {
+      onNotify?.('error', lang === 'my' ? 'Friend စနစ်အတွက် Cloud ချိတ်ဆက်မှု မရရှိသေးပါ။' : 'Friend features require a cloud connection.');
+      return;
+    }
+    const outgoingId = `${currentUser.id}__${targetUser.id}`;
+    const incomingId = `${targetUser.id}__${currentUser.id}`;
+    try {
+      if (isFriend) {
+        await Promise.all([
+          deleteDoc(doc(db, 'friendRequests', outgoingId)),
+          deleteDoc(doc(db, 'friendRequests', incomingId)),
+        ]);
+        const updated = { ...currentUser, friends: friends.filter((id) => id !== targetUser.id) };
+        saveActiveSessionUser(updated);
+        onUserUpdated?.(updated);
+        onNotify?.('success', lang === 'my' ? 'မိတ်ဆွေစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။' : 'Friend removed.');
+        return;
       }
+      const existing = await getDoc(doc(db, 'friendRequests', outgoingId));
+      if (existing.exists()) {
+        const status = existing.data().status;
+        onNotify?.('info', status === 'pending'
+          ? (lang === 'my' ? 'Friend Request ပို့ထားပြီးပါပြီ။' : 'Friend request is already pending.')
+          : (lang === 'my' ? 'Friend Request အခြေအနေကို Social စာမျက်နှာတွင် စစ်ဆေးပါ။' : 'Check the request status in Social.'));
+        return;
+      }
+      await setDoc(doc(db, 'friendRequests', outgoingId), stripUndefined({
+        id: outgoingId,
+        fromUserId: currentUser.id,
+        fromName: currentUser.displayName || currentUser.username,
+        fromGameId: currentUser.gameId,
+        fromAvatarUrl: currentUser.avatarUrl,
+        fromFrameId: currentUser.frameId,
+        toUserId: targetUser.id,
+        toName: targetDisplayName,
+        toGameId: targetUser.gameId,
+        status: 'pending',
+        createdAtMs: Date.now(),
+      }));
+      onNotify?.('success', lang === 'my' ? 'Friend Request ပေးပို့ပြီးပါပြီ။ လက်ခံမှ မိတ်ဆွေဖြစ်ပါမည်။' : 'Friend request sent. You will become friends when accepted.');
+    } catch (error) {
+      console.error('Friend action failed:', error);
+      onNotify?.('error', lang === 'my' ? 'Friend လုပ်ဆောင်ချက် မအောင်မြင်ပါ။ Connection ကို စစ်ဆေးပါ။' : 'Friend action failed. Check your connection.');
     }
-    soundEngine.playClick?.();
-    onNotify?.(cloudSynced ? 'success' : 'info', cloudSynced ? toastMsg : (lang === 'my' ? `${toastMsg} (ဒီစက်တွင်သာ သိမ်းထားပြီး Cloud ချိတ်ဆက်မှု မအောင်မြင်ပါ။)` : `${toastMsg} (saved locally; cloud sync failed).`));
   };
 
-  const handleToggleFriend = () => {
-    if (isFriend) {
-      persistMyRelations(
-        friends.filter((id) => id !== targetUser.id),
-        blocked,
-        lang === 'my' ? 'မိတ်ဆွေစာရင်းမှ ဖယ်ရှားပြီးပါပြီ။' : 'Removed from friends.'
-      );
-    } else {
-      persistMyRelations(
-        Array.from(new Set([...friends, targetUser.id])),
-        blocked.filter((id) => id !== targetUser.id),
-        lang === 'my'
-          ? `${targetDisplayName} ကို မိတ်ဆွေအဖြစ် ထည့်သွင်းပြီးပါပြီ!`
-          : `Added ${targetDisplayName} as friend!`
-      );
+  const handleToggleBlock = async () => {
+    if (!isFirebaseConfigured || !db) {
+      onNotify?.('error', lang === 'my' ? 'Block စနစ်အတွက် Cloud ချိတ်ဆက်မှု မရရှိသေးပါ။' : 'Blocking requires a cloud connection.');
+      return;
     }
-  };
-
-  const handleToggleBlock = () => {
-    if (isBlocked) {
-      persistMyRelations(
-        friends,
-        blocked.filter((id) => id !== targetUser.id),
-        lang === 'my' ? 'Block ဖြုတ်ပြီးပါပြီ။' : 'User unblocked.'
-      );
-    } else {
-      persistMyRelations(
-        friends.filter((id) => id !== targetUser.id),
-        Array.from(new Set([...blocked, targetUser.id])),
-        lang === 'my' ? `${targetDisplayName} ကို Block လုပ်ပြီးပါပြီ။` : `Blocked ${targetDisplayName}.`
-      );
+    const blockId = `${currentUser.id}__${targetUser.id}`;
+    try {
+      if (isBlocked) {
+        await deleteDoc(doc(db, 'userBlocks', blockId));
+        const updated = { ...currentUser, blocked: blocked.filter((id) => id !== targetUser.id) };
+        saveActiveSessionUser(updated);
+        onUserUpdated?.(updated);
+        onNotify?.('success', lang === 'my' ? 'Block ဖြုတ်ပြီးပါပြီ။' : 'Player unblocked.');
+      } else {
+        await setDoc(doc(db, 'userBlocks', blockId), {
+          blockerId: currentUser.id,
+          blockedId: targetUser.id,
+          createdAtMs: Date.now(),
+        });
+        await Promise.all([
+          deleteDoc(doc(db, 'friendRequests', blockId)).catch(() => {}),
+          deleteDoc(doc(db, 'friendRequests', `${targetUser.id}__${currentUser.id}`)).catch(() => {}),
+        ]);
+        const updated = {
+          ...currentUser,
+          friends: friends.filter((id) => id !== targetUser.id),
+          blocked: Array.from(new Set([...blocked, targetUser.id])),
+        };
+        saveActiveSessionUser(updated);
+        onUserUpdated?.(updated);
+        onNotify?.('success', lang === 'my' ? `${targetDisplayName} ကို Block လုပ်ပြီးပါပြီ။` : `${targetDisplayName} blocked.`);
+      }
+    } catch (error) {
+      console.error('Block action failed:', error);
+      onNotify?.('error', lang === 'my' ? 'Block လုပ်ဆောင်ချက် မအောင်မြင်ပါ။ Connection ကို စစ်ဆေးပါ။' : 'Block action failed. Check your connection.');
     }
   };
 
