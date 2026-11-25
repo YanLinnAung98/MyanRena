@@ -510,6 +510,16 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       if (Array.isArray(latestRoom.chat)) setRoomChat(latestRoom.chat);
 
       if (latestRoom.status === 'playing' && latestRoom.activeMatchId) {
+        // A real opponent has joined. Cancel the pending solo-fallback timer
+        // before loading the live match so it cannot replace this match later.
+        if (queueRoomIdRef.current === roomId) {
+          if (queueTimerRef.current !== null) {
+            window.clearTimeout(queueTimerRef.current);
+            queueTimerRef.current = null;
+          }
+          queueRoomIdRef.current = null;
+        }
+
         const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
         if (matchSnap && matchSnap.exists()) {
           setCurrentRoom(null);
@@ -618,11 +628,38 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         }
       }
 
+      const scheduledRoomId = queueRoomIdRef.current;
       queueTimerRef.current = window.setTimeout(async () => {
-        if (queueRoomIdRef.current && isFirebaseConfigured && db) {
-          await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
+        queueTimerRef.current = null;
+
+        // The Firestore room listener and this timeout can race. Re-check the
+        // room before starting a bot match, and never overwrite a live PvP match.
+        if (scheduledRoomId && isFirebaseConfigured && db) {
+          const roomSnap = await getDoc(doc(db, 'rooms', scheduledRoomId)).catch(() => null);
+          const latestRoom = roomSnap?.exists() ? roomSnap.data() as any : null;
+
+          if (latestRoom?.status === 'playing' && latestRoom.activeMatchId) {
+            const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
+            if (matchSnap?.exists()) {
+              if (queueRoomIdRef.current === scheduledRoomId) queueRoomIdRef.current = null;
+              setCurrentRoom(null);
+              setQueuedGame(null);
+              setQueueStatus(null);
+              setMatchChat([]);
+              setActiveMatch(matchSnap.data());
+              return;
+            }
+          }
+
+          // Another queue attempt may have replaced this one while Firestore was loading.
+          if (queueRoomIdRef.current !== scheduledRoomId) return;
+
+          if (latestRoom?.status === 'waiting') {
+            await deleteDoc(doc(db, 'rooms', scheduledRoomId)).catch(() => {});
+          }
           queueRoomIdRef.current = null;
         }
+
         setCurrentRoom(null);
         setQueuedGame(null);
         setQueueStatus(null);
