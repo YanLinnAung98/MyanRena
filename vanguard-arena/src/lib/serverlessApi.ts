@@ -6,12 +6,13 @@ import {
   getDocs,
   setDoc,
   updateDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { getShuffledQuizSet, QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { DEFAULT_LANDING_CONTENT } from '../i18n/landingDefaults.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
-import { db, isFirebaseConfigured, stripUndefined } from './firebase.ts';
+import { auth, db, isFirebaseConfigured, stripUndefined } from './firebase.ts';
 
 export const LOCAL_STATE_KEY = 'vanguard_serverless_db_v8';
 export const ACTIVE_USER_KEY = 'vanguard_active_user_v8';
@@ -262,13 +263,19 @@ if (
 
     if (path === '/api/auth/me') {
       if (!token) return jsonResponse({ error: 'Unauthorized' }, 401);
-      if (isFirebaseConfigured && db) {
-        const uid = token.replace(/^token_/, '');
+      if (isFirebaseConfigured && db && auth.currentUser) {
+        const uid = token.replace(/^token_/, '').replace(/^local_/, '');
+        if (auth.currentUser.uid !== uid) {
+          return jsonResponse({ error: 'Firebase session does not match the active player.' }, 401);
+        }
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
         if (snap && snap.exists()) {
+          const profile = snap.data();
           const dev = detectClientDevice();
           const uData = stripUndefined({
-            ...snap.data(),
+            ...profile,
+            id: uid,
+            username: String(profile.username || auth.currentUser.email?.split('@')[0] || 'player'),
             ...dev,
             online: true,
             lastSeenMs: Date.now(),
@@ -276,7 +283,6 @@ if (
             isAdmin: false,
           });
           saveActiveSessionUser(uData);
-          await setDoc(doc(db, 'users', uid), uData, { merge: true }).catch((e) => console.error(e));
           return jsonResponse({ user: uData });
         }
       }
@@ -285,13 +291,6 @@ if (
     }
 
     if (path === '/api/auth/logout') {
-      if (currentUser?.id && isFirebaseConfigured && db) {
-        await setDoc(
-          doc(db, 'users', currentUser.id),
-          { online: false, lastSeenMs: Date.now() },
-          { merge: true }
-        ).catch(() => {});
-      }
       localStorage.removeItem(ACTIVE_USER_KEY);
       return jsonResponse({ ok: true });
     }
@@ -427,10 +426,14 @@ if (
       if (currentUser) {
         Object.assign(currentUser, body);
         saveActiveSessionUser(currentUser);
-        if (isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'users', currentUser.id), stripUndefined(currentUser), { merge: true }).catch((e) =>
-            console.error(e)
-          );
+        if (isFirebaseConfigured && db && auth.currentUser?.uid === currentUser.id) {
+          const cloudPatch: Record<string, unknown> = {
+            updatedAt: serverTimestamp(),
+          };
+          if (typeof body.displayName === 'string') cloudPatch.displayName = body.displayName.slice(0, 32);
+          if (typeof body.avatarUrl === 'string' && body.avatarUrl.length <= 2048) cloudPatch.avatarUrl = body.avatarUrl;
+          if (typeof body.frameId === 'string') cloudPatch.frameId = body.frameId.slice(0, 64);
+          await updateDoc(doc(db, 'users', currentUser.id), cloudPatch).catch((e) => console.error(e));
         }
       }
       return jsonResponse({ user: currentUser });
@@ -440,7 +443,7 @@ if (
       const uid = path.split('/')[3];
       if (isFirebaseConfigured && db) {
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
-        if (snap && snap.exists()) return jsonResponse({ user: snap.data() });
+        if (snap && snap.exists()) return jsonResponse({ user: { ...snap.data(), id: uid } });
       }
       return jsonResponse({ user: store.users[uid] || currentUser });
     }
