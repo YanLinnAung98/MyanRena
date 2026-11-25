@@ -154,7 +154,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const isFriend = friends.includes(targetUser.id);
   const isBlocked = blocked.includes(targetUser.id);
   const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 90000);
-  const targetDisplayName = String(targetDisplayName || targetUser.username || (lang === 'my' ? 'ကစားသမား' : 'Player'));
+  const targetDisplayName = String(targetUser.displayName || targetUser.username || (lang === 'my' ? 'ကစားသမား' : 'Player'));
   const targetBio = typeof targetUser.bio === 'string' ? targetUser.bio.trim() : '';
   const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
   const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts.filter(Boolean) : [];
