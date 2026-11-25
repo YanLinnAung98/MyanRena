@@ -203,6 +203,25 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   // Send Pending Friend Request (Requires Acceptance)
   const handleSendRequest = async (target: UserProfile) => {
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch('/api/social/requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ targetUserId: target.id }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to send friend request.');
+        await refreshServerSocial();
+        soundEngine.playClick();
+        onNotify('success', lang === 'my'
+          ? `${target.displayName} ထံ Friend Request ပို့ပြီးပါပြီ`
+          : `Friend request sent to ${target.displayName}.`);
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to send friend request.');
+      }
+      return;
+    }
     const reqId = `${currentUser.id}__${target.id}`;
     const payload = stripUndefined({
       id: reqId,
@@ -245,6 +264,23 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   // Accept Incoming Request -> Adds BOTH users mutually
   const handleAcceptRequest = async (req: any) => {
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch(`/api/social/requests/${encodeURIComponent(req.id)}/accept`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to accept friend request.');
+        if (data.social) applySocialPayload(data.social);
+        await refreshServerSocial();
+        soundEngine.playNotify();
+        onNotify('success', lang === 'my' ? `${req.fromName} နှင့် မိတ်ဆွေဖြစ်သွားပါပြီ!` : `Now friends with ${req.fromName}!`);
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to accept friend request.');
+      }
+      return;
+    }
     const nextFriends = Array.from(new Set([...friendIds, req.fromUserId]));
     const updatedMe = { ...currentUser, friends: nextFriends };
     saveActiveSessionUser(updatedMe);
@@ -277,6 +313,22 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   // Decline or Cancel Request
   const handleDeleteRequest = async (reqId: string, msg: string) => {
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch(`/api/social/requests/${encodeURIComponent(reqId)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to update request.');
+        if (data.social) applySocialPayload(data.social);
+        await refreshServerSocial();
+        onNotify('info', msg);
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to update request.');
+      }
+      return;
+    }
     if (isFirebaseConfigured && db) {
       await deleteDoc(doc(db, 'friendRequests', reqId)).catch(() => {});
     }
@@ -285,6 +337,22 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   // Block / Unblock
   const handleBlockUser = async (target: UserProfile) => {
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch(`/api/social/blocks/${encodeURIComponent(target.id)}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to block player.');
+        if (data.social) applySocialPayload(data.social);
+        await refreshServerSocial();
+        onNotify('info', `${target.displayName} ကို Block လုပ်ပြီးပါပြီ။`);
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to block player.');
+      }
+      return;
+    }
     const nextFriends = friendIds.filter((id) => id !== target.id);
     const nextBlocked = Array.from(new Set([...blockedIds, target.id]));
     const updatedMe = { ...currentUser, friends: nextFriends, blocked: nextBlocked };
@@ -301,6 +369,22 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   };
 
   const handleUnblockUser = async (target: UserProfile) => {
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch(`/api/social/blocks/${encodeURIComponent(target.id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to unblock player.');
+        if (data.social) applySocialPayload(data.social);
+        await refreshServerSocial();
+        onNotify('success', `${target.displayName} ကို Block ဖြုတ်ပြီးပါပြီ။`);
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to unblock player.');
+      }
+      return;
+    }
     const nextBlocked = blockedIds.filter((id) => id !== target.id);
     const updatedMe = { ...currentUser, blocked: nextBlocked };
     saveActiveSessionUser(updatedMe);
@@ -327,6 +411,24 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
     if (blockedIds.includes(activeChatUserId) || targetBlockedMe) {
       onNotify('error', lang === 'my' ? 'Block လုပ်ထားသောကြောင့် စာပို့၍ မရပါ။' : 'Cannot message blocked user.');
+      return;
+    }
+
+    if (USE_SERVER_API) {
+      try {
+        const response = await fetch('/api/social/messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ targetUserId: activeChatUserId, content: chatInput.trim() }),
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(data.error || 'Unable to send message.');
+        if (data.message) setMessages((previous) => [...previous, data.message]);
+        setChatInput('');
+        soundEngine.playClick();
+      } catch (error: any) {
+        onNotify('error', error?.message || 'Unable to send message.');
+      }
       return;
     }
 
