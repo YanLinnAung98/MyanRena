@@ -71,7 +71,7 @@ class GlobalErrorBoundary extends React.Component<
         <div className="min-h-dvh-safe cyber-bg text-white flex items-center justify-center p-4">
           <div className="max-w-sm w-full cyber-panel rounded-2xl border border-amber-500/40 p-6 text-center space-y-4">
             <ShieldAlert className="w-10 h-10 text-amber-400 mx-auto" />
-            <h2 className="text-base font-bold">Vanguard Auto-Recovery</h2>
+            <h2 className="text-base font-bold">MyanRena Recovery</h2>
             <p className="text-xs font-mono text-rose-300 break-words bg-[#070b13] p-2.5 rounded-xl">
               {this.state.message}
             </p>
@@ -760,8 +760,7 @@ function VanguardAppCore() {
           <LeaderboardView
             lang={lang}
             leaderboard={mergedLeaderboard}
-            currentUserId={user.id}
-            currentUserRp={user.xp}
+            currentUser={user}
             frames={socket.frames}
             onInspectPlayer={(id) => setInspectUserId(id)}
           />
