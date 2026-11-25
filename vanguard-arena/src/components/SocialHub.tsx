@@ -17,13 +17,14 @@ import {
   X,
 } from 'lucide-react';
 import {
-  arrayRemove,
-  arrayUnion,
   collection,
   deleteDoc,
   doc,
   onSnapshot,
+  query,
   setDoc,
+  updateDoc,
+  where,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import { saveActiveSessionUser } from '../lib/serverlessApi.ts';
@@ -71,6 +72,10 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [copiedMyId, setCopiedMyId] = React.useState(false);
   const [serverSearchResults, setServerSearchResults] = React.useState<UserProfile[]>([]);
   const [serverRelatedUsers, setServerRelatedUsers] = React.useState<UserProfile[]>([]);
+  const [cloudUsers, setCloudUsers] = React.useState<UserProfile[]>([]);
+  const [cloudFriendIds, setCloudFriendIds] = React.useState<string[]>([]);
+  const [cloudBlockedIds, setCloudBlockedIds] = React.useState<string[]>([]);
+  const [blockedByOtherIds, setBlockedByOtherIds] = React.useState<string[]>([]);
   const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
 
   React.useEffect(() => {
@@ -112,7 +117,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     }
   }, [token, applySocialPayload]);
 
-  // Authenticated backend accounts use the server database; offline mode retains Firestore listeners.
+  // Cloud mode subscribes only to records that belong to the signed-in player.
   React.useEffect(() => {
     if (USE_SERVER_API) {
       void refreshServerSocial();
@@ -121,36 +126,95 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     }
     if (!isFirebaseConfigured || !db) return;
 
-    const unsubMsgs = onSnapshot(collection(db, 'messages'), (snap) => {
-      const list: any[] = [];
-      snap.forEach((d) => {
-        const m = d.data() as any;
-        if (m.fromUserId === currentUser.id || m.toUserId === currentUser.id) {
-          list.push({ ...m, id: d.id });
-        }
-      });
-      list.sort((a, b) => (a.createdAtMs || 0) - (b.createdAtMs || 0));
-      setMessages(list);
-    });
+    let sentMessages: any[] = [];
+    let receivedMessages: any[] = [];
+    let sentRequests: any[] = [];
+    let receivedRequests: any[] = [];
+    let ownBlocks: any[] = [];
+    let inboundBlocks: any[] = [];
 
-    const unsubReqs = onSnapshot(collection(db, 'friendRequests'), (snap) => {
-      const inc: any[] = [];
-      const out: any[] = [];
-      snap.forEach((d) => {
-        const r = { ...d.data(), id: d.id } as any;
-        if (r.status !== 'pending') return;
-        if (r.toUserId === currentUser.id) inc.push(r);
-        else if (r.fromUserId === currentUser.id) out.push(r);
+    const refreshMessages = () => {
+      const unique = new Map([...sentMessages, ...receivedMessages].map((message) => [message.id, message]));
+      const list = Array.from(unique.values()).sort((a, b) => (a.createdAtMs || 0) - (b.createdAtMs || 0));
+      setMessages(list);
+    };
+    const refreshRequests = () => {
+      const unique = new Map([...sentRequests, ...receivedRequests].map((request) => [request.id, request]));
+      const all = Array.from(unique.values());
+      const incoming = all.filter((request) => request.toUserId === currentUser.id && request.status === 'pending');
+      const outgoing = all.filter((request) => request.fromUserId === currentUser.id && request.status === 'pending');
+      const accepted = all
+        .filter((request) => request.status === 'accepted')
+        .map((request) => request.fromUserId === currentUser.id ? request.toUserId : request.fromUserId);
+      incoming.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      outgoing.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+      setIncomingRequests(incoming);
+      setOutgoingRequests(outgoing);
+      setCloudFriendIds(Array.from(new Set(accepted)));
+    };
+    const refreshBlocks = () => {
+      setCloudBlockedIds(Array.from(new Set(ownBlocks.map((block) => block.blockedId))));
+      setBlockedByOtherIds(Array.from(new Set(inboundBlocks.map((block) => block.blockerId))));
+    };
+
+    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+      const profiles = snap.docs.map((d) => {
+        const data = d.data();
+        return {
+          ...data,
+          id: String(data.uid || d.id),
+          username: String(data.username || ''),
+          rank: 'Silver',
+          role: 'player',
+          isAdmin: false,
+          status: 'active',
+          online: false,
+        } as UserProfile;
       });
-      inc.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      out.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
-      setIncomingRequests(inc);
-      setOutgoingRequests(out);
-    });
+      setCloudUsers(profiles);
+    }, (error) => console.warn('Cloud player list unavailable:', error));
+
+    const outMessagesQuery = query(collection(db, 'messages'), where('fromUserId', '==', currentUser.id));
+    const inMessagesQuery = query(collection(db, 'messages'), where('toUserId', '==', currentUser.id));
+    const unsubOutMessages = onSnapshot(outMessagesQuery, (snap) => {
+      sentMessages = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshMessages();
+    }, (error) => console.warn('Sent messages unavailable:', error));
+    const unsubInMessages = onSnapshot(inMessagesQuery, (snap) => {
+      receivedMessages = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshMessages();
+    }, (error) => console.warn('Received messages unavailable:', error));
+
+    const sentRequestsQuery = query(collection(db, 'friendRequests'), where('fromUserId', '==', currentUser.id));
+    const receivedRequestsQuery = query(collection(db, 'friendRequests'), where('toUserId', '==', currentUser.id));
+    const unsubSentRequests = onSnapshot(sentRequestsQuery, (snap) => {
+      sentRequests = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshRequests();
+    }, (error) => console.warn('Outgoing friend requests unavailable:', error));
+    const unsubReceivedRequests = onSnapshot(receivedRequestsQuery, (snap) => {
+      receivedRequests = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshRequests();
+    }, (error) => console.warn('Incoming friend requests unavailable:', error));
+
+    const ownBlocksQuery = query(collection(db, 'userBlocks'), where('blockerId', '==', currentUser.id));
+    const inboundBlocksQuery = query(collection(db, 'userBlocks'), where('blockedId', '==', currentUser.id));
+    const unsubOwnBlocks = onSnapshot(ownBlocksQuery, (snap) => {
+      ownBlocks = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshBlocks();
+    }, (error) => console.warn('Blocked players unavailable:', error));
+    const unsubInboundBlocks = onSnapshot(inboundBlocksQuery, (snap) => {
+      inboundBlocks = snap.docs.map((d) => ({ ...d.data(), id: d.id }));
+      refreshBlocks();
+    }, (error) => console.warn('Players who blocked this account unavailable:', error));
 
     return () => {
-      unsubMsgs();
-      unsubReqs();
+      unsubUsers();
+      unsubOutMessages();
+      unsubInMessages();
+      unsubSentRequests();
+      unsubReceivedRequests();
+      unsubOwnBlocks();
+      unsubInboundBlocks();
     };
   }, [currentUser.id, token, socialRefreshTick, refreshServerSocial]);
 
@@ -180,18 +244,24 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   }, [searchQuery, token]);
 
 
-  const friendIds: string[] = Array.isArray(currentUser.friends) ? currentUser.friends : [];
-  const blockedIds: string[] = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
+  const friendIds: string[] = Array.from(new Set([
+    ...(Array.isArray(currentUser.friends) ? currentUser.friends : []),
+    ...cloudFriendIds,
+  ]));
+  const blockedIds: string[] = Array.from(new Set([
+    ...(Array.isArray(currentUser.blocked) ? currentUser.blocked : []),
+    ...cloudBlockedIds,
+  ]));
 
   const otherUsers = React.useMemo(() => {
     const source = USE_SERVER_API
       ? searchQuery.trim().length >= 2
         ? [...serverRelatedUsers, ...serverSearchResults]
         : [...allUsers, ...serverRelatedUsers]
-      : allUsers;
+      : [...allUsers, ...cloudUsers];
     const unique = new Map(source.map((player) => [player.id, player]));
     return Array.from(unique.values()).filter((player) => player.id !== currentUser.id);
-  }, [allUsers, currentUser.id, serverRelatedUsers, serverSearchResults, searchQuery]);
+  }, [allUsers, cloudUsers, currentUser.id, serverRelatedUsers, serverSearchResults, searchQuery]);
 
   const friendProfiles = otherUsers.filter((u) => friendIds.includes(u.id) && !blockedIds.includes(u.id));
   const blockedProfiles = otherUsers.filter((u) => blockedIds.includes(u.id));
@@ -294,10 +364,8 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     onUserUpdated(updatedMe);
 
     if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'friendRequests', req.id)).catch(() => {});
-      await setDoc(doc(db, 'users', currentUser.id), { friends: arrayUnion(req.fromUserId) }, { merge: true });
-      await setDoc(doc(db, 'users', req.fromUserId), { friends: arrayUnion(currentUser.id) }, { merge: true });
-
+      await updateDoc(doc(db, 'friendRequests', req.id), { status: 'accepted' });
+      setCloudFriendIds((previous) => Array.from(new Set([...previous, req.fromUserId])));
       const notiId = `facc_${Date.now()}`;
       await setDoc(
         doc(db, 'notifications', notiId),
@@ -367,8 +435,13 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     onUserUpdated(updatedMe);
 
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', currentUser.id), { friends: nextFriends, blocked: nextBlocked }, { merge: true });
-      await setDoc(doc(db, 'users', target.id), { friends: arrayRemove(currentUser.id) }, { merge: true }).catch(() => {});
+      const blockId = `${currentUser.id}__${target.id}`;
+      await setDoc(doc(db, 'userBlocks', blockId), {
+        blockerId: currentUser.id,
+        blockedId: target.id,
+        createdAtMs: Date.now(),
+      });
+      setCloudBlockedIds((previous) => Array.from(new Set([...previous, target.id])));
       await deleteDoc(doc(db, 'friendRequests', `${currentUser.id}__${target.id}`)).catch(() => {});
       await deleteDoc(doc(db, 'friendRequests', `${target.id}__${currentUser.id}`)).catch(() => {});
     }
@@ -397,7 +470,8 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     saveActiveSessionUser(updatedMe);
     onUserUpdated(updatedMe);
     if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', currentUser.id), { blocked: nextBlocked }, { merge: true });
+      await deleteDoc(doc(db, 'userBlocks', `${currentUser.id}__${target.id}`)).catch(() => {});
+      setCloudBlockedIds((previous) => previous.filter((id) => id !== target.id));
     }
     onNotify('success', `${target.displayName} ကို Block ဖြုတ်ပြီးပါပြီ။`);
   };
@@ -414,7 +488,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     e.preventDefault();
     if (!activeChatUserId || !chatInput.trim()) return;
     const target = allUsers.find((u) => u.id === activeChatUserId);
-    const targetBlockedMe = Array.isArray(target?.blocked) && target.blocked.includes(currentUser.id);
+    const targetBlockedMe = blockedByOtherIds.includes(activeChatUserId);
 
     if (blockedIds.includes(activeChatUserId) || targetBlockedMe) {
       onNotify('error', lang === 'my' ? 'Block လုပ်ထားသောကြောင့် စာပို့၍ မရပါ။' : 'Cannot message blocked user.');
