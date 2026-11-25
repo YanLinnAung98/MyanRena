@@ -200,9 +200,9 @@ service cloud.firestore {
               'bannerId', 'bannerUrl', 'country', 'showCountry', 'updatedAt',
               // Permit owners to remove legacy fields from older public documents.
               'password', 'email', 'recoveryPin', 'recoveryPinHash', 'role', 'isAdmin',
-              'status', 'friends', 'blocked', 'inventory', 'gifts', 'unlockedFrames',
-              'unlockedBanners', 'gender', 'ageRange', 'showGender', 'showAgeRange',
-              'createdAt', 'createdAtMs', 'updatedAtMs', 'rank'
+              'status', 'friends', 'blocked', 'inventory',
+              'gender', 'ageRange', 'showGender', 'showAgeRange',
+              'createdAt', 'createdAtMs', 'updatedAtMs'
             ])
           ) ||
           (
