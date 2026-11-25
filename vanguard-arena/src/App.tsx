@@ -557,25 +557,16 @@ function VanguardAppCore() {
         !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
       } ${rootClass}`}
     >
-      <style>{`
-        .nav-icon{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.11);border-radius:11px;background:rgba(255,255,255,.035);transition:all .2s ease}
-        .nav-icon-cyan{color:#67e8f9;background:linear-gradient(145deg,rgba(8,145,178,.22),rgba(8,47,73,.35));border-color:rgba(103,232,249,.2)}
-        .nav-icon-violet{color:#c4b5fd;background:linear-gradient(145deg,rgba(124,58,237,.22),rgba(46,16,101,.35));border-color:rgba(196,181,253,.2)}
-        .nav-icon-gold{color:#fcd34d;background:linear-gradient(145deg,rgba(217,119,6,.22),rgba(69,26,3,.35));border-color:rgba(252,211,77,.22)}
-        .nav-icon-emerald{color:#6ee7b7;background:linear-gradient(145deg,rgba(5,150,105,.22),rgba(6,78,59,.35));border-color:rgba(110,231,183,.2)}
-        .nav-icon-rose{color:#fda4af;background:linear-gradient(145deg,rgba(225,29,72,.2),rgba(76,5,25,.35));border-color:rgba(253,164,175,.2)}
-        .nav-icon-active .nav-icon{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(251,191,36,.22),0 5px 18px rgba(245,158,11,.16);border-color:rgba(252,211,77,.38)}
-        @media(min-width:1024px){.nav-icon{width:28px;height:26px;border-radius:9px}}
-      `}</style>
+
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
-        <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
+        <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
             <button
               type="button"
               onClick={() => setActiveTab('lobby')}
               className="vanguard-brand-box px-3 py-1 rounded-lg text-sm sm:text-base font-display font-extrabold tracking-wide text-sky-300 cursor-pointer shrink-0"
             >
-              Vanguard
+              MYANRENA
             </button>
 
             <nav className="hidden lg:flex items-center gap-1.5 text-xs font-semibold">
@@ -592,7 +583,7 @@ function VanguardAppCore() {
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
-                    {item.icon}
+                    <span className={active ? 'nav-icon-active' : ''}>{item.icon}</span>
                     <span>{item.label}</span>
                     {item.badge ? (
                       <span className="px-1.5 py-0.2 rounded-full bg-rose-500 text-white text-[10px] font-extrabold">
