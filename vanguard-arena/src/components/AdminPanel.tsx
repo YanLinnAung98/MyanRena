@@ -261,7 +261,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     setMaintenance(nextMaint);
     setLocks(nextLocks);
     setEconomy(nextEcon);
-    if (isFirebaseConfigured && db) {
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် Engine Settings ကို Cloud ပေါ် မသိမ်းနိုင်ပါ။');
+      return;
+    }
+    try {
       await setDoc(
         doc(db, 'system', 'config'),
         stripUndefined({
@@ -272,10 +276,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           updatedAtMs: Date.now(),
         }),
         { merge: true }
-      ).catch(() => {});
+      );
+      setMaintenance(nextMaint);
+      setLocks(nextLocks);
+      setEconomy(nextEcon);
+      setMaintenanceMessage(nextMsg);
+      await logAdminAction('ENGINE_UPDATE', `Maint=${nextMaint}, WinXP=${nextEcon.winXp}`);
+      onNotify('success', 'Game Engine & Economy Settings သိမ်းဆည်းပြီးပါပြီ!');
+    } catch (error) {
+      console.error('Engine settings save failed:', error);
+      onNotify('error', 'Engine Settings သိမ်းဆည်းမရပါ။ Firestore Rules နှင့် Connection ကို စစ်ဆေးပါ။');
     }
-    await logAdminAction('ENGINE_UPDATE', `Maint=${nextMaint}, WinXP=${nextEcon.winXp}`);
-    onNotify('success', 'Game Engine & Economy Settings သိမ်းဆည်းပြီးပါပြီ!');
   };
 
   // Player Editor Save
@@ -357,7 +368,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSendDirectNoti = async (target: any) => {
     if (!directMsgText.trim()) return;
     const nid = `noti_${Date.now()}`;
-    if (isFirebaseConfigured && db) {
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် Notification မပို့နိုင်ပါ။');
+      return;
+    }
+    try {
       await setDoc(
         doc(db, 'notifications', nid),
         stripUndefined({
@@ -370,10 +385,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           createdAtMs: Date.now(),
           read: false,
         })
-      ).catch(() => {});
+      );
+      setDirectMsgText('');
+      onNotify('success', `${target.displayName} ထံ Notification ပို့ပြီးပါပြီ!`);
+    } catch (error) {
+      console.error('Direct notification failed:', error);
+      onNotify('error', 'Notification မပို့နိုင်ပါ။ Admin permission နှင့် Connection ကို စစ်ဆေးပါ။');
     }
-    setDirectMsgText('');
-    onNotify('success', `${target.displayName} ထံ Notification ပို့ပြီးပါပြီ!`);
   };
 
   const handleSendWarning = async (target: any, reasonText = warnReason) => {
@@ -456,12 +474,19 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSaveBranding = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = stripUndefined({ ...brandForm, updatedAtMs: Date.now() });
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'system', 'landing'), clean, { merge: true }).catch(() => {});
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် Branding ကို Cloud ပေါ် မသိမ်းနိုင်ပါ။');
+      return;
     }
-    onLandingUpdated?.(clean);
-    await logAdminAction('UPDATE_BRANDING', String(clean.heroTitleEn || 'Updated landing'));
-    onNotify('success', 'Website Branding နှင့် ခေါင်းစဉ်များ Real-Time ပြောင်းလဲပြီးပါပြီ!');
+    try {
+      await setDoc(doc(db, 'system', 'landing'), clean, { merge: true });
+      onLandingUpdated?.(clean);
+      await logAdminAction('UPDATE_BRANDING', String(clean.heroTitleEn || 'Updated landing'));
+      onNotify('success', 'Website Branding နှင့် ခေါင်းစဉ်များ Real-Time ပြောင်းလဲပြီးပါပြီ!');
+    } catch (error) {
+      console.error('Branding save failed:', error);
+      onNotify('error', 'Branding သိမ်းဆည်းမှု မအောင်မြင်ပါ။ Firestore Rules နှင့် Connection ကို စစ်ဆေးပါ။');
+    }
   };
 
   // Broadcast Handlers
