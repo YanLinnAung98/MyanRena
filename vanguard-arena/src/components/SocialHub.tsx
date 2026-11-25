@@ -315,20 +315,6 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     });
     if (isFirebaseConfigured && db) {
       await setDoc(doc(db, 'friendRequests', reqId), payload);
-      const notiId = `freq_${Date.now()}_${Math.floor(Math.random() * 999)}`;
-      await setDoc(
-        doc(db, 'notifications', notiId),
-        stripUndefined({
-          id: notiId,
-          targetUserId: target.id,
-          title: 'မိတ်ဆွေတောင်းဆိုမှု အသစ်',
-          message: `${currentUser.displayName} (${currentUser.gameId}) မှ သင့်ထံ Friend Request ပေးပို့ထားပါသည်။`,
-          type: 'message',
-          senderName: currentUser.displayName,
-          createdAtMs: Date.now(),
-          read: false,
-        })
-      ).catch(() => {});
     }
     soundEngine.playClick();
     onNotify(
@@ -366,20 +352,6 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, 'friendRequests', req.id), { status: 'accepted' });
       setCloudFriendIds((previous) => Array.from(new Set([...previous, req.fromUserId])));
-      const notiId = `facc_${Date.now()}`;
-      await setDoc(
-        doc(db, 'notifications', notiId),
-        stripUndefined({
-          id: notiId,
-          targetUserId: req.fromUserId,
-          title: 'Friend Request လက်ခံပြီးပါပြီ!',
-          message: `${currentUser.displayName} မှ သင့် Friend Request ကို လက်ခံလိုက်ပါပြီ။`,
-          type: 'message',
-          senderName: currentUser.displayName,
-          createdAtMs: Date.now(),
-          read: false,
-        })
-      ).catch(() => {});
     }
 
     soundEngine.playNotify();
