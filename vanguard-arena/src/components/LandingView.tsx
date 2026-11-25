@@ -362,12 +362,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const heroSubtitle = lang === 'my' ? landingContent.heroSubtitleMy : landingContent.heroSubtitleEn;
 
   return (
-    <div className="h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col">
+    <div className="min-h-dvh overflow-x-hidden cyber-bg text-slate-100 flex flex-col">
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="vanguard-brand-box px-3 py-1 rounded-lg text-sm sm:text-base font-display font-extrabold text-sky-300">
-              Vanguard
+            <span className="vanguard-brand-box px-3 py-1.5 rounded-xl text-sm sm:text-base font-display font-extrabold text-amber-200 tracking-wide">
+              MYANRENA
             </span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold shrink-0">
               ● {onlineCount}
@@ -388,11 +388,11 @@ export const LandingView: React.FC<LandingViewProps> = ({
       </header>
 
       <main className="flex-1 flex flex-col justify-center lg:block relative overflow-hidden">
-        <div className="relative max-w-7xl mx-auto w-full px-3 sm:px-6 py-3 lg:py-14 grid lg:grid-cols-12 gap-4 lg:gap-12 items-center">
+        <div className="relative max-w-7xl mx-auto w-full px-3 sm:px-6 py-5 sm:py-8 lg:py-14 grid lg:grid-cols-12 gap-5 lg:gap-12 items-center">
           <motion.div
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            className="hidden lg:block lg:col-span-7 space-y-5"
+            className="hidden lg:block lg:col-span-7 space-y-6 rounded-[1.75rem] border border-white/[0.08] bg-[radial-gradient(ellipse_at_80%_0%,rgba(232,185,92,.15),transparent_42%),linear-gradient(145deg,rgba(19,32,51,.8),rgba(8,14,24,.3))] p-7 xl:p-9"
           >
             <h1 className="fluid-hero font-display font-bold tracking-tight text-white">{heroTitle}</h1>
             <p className="text-base text-slate-300 max-w-2xl leading-relaxed">{heroSubtitle}</p>
@@ -411,7 +411,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
           </motion.div>
 
           <div id="auth-card" className="lg:col-span-5 w-full max-w-md mx-auto">
-            <div className="p-5 sm:p-7 rounded-2xl cyber-panel border border-amber-500/25 shadow-2xl space-y-4">
+            <div className="p-5 sm:p-7 rounded-[1.5rem] cyber-panel border border-amber-300/25 shadow-[0_24px_65px_rgba(0,0,0,.38)] space-y-5">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <h2 className="text-lg sm:text-xl font-display font-bold text-white">
