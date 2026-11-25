@@ -66,3 +66,28 @@ This commit is a shared CSS quality pass only. A full browser/device QA run and 
 ## 7. Summary
 
 The first pass establishes a more consistent and accessible foundation while preserving the existing game experience. The next highest-value step is a screen-by-screen redesign of the landing page, lobby and match arena, followed by tournament, profile/social and admin workflows.
+
+
+## 8. Full product screen redesign — follow-up pass
+
+The follow-up pass now changes actual screen components, not only shared CSS.
+
+### Screens changed
+- **Lobby:** Premium game-center hero, online and room metrics, player XP/rank identity, and redesigned four-game cards with larger 3D stage previews and clearer play affordances.
+- **Landing / authentication:** Rebalanced responsive page layout, expanded desktop brand/artwork presentation, stronger auth card surface, and MyanRena brand label. Existing sign-in, sign-up, recovery and language controls remain wired.
+- **Game setup:** Wider responsive configuration canvas, improved title/action header and spacing. Existing solo, matchmaking and room controls remain intact.
+- **Match arena:** Wider match frame, layered arena background, more deliberate scoreboard, framed play stage and distinct bottom control rail. Game board components and move handlers are unchanged.
+- **Tournament:** Added a competitive tournament hero and improved content spacing/surfaces.
+- **Leaderboard:** Added a Hall of Fame hero and improved search/header surface; existing XP sorting, filtering and player inspection remain.
+- **Profile:** Added player-identity page heading and elevated profile/banner surface; existing editing, avatar crop, save and share behavior remain.
+- **Admin:** Added an operations command-center hero and improved page rhythm; existing admin actions and data flows remain.
+
+### Validation status
+Changes were committed to `ui/full-product-redesign`. A browser/device run, TypeScript lint and Vite production build have not been executed from this editing environment. Do not treat this work as release-verified until the repository's CI/build and mobile/desktop visual QA pass.
+
+### Release checklist
+1. Run `bun run lint` and `bun run build` in `vanguard-arena`.
+2. Review 320px, 375px, tablet and desktop breakpoints.
+3. Exercise sign-in/sign-up/recovery, all four game setup modes, realtime match actions, chat, tournament join/leave, profile save/share and admin mutations.
+4. Confirm game boards preserve their full touch targets and stage height on small landscape devices.
+5. Merge only after checks and manual QA pass.
