@@ -435,15 +435,15 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecLoading(true);
     try {
       const cleanUser = recUsername.trim().toLowerCase();
-      if (recNewPassword.trim().length < 8) {
-        throw new Error(lang === 'my' ? 'စကားဝှက်အသစ် အနည်းဆုံး ၈ လုံးထားပါ။' : 'New password must be at least 8 characters.');
-      }
       if (!USE_SERVER_API && isFirebaseConfigured && auth && cleanUser.includes('@')) {
         await sendPasswordResetEmail(auth, cleanUser);
         setRecSuccess(lang === 'my'
           ? 'Password Reset Link ကို Email သို့ ပို့ပြီးပါပြီ။ Inbox/Spam ကို စစ်ဆေးပါ။'
           : 'Password reset link sent. Check your inbox and spam folder.');
         return;
+      }
+      if (recNewPassword.trim().length < 8) {
+        throw new Error(lang === 'my' ? 'စကားဝှက်အသစ် အနည်းဆုံး ၈ လုံးထားပါ။' : 'New password must be at least 8 characters.');
       }
       if (!/^\d{6}$/.test(recPin.trim())) {
         throw new Error(lang === 'my' ? 'Recovery PIN ၆ လုံးကို မှန်ကန်စွာ ရိုက်ထည့်ပါ။' : 'Enter your 6-digit Recovery PIN.');
