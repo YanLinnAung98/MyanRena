@@ -535,11 +535,11 @@ function VanguardAppCore() {
   }
 
   const navItems: { id: LobbyTab; label: string; icon: React.ReactNode; badge?: number }[] = [
-    { id: 'lobby', label: t.nav.lobby, icon: <Gamepad2 className="w-5 h-5" /> },
-    { id: 'tournaments', label: t.nav.tournaments, icon: <Swords className="w-5 h-5" /> },
-    { id: 'leaderboard', label: t.nav.leaderboard, icon: <Trophy className="w-5 h-5" /> },
-    { id: 'social', label: t.nav.social, icon: <Users className="w-5 h-5" />, badge: pendingFriendReqCount },
-    { id: 'profile', label: t.nav.profile, icon: <User className="w-5 h-5" /> },
+    { id: 'lobby', label: t.nav.lobby, icon: <span className="nav-icon nav-icon-cyan"><Gamepad2 className="w-[17px] h-[17px]" /></span> },
+    { id: 'tournaments', label: t.nav.tournaments, icon: <span className="nav-icon nav-icon-violet"><Swords className="w-[17px] h-[17px]" /></span> },
+    { id: 'leaderboard', label: t.nav.leaderboard, icon: <span className="nav-icon nav-icon-gold"><Trophy className="w-[17px] h-[17px]" /></span> },
+    { id: 'social', label: t.nav.social, icon: <span className="nav-icon nav-icon-emerald"><Users className="w-[17px] h-[17px]" /></span>, badge: pendingFriendReqCount },
+    { id: 'profile', label: t.nav.profile, icon: <span className="nav-icon nav-icon-rose"><User className="w-[17px] h-[17px]" /></span> },
   ];
 
   const handleUserProfileUpdated = (updated: UserProfile) => {
@@ -549,11 +549,24 @@ function VanguardAppCore() {
   };
 
   return (
+
+
+
     <div
       className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
         !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
       } ${rootClass}`}
     >
+      <style>{`
+        .nav-icon{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.11);border-radius:11px;background:rgba(255,255,255,.035);transition:all .2s ease}
+        .nav-icon-cyan{color:#67e8f9;background:linear-gradient(145deg,rgba(8,145,178,.22),rgba(8,47,73,.35));border-color:rgba(103,232,249,.2)}
+        .nav-icon-violet{color:#c4b5fd;background:linear-gradient(145deg,rgba(124,58,237,.22),rgba(46,16,101,.35));border-color:rgba(196,181,253,.2)}
+        .nav-icon-gold{color:#fcd34d;background:linear-gradient(145deg,rgba(217,119,6,.22),rgba(69,26,3,.35));border-color:rgba(252,211,77,.22)}
+        .nav-icon-emerald{color:#6ee7b7;background:linear-gradient(145deg,rgba(5,150,105,.22),rgba(6,78,59,.35));border-color:rgba(110,231,183,.2)}
+        .nav-icon-rose{color:#fda4af;background:linear-gradient(145deg,rgba(225,29,72,.2),rgba(76,5,25,.35));border-color:rgba(253,164,175,.2)}
+        .nav-icon-active .nav-icon{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(251,191,36,.22),0 5px 18px rgba(245,158,11,.16);border-color:rgba(252,211,77,.38)}
+        @media(min-width:1024px){.nav-icon{width:28px;height:26px;border-radius:9px}}
+      `}</style>
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
@@ -565,7 +578,7 @@ function VanguardAppCore() {
               Vanguard
             </button>
 
-            <nav className="hidden lg:flex items-center gap-1 text-xs font-semibold">
+            <nav className="hidden lg:flex items-center gap-1.5 text-xs font-semibold">
               {navItems.map((item) => {
                 const active = activeTab === item.id;
                 return (
@@ -573,9 +586,9 @@ function VanguardAppCore() {
                     key={item.id}
                     type="button"
                     onClick={() => setActiveTab(item.id)}
-                    className={`relative px-3 py-2 rounded-lg flex items-center gap-1.5 transition-all cursor-pointer ${
+                    className={`relative px-3 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer ${
                       active
-                        ? 'text-amber-300 bg-amber-500/10 border-b-2 border-amber-400'
+                        ? 'text-white bg-white/[0.07] ring-1 ring-amber-300/30 shadow-[0_6px_20px_rgba(245,158,11,.08)]'
                         : 'text-slate-400 hover:text-white'
                     }`}
                   >
@@ -858,8 +871,8 @@ function VanguardAppCore() {
 
       {/* Mobile Bottom Navigation with Incoming Friend Request Badge */}
       {!socket.activeMatch && (
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#090d16]/95 backdrop-blur-md border-t border-amber-500/20">
-          <div className="grid grid-cols-5 h-16 items-center">
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#080d18]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-12px_36px_rgba(0,0,0,.4)]">
+          <div className="grid grid-cols-5 h-[72px] items-center px-1">
             {navItems.map((item) => {
               const active = activeTab === item.id;
               return (
@@ -867,12 +880,12 @@ function VanguardAppCore() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
-                  className={`relative min-h-[48px] flex flex-col items-center justify-center gap-0.5 cursor-pointer ${
+                  className={`relative min-h-[56px] flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
                     active ? 'text-amber-400' : 'text-slate-400'
                   }`}
                 >
-                  {item.icon}
-                  <span className="text-[10px] font-semibold truncate max-w-full px-1">{item.label}</span>
+                  <span className={active ? 'nav-icon-active' : ''}>{item.icon}</span>
+                  <span className="text-[9px] font-bold tracking-wide truncate max-w-full px-1">{item.label}</span>
                   {item.badge ? (
                     <span className="absolute top-1.5 right-3 min-w-[16px] h-[16px] px-1 rounded-full bg-rose-500 text-white text-[9px] font-extrabold flex items-center justify-center">
                       {item.badge}
