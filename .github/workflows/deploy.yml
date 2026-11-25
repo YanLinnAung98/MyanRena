@@ -1,10 +1,18 @@
-name: Build and Deploy MyanRena
+name: Build and Deploy MyanRena to GitHub Pages
 
 on:
   pull_request:
     branches: ["main", "master"]
+    paths:
+      - "vanguard-arena/**"
+      - "public/**"
+      - ".github/workflows/deploy.yml"
   push:
     branches: ["main", "master"]
+    paths:
+      - "vanguard-arena/**"
+      - "public/**"
+      - ".github/workflows/deploy.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,12 +21,15 @@ permissions:
   id-token: write
 
 concurrency:
-  group: "pages"
-  cancel-in-progress: false
+  group: "github-pages"
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vanguard-arena
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,60 +37,48 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 22
 
-      - name: Locate package.json directory
-        id: find_dir
-        run: |
-          PKG_PATH=$(find . -maxdepth 3 -name "package.json" -not -path "*/node_modules/*" | head -n 1)
-          if [ -z "$PKG_PATH" ]; then
-            echo "ERROR: package.json not found."
-            exit 1
-          fi
-          APP_DIR=$(dirname "$PKG_PATH")
-          echo "app_dir=$APP_DIR" >> $GITHUB_OUTPUT
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
 
       - name: Install dependencies
-        working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npm install --legacy-peer-deps
 
-      - name: Run TypeScript validation
-        working-directory: ${{ steps.find_dir.outputs.app_dir }}
+      - name: TypeScript validation
         run: npm run lint
 
       - name: Build production bundle
-        working-directory: ${{ steps.find_dir.outputs.app_dir }}
-        run: npx vite build
+        run: npm run build
 
-      - name: Copy public assets and Admin PWA files into dist
+      - name: Prepare GitHub Pages output
+        working-directory: .
         run: |
-          DIST_DIR="${{ steps.find_dir.outputs.app_dir }}/dist"
-          TARGET_DIR="$DIST_DIR/assets"
-          mkdir -p "$TARGET_DIR"
-          for src in "public/assets" "assets" "${{ steps.find_dir.outputs.app_dir }}/public/assets"; do
+          DIST_DIR="vanguard-arena/dist"
+          mkdir -p "$DIST_DIR"
+          # Preserve shared legacy assets and admin PWA entry points.
+          for src in "public/assets" "assets" "vanguard-arena/public/assets"; do
             if [ -d "$src" ]; then
-              cp -rv "$src"/. "$TARGET_DIR"/ || true
+              mkdir -p "$DIST_DIR/assets"
+              cp -rv "$src"/. "$DIST_DIR/assets"/ || true
             fi
           done
-          for f in "$TARGET_DIR"/*.jpeg; do
-            [ -e "$f" ] && cp -v "$f" "${f%.jpeg}.jpg" || true
-          done
-          for f in "$TARGET_DIR"/*.JPG; do
-            [ -e "$f" ] && cp -v "$f" "${f%.JPG}.jpg" || true
-          done
-          for admin_file in admin.html admin-manifest.json admin-sw.js; do
-            for dir in "." "public" "${{ steps.find_dir.outputs.app_dir }}" "${{ steps.find_dir.outputs.app_dir }}/public"; do
-              if [ -f "$dir/$admin_file" ]; then
-                cp -v "$dir/$admin_file" "$DIST_DIR/$admin_file"
+          for f in admin.html admin-manifest.json admin-sw.js; do
+            for dir in "." "public" "vanguard-arena" "vanguard-arena/public"; do
+              if [ -f "$dir/$f" ]; then
+                cp -v "$dir/$f" "$DIST_DIR/$f"
                 break
               fi
             done
           done
+          # GitHub Pages does not provide SPA rewrites; use the app shell as fallback.
+          cp "$DIST_DIR/index.html" "$DIST_DIR/404.html"
+          touch "$DIST_DIR/.nojekyll"
 
-      - name: Upload artifact
+      - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: ${{ steps.find_dir.outputs.app_dir }}/dist
+          path: vanguard-arena/dist
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
