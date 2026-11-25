@@ -47,9 +47,9 @@ const FULL_GAME_CARDS = [
   {
     id: 'tictactoe',
     titleMy: 'X / O အကွက်ချ',
-    titleEn: 'Tic-Tac-Toe Neon',
-    taglineMy: 'မြန်ဆန်တိကျသော 3D Neon ဉာဏ်ရည်ပြိုင်ပွဲ',
-    taglineEn: 'Fast-paced 3D hologram 3×3 duel',
+    titleEn: 'Tic-Tac-Toe',
+    taglineMy: 'မြန်ဆန်တိကျသော X / O ဗျူဟာပြိုင်ပွဲ',
+    taglineEn: 'A quick, strategic 3×3 classic duel',
     badgeText: 'FAST DUEL',
     glow: 'rgba(56, 189, 248, 0.35)',
     borderAccent: 'hover:border-sky-400/70',
@@ -144,7 +144,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     setSelectedGame(game.id);
                   }
                 }}
-                className={`cyber-panel overflow-hidden border border-white/15 ${game.borderAccent} shadow-xl`}
+                className={`cyber-panel overflow-hidden rounded-2xl border border-white/10 ${game.borderAccent} shadow-lg transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl`}
               >
                 <div className="relative flex flex-col h-full">
                   <div className="relative overflow-hidden">
@@ -165,7 +165,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                     </div>
                   </div>
 
-                  <div className="p-4 bg-gradient-to-b from-[#0c1324] to-[#070b14] flex items-center justify-between gap-3">
+                  <div className="p-4 sm:p-5 bg-gradient-to-b from-[#172338] to-[#101827] flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <h4 className="text-base sm:text-lg font-display font-extrabold text-white truncate">
                         {lang === 'my' ? game.titleMy : game.titleEn}
@@ -176,7 +176,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
                       </p>
                     </div>
 
-                    <div className="w-10 h-10 rounded-xl cyber-cta-gold text-slate-950 flex items-center justify-center shrink-0 shadow-[0_0_16px_rgba(245,158,11,0.4)]">
+                    <div className="w-10 h-10 rounded-xl cyber-cta-gold text-slate-950 flex items-center justify-center shrink-0">
                       <ChevronRight className="w-5 h-5" />
                     </div>
                   </div>
