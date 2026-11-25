@@ -12,10 +12,10 @@ import {
   VolumeX,
   X,
 } from 'lucide-react';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+
 import { GAME_LIST } from '../games/registry.ts';
 import { TRANSLATIONS } from '../i18n/translations.ts';
-import { db, isFirebaseConfigured, stripUndefined, withTimeout } from '../lib/firebase.ts';
+import { stripUndefined } from '../lib/firebase.ts';
 import { normalizeGameId, saveActiveSessionUser } from '../lib/serverlessApi.ts';
 import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
@@ -27,6 +27,49 @@ interface LandingViewProps {
   onlineCount: number;
   landingContent: LandingContent;
   onAuthenticated: (token: string, user: UserProfile, rememberMe: boolean) => void;
+}
+
+const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
+const LOCAL_HASH_ITERATIONS = 310_000;
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+  return btoa(binary);
+}
+
+function base64ToBytes(value: string): Uint8Array {
+  return Uint8Array.from(atob(value), (character) => character.charCodeAt(0));
+}
+
+async function hashLocalSecret(secret: string): Promise<{ algorithm: string; salt: string; hash: string }> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Secure password storage requires a modern HTTPS browser.');
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt, iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
+    key,
+    256
+  );
+  return { algorithm: 'pbkdf2-sha256', salt: bytesToBase64(salt), hash: bytesToBase64(new Uint8Array(bits)) };
+}
+
+async function verifyLocalSecret(secret: string, stored: any): Promise<boolean> {
+  if (!stored || stored.algorithm !== 'pbkdf2-sha256' || !stored.salt || !stored.hash) return false;
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: base64ToBytes(String(stored.salt)), iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
+    key,
+    256
+  );
+  const actual = new Uint8Array(bits);
+  const expected = base64ToBytes(String(stored.hash));
+  if (actual.length !== expected.length) return false;
+  let difference = 0;
+  for (let i = 0; i < actual.length; i++) difference |= actual[i] ^ expected[i];
+  return difference === 0;
 }
 
 function makeSafePlayerId(rawUsername: string): string {
@@ -111,8 +154,6 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
     const cleanUser = username.trim().toLowerCase();
     const cleanPass = password.trim();
-    const dev = detectClientDevice();
-
     try {
       if (cleanUser.length < 2) {
         throw new Error(
@@ -129,68 +170,51 @@ export const LandingView: React.FC<LandingViewProps> = ({
         );
       }
 
+      if (USE_SERVER_API) {
+        const endpoint = authMode === 'signin' ? '/api/auth/login' : '/api/auth/register';
+        const response = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: cleanUser,
+            password: cleanPass,
+            ...(authMode === 'signup' ? { displayName: displayName.trim() || username.trim() } : {}),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Authentication failed.');
+        soundEngine.playNotify();
+        if (authMode === 'signin') {
+          onAuthenticated(payload.token, payload.user, rememberMe);
+        } else {
+          setPinCopied(false);
+          setSignupPinModal({
+            token: payload.token,
+            user: payload.user,
+            pin: payload.recoveryPin,
+            rememberMe,
+          });
+        }
+        return;
+      }
+
       if (authMode === 'signin') {
-        // 1. Stealth Admin Login
-        if (cleanUser === 'yanlinnaung' && cleanPass === '163104') {
-          const adminProfile = stripUndefined({
-            id: 'admin_yanlinnaung',
-            username: 'yanlinnaung',
-            displayName: 'Yan Linn Aung',
-            gameId: '163104',
-            role: 'admin',
-            isAdmin: true,
-            xp: 3000,
-            rank: 'Legend',
-            wins: 45,
-            losses: 2,
-            draws: 1,
-            frameId: 'legend',
-            status: 'active',
-            online: true,
-            lastSeenMs: Date.now(),
-            ...dev,
-            avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
-            friends: [],
-            blocked: [],
-          }) as unknown as UserProfile;
-
-          saveActiveSessionUser(adminProfile);
-          if (isFirebaseConfigured && db) {
-            withTimeout(setDoc(doc(db, 'users', 'admin_yanlinnaung'), adminProfile, { merge: true }), 4500).catch(
-              (err) => console.warn('Admin Firestore sync skipped:', err)
-            );
-          }
-
-          soundEngine.playNotify();
-          onAuthenticated('admin-token', adminProfile, rememberMe);
-          return;
+        if (cleanUser === 'yanlinnaung' || cleanUser === 'admin') {
+          throw new Error(
+            lang === 'my'
+              ? 'Admin အကောင့်ဝင်ရန် လုံခြုံသော Backend Server လိုအပ်ပါသည်။'
+              : 'Administrator sign-in requires the secure backend server.'
+          );
         }
 
-        if (cleanUser === 'yanlinnaung') {
-          throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
-        }
-
-        // 2. Player Sign In (Check Cloud Firestore with Timeout, then LocalStorage fallback)
         const playerId = makeSafePlayerId(cleanUser);
-        let foundRecord: any = null;
-
-        if (isFirebaseConfigured && db) {
-          try {
-            const snap = await withTimeout(getDoc(doc(db, 'users', playerId)), 4500);
-            if (snap && snap.exists()) {
-              foundRecord = snap.data();
-            }
-          } catch (err) {
-            console.warn('Firestore sign-in check fallback to local:', err);
-          }
-        }
-
-        if (!foundRecord) {
-          const localById = localStorage.getItem(`myanrena_acc_${playerId}`);
-          const localLegacy = localStorage.getItem(`myanrena_acc_${cleanUser}`);
-          if (localById) foundRecord = JSON.parse(localById);
-          else if (localLegacy) foundRecord = JSON.parse(localLegacy);
-        }
+        const localById = localStorage.getItem(`myanrena_acc_${playerId}`);
+        const localLegacy = localStorage.getItem(`myanrena_acc_${cleanUser}`);
+        const foundRecord: any = localById
+          ? JSON.parse(localById)
+          : localLegacy
+          ? JSON.parse(localLegacy)
+          : null;
 
         if (!foundRecord) {
           throw new Error(
@@ -200,7 +224,19 @@ export const LandingView: React.FC<LandingViewProps> = ({
           );
         }
 
-        if (foundRecord.password && String(foundRecord.password) !== cleanPass) {
+        let passwordOk = false;
+        if (foundRecord.passwordHash?.algorithm === 'pbkdf2-sha256') {
+          passwordOk = await verifyLocalSecret(cleanPass, foundRecord.passwordHash);
+        } else if (typeof foundRecord.password === 'string') {
+          passwordOk = foundRecord.password === cleanPass;
+          if (passwordOk) {
+            foundRecord.passwordHash = await hashLocalSecret(cleanPass);
+            delete foundRecord.password;
+            delete foundRecord.recoveryPin;
+            localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(foundRecord));
+          }
+        }
+        if (!passwordOk) {
           throw new Error(lang === 'my' ? 'စကားဝှက် မှားယွင်းနေပါသည်။' : 'Incorrect password.');
         }
 
@@ -214,19 +250,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
         saveActiveSessionUser(playerProfile);
         localStorage.setItem(
           `myanrena_acc_${playerId}`,
-          JSON.stringify(stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }))
+          JSON.stringify(stripUndefined({ ...foundRecord, ...playerProfile }))
         );
-
-        if (isFirebaseConfigured && db) {
-          withTimeout(
-            setDoc(
-              doc(db, 'users', playerId),
-              stripUndefined({ ...foundRecord, ...playerProfile, password: cleanPass }),
-              { merge: true }
-            ),
-            4500
-          ).catch((err) => console.warn('Login Firestore sync warning:', err));
-        }
 
         soundEngine.playNotify();
         onAuthenticated(`token_${playerId}`, playerProfile, rememberMe);
@@ -240,23 +265,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         const playerId = makeSafePlayerId(cleanUser);
 
-        // Check duplicate in Firestore (with safe timeout)
-        if (isFirebaseConfigured && db) {
-          try {
-            const existing = await withTimeout(getDoc(doc(db, 'users', playerId)), 4500);
-            if (existing && existing.exists()) {
-              throw new Error(
-                lang === 'my'
-                  ? 'ဤအကောင့်အမည် ရှိပြီးသားဖြစ်ပါသည်။ Sign In မှတစ်ဆင့် ဝင်ပါ သို့မဟုတ် အခြားအမည်ရွေးပါ။'
-                  : 'Username already exists. Please Sign In or choose another.'
-              );
-            }
-          } catch (err: any) {
-            if (err?.message && !err.message.includes('CLOUD_TIMEOUT') && !err.code) {
-              throw err;
-            }
-            console.warn('Firestore duplicate check bypassed due to network/rules:', err);
-          }
+        if (localStorage.getItem(`myanrena_acc_${playerId}`)) {
+          throw new Error(
+            lang === 'my'
+              ? 'ဤအကောင့်အမည် ရှိပြီးသားဖြစ်ပါသည်။ Sign In မှတစ်ဆင့် ဝင်ပါ။'
+              : 'Username already exists. Please sign in.'
+          );
         }
 
         const recoveryPin = String(Math.floor(100000 + Math.random() * 900000));
@@ -271,24 +285,15 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
         const recordToSave = stripUndefined({
           ...newUser,
-          password: cleanPass,
-          recoveryPin,
+          passwordHash: await hashLocalSecret(cleanPass),
+          recoveryPinHash: await hashLocalSecret(recoveryPin),
           status: 'active',
           createdAt: Date.now(),
         });
 
-        // Always persist locally first so Sign Up NEVER fails
+        // Offline/demo accounts remain on this browser; production accounts use the authenticated backend.
         localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(recordToSave));
         saveActiveSessionUser(newUser);
-
-        // Push to Firestore Cloud with timeout protection
-        if (isFirebaseConfigured && db) {
-          try {
-            await withTimeout(setDoc(doc(db, 'users', playerId), recordToSave), 5000);
-          } catch (err) {
-            console.warn('Firestore signup sync delayed/failed (using local session):', err);
-          }
-        }
 
         soundEngine.playNotify();
         setPinCopied(false);
@@ -313,38 +318,37 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecLoading(true);
     try {
       const cleanUser = recUsername.trim().toLowerCase();
-      const playerId = makeSafePlayerId(cleanUser);
-      let updated = false;
-
-      if (isFirebaseConfigured && db) {
-        try {
-          const userRef = doc(db, 'users', playerId);
-          const snap = await withTimeout(getDoc(userRef), 4500);
-          if (snap && snap.exists()) {
-            const data = snap.data() as { recoveryPin?: string };
-            if (data.recoveryPin !== recPin.trim()) {
-              throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
-            }
-            await withTimeout(updateDoc(userRef, { password: recNewPassword.trim() }), 4500);
-            updated = true;
-          }
-        } catch (err: any) {
-          if (err?.message?.includes('PIN')) throw err;
-        }
-      }
-
-      const raw = localStorage.getItem(`myanrena_acc_${playerId}`) || localStorage.getItem(`myanrena_acc_${cleanUser}`);
-      if (raw) {
+      if (USE_SERVER_API) {
+        const response = await fetch('/api/auth/recover-pin', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: cleanUser,
+            pin: recPin.trim(),
+            newPassword: recNewPassword.trim(),
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(payload.error || 'Password recovery failed.');
+      } else {
+        const playerId = makeSafePlayerId(cleanUser);
+        const raw = localStorage.getItem(`myanrena_acc_${playerId}`) || localStorage.getItem(`myanrena_acc_${cleanUser}`);
+        if (!raw) throw new Error(lang === 'my' ? 'ဤ Browser ထဲတွင် အကောင့်မတွေ့ပါ။' : 'Account not found in this browser.');
         const parsed = JSON.parse(raw);
-        if (parsed.recoveryPin !== recPin.trim()) {
-          throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
+        let pinOk = false;
+        if (parsed.recoveryPinHash?.algorithm === 'pbkdf2-sha256') {
+          pinOk = await verifyLocalSecret(recPin.trim(), parsed.recoveryPinHash);
+        } else if (typeof parsed.recoveryPin === 'string') {
+          pinOk = parsed.recoveryPin === recPin.trim();
         }
-        parsed.password = recNewPassword.trim();
+        if (!pinOk) throw new Error(lang === 'my' ? 'Recovery PIN မှားယွင်းနေပါသည်။' : 'Invalid Recovery PIN.');
+        parsed.passwordHash = await hashLocalSecret(recNewPassword.trim());
+        parsed.recoveryPinHash = parsed.recoveryPinHash || await hashLocalSecret(recPin.trim());
+        delete parsed.password;
+        delete parsed.recoveryPin;
         localStorage.setItem(`myanrena_acc_${playerId}`, JSON.stringify(parsed));
-        updated = true;
       }
 
-      if (!updated) throw new Error(lang === 'my' ? 'အကောင့်အမည် ရှာမတွေ့ပါ။' : 'Username not found.');
       setRecSuccess(
         lang === 'my' ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ! ပြန်လည်ဝင်ရောက်နိုင်ပါပြီ။' : 'Password updated successfully!'
       );
