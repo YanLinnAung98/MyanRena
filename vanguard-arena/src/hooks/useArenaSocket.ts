@@ -9,6 +9,7 @@ import {
   onSnapshot,
   setDoc,
   updateDoc,
+  where,
 } from 'firebase/firestore';
 import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
 import { db, firebaseInitError, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
@@ -758,7 +759,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     );
 
     const unsubNotis = onSnapshot(
-      collection(db, 'notifications'),
+      query(collection(db, 'notifications'), where('targetUserId', 'in', [myId, 'ALL'])),
       (snap) => {
         const list: ArenaNotification[] = [];
         snap.forEach((d) => {
