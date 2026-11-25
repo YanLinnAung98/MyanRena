@@ -35,6 +35,7 @@ import {
 } from './lib/serverlessApi.ts';
 import type { Difficulty, GameType, LandingContent, Language, TurnTimeLimit, UserProfile } from './types.ts';
 import { soundEngine } from './utils/sound.ts';
+import { MyanRenaCrestIcon } from './components/PremiumIcons.tsx';
 import { AvatarWithFrame } from './components/AvatarWithFrame.tsx';
 import { GameBootSequence } from './components/GameBootSequence.tsx';
 import { LandingView } from './components/LandingView.tsx';
@@ -564,9 +565,10 @@ function VanguardAppCore() {
             <button
               type="button"
               onClick={() => setActiveTab('lobby')}
-              className="vanguard-brand-box px-3 py-1 rounded-lg text-sm sm:text-base font-display font-extrabold tracking-wide text-sky-300 cursor-pointer shrink-0"
+              className="vanguard-brand-box inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm sm:text-base font-display font-extrabold tracking-wide text-amber-100 cursor-pointer shrink-0"
             >
-              MYANRENA
+              <MyanRenaCrestIcon className="w-7 h-7 shrink-0" />
+              <span>MYANRENA</span>
             </button>
 
             <nav className="hidden lg:flex items-center gap-1.5 text-xs font-semibold">
