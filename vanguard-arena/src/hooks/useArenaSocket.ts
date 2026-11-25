@@ -164,6 +164,8 @@ function pickSmartConnect4Col(grid: Array<Array<string | null>>, difficulty: str
 export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
   const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
   const [cloudError, setCloudError] = useState<string | null>(firebaseInitError);
+  const [maintenanceMode, setMaintenanceMode] = useState(false);
+  const [maintenanceMessage, setMaintenanceMessage] = useState('စနစ်အဆင့်မြှင့်တင်နေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပေးပါ။');
   const [pingMs, setPingMs] = useState<number>(20);
   const [landingContent, setLandingContent] = useState<LandingContent>(() => getPatchedLandingContent());
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
@@ -464,6 +466,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const unsubConfig = onSnapshot(doc(db, 'system', 'config'), (snap) => {
       if (snap.exists()) {
         const cfg = snap.data() as any;
+        if (typeof cfg.maintenance === 'boolean') setMaintenanceMode(cfg.maintenance);
+        if (typeof cfg.maintenanceMessage === 'string') setMaintenanceMessage(cfg.maintenanceMessage);
         if (cfg.featureLocks) setFeatureLocks(cfg.featureLocks);
         if (cfg.matchmakingSettings) setMatchmakingSettings(cfg.matchmakingSettings);
       }
@@ -500,7 +504,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     if (!currentRoom?.id || !isFirebaseConfigured || !db) return;
     const roomId = currentRoom.id;
 
-    const unsubRoom = onSnapshot(doc(db, 'rooms', roomId), async (snap) => {
+    const firestore = db;
+    if (!firestore) return;
+    const unsubRoom = onSnapshot(doc(firestore, 'rooms', roomId), async (snap) => {
       if (!snap.exists()) {
         setCurrentRoom(null);
         return;
@@ -520,7 +526,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           queueRoomIdRef.current = null;
         }
 
-        const matchSnap = await getDoc(doc(db, 'matches', latestRoom.activeMatchId)).catch(() => null);
+        const matchSnap = await getDoc(doc(firestore, 'matches', latestRoom.activeMatchId)).catch(() => null);
         if (matchSnap && matchSnap.exists()) {
           setCurrentRoom(null);
           setQueueStatus(null);
@@ -1105,6 +1111,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   return {
     connectionState,
     cloudError,
+    maintenanceMode,
+    maintenanceMessage,
     pingMs,
     landingContent,
     setLandingContent,
