@@ -188,33 +188,103 @@ jobs:
           assert.equal(recoveredLogin.status, 200, `new password should authenticate: ${recovered.error || ''}`);
           assert.ok(recovered.token, 'recovered login should return a new session token');
 
-          const wsUrl = `ws://127.0.0.1:${process.env.PORT}/ws?token=${encodeURIComponent(recovered.token)}`;
-          const socket = new WebSocket(wsUrl);
-          await new Promise((resolve, reject) => {
-            const timer = setTimeout(() => {
-              socket.terminate();
-              reject(new Error('WebSocket did not send initial state within 8 seconds.'));
-            }, 8000);
-            socket.on('message', (buffer) => {
+          function attachSocket(token) {
+            const ws = new WebSocket(`ws://127.0.0.1:${process.env.PORT}/ws?token=${encodeURIComponent(token)}`);
+            const backlog = [];
+            const waiters = [];
+
+            ws.on('message', (buffer) => {
               let message;
               try { message = JSON.parse(buffer.toString()); } catch { return; }
-              if (message.type === 'init') {
-                clearTimeout(timer);
-                assert.equal(message.user?.id, registered.user.id, 'WebSocket should authenticate the recovered account');
-                socket.close();
-                resolve();
-              } else if (message.type === 'auth:error') {
-                clearTimeout(timer);
-                reject(new Error(message.error || 'WebSocket authentication failed.'));
+              const index = waiters.findIndex((waiter) => waiter.predicate(message));
+              if (index >= 0) {
+                const [waiter] = waiters.splice(index, 1);
+                clearTimeout(waiter.timer);
+                waiter.resolve(message);
+              } else {
+                backlog.push(message);
               }
             });
-            socket.on('error', (error) => {
-              clearTimeout(timer);
-              reject(error);
-            });
-          });
 
-          console.log('Backend smoke test passed: health, register, login, Recovery PIN reset, friend requests, block/unblock, direct messages, social API, and authenticated WebSocket.');
+            const waitFor = (predicate, timeoutMs = 10000) => {
+              const index = backlog.findIndex(predicate);
+              if (index >= 0) return Promise.resolve(backlog.splice(index, 1)[0]);
+              return new Promise((resolve, reject) => {
+                const waiter = {
+                  predicate,
+                  resolve,
+                  timer: setTimeout(() => {
+                    const idx = waiters.indexOf(waiter);
+                    if (idx >= 0) waiters.splice(idx, 1);
+                    reject(new Error('Timed out waiting for an expected realtime event.'));
+                  }, timeoutMs),
+                };
+                waiters.push(waiter);
+              });
+            };
+
+            return { ws, waitFor };
+          }
+
+          const playerA = attachSocket(recovered.token);
+          const playerB = attachSocket(registered2.token);
+          const [initA, initB] = await Promise.all([
+            playerA.waitFor((message) => message.type === 'init' || message.type === 'auth:error'),
+            playerB.waitFor((message) => message.type === 'init' || message.type === 'auth:error'),
+          ]);
+          assert.equal(initA.type, 'init', `player A WebSocket auth should succeed: ${initA.error || ''}`);
+          assert.equal(initA.user?.id, registered.user.id, 'WebSocket should authenticate player A');
+          assert.equal(initB.type, 'init', `player B WebSocket auth should succeed: ${initB.error || ''}`);
+          assert.equal(initB.user?.id, registered2.user.id, 'WebSocket should authenticate player B');
+
+          const matchA = playerA.waitFor((message) => message.type === 'match:state' && message.match?.gameType === 'ttt');
+          playerA.ws.send(JSON.stringify({
+            type: 'queue:join', gameType: 'ttt', bestOf: 3, autoBotFill: false,
+          }));
+
+          const matchB = playerB.waitFor((message) => message.type === 'match:state' && message.match?.gameType === 'ttt');
+          playerB.ws.send(JSON.stringify({
+            type: 'queue:join', gameType: 'ttt', bestOf: 3, autoBotFill: false,
+          }));
+
+          const [pairedA, pairedB] = await Promise.all([matchA, matchB]);
+          const matchId = pairedA.match.id;
+          assert.ok(matchId, 'server matchmaking should create a match ID');
+          assert.equal(pairedB.match.id, matchId, 'both players should receive the same match');
+          assert.equal(pairedA.match.state?.gameType, 'ttt', 'match should start with the requested game');
+
+          const moveA = playerB.waitFor((message) =>
+            message.type === 'match:state' &&
+            message.match?.id === matchId &&
+            message.match.state?.board?.[0] === 1
+          );
+          playerA.ws.send(JSON.stringify({
+            type: 'match:move', matchId, payload: { index: 0 },
+          }));
+          await moveA;
+
+          const moveB = playerA.waitFor((message) =>
+            message.type === 'match:state' &&
+            message.match?.id === matchId &&
+            message.match.state?.board?.[1] === 2
+          );
+          playerB.ws.send(JSON.stringify({
+            type: 'match:move', matchId, payload: { index: 1 },
+          }));
+          await moveB;
+
+          const chatEvent = playerB.waitFor((message) =>
+            message.type === 'match:chat' && message.matchId === matchId &&
+            message.message?.content === 'CI realtime match chat'
+          );
+          playerA.ws.send(JSON.stringify({
+            type: 'match:chat', matchId, content: 'CI realtime match chat',
+          }));
+          await chatEvent;
+
+          playerA.ws.close();
+          playerB.ws.close();
+          console.log('Backend smoke test passed: health, register/login/recovery, friend requests, block/DM, WebSocket auth, PvP matchmaking, alternating TTT moves and match chat.');
           NODE
 
       - name: Prepare GitHub Pages output
