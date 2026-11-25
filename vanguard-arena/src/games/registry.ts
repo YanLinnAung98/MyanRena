@@ -28,7 +28,7 @@ export interface GamePlugin {
   }) => React.ReactNode;
 }
 
-export const GAME_REGISTRY: Record<GameType, GamePlugin> = {
+const BASE_GAME_REGISTRY: Record<'connect4' | 'ttt' | 'rps' | 'sakar_htar', GamePlugin> = {
   connect4: {
     id: 'connect4',
     name: '4 in a Row',
@@ -149,4 +149,13 @@ export const GAME_REGISTRY: Record<GameType, GamePlugin> = {
   },
 };
 
-export const GAME_LIST: GamePlugin[] = Object.values(GAME_REGISTRY);
+// Canonical IDs are used by the matchmaking layer; legacy aliases remain available
+// for existing saved matches and older clients.
+export const GAME_REGISTRY: Record<GameType, GamePlugin> = {
+  ...BASE_GAME_REGISTRY,
+  tictactoe: { ...BASE_GAME_REGISTRY.ttt, id: 'tictactoe' },
+  sakarhtar: { ...BASE_GAME_REGISTRY.sakar_htar, id: 'sakarhtar' },
+};
+
+// Show one tile per actual game in the lobby.
+export const GAME_LIST: GamePlugin[] = Object.values(BASE_GAME_REGISTRY);
