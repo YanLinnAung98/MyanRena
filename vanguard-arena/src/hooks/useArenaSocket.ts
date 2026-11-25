@@ -875,6 +875,26 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       setQueuedGame(rawGameType);
       setQueueStatus({ gameType: rawGameType, startedAt: Date.now() });
 
+      if (USE_SERVER_API) {
+        if (queueTimerRef.current !== null) {
+          window.clearTimeout(queueTimerRef.current);
+          queueTimerRef.current = null;
+        }
+        const isSakar = gameType === 'sakarhtar' || gameType === 'sakar_htar';
+        sendServerMessage(
+          isSakar
+            ? { type: 'sakar:quick:join', autoBotFill: true }
+            : {
+                type: 'queue:join',
+                gameType: gameType === 'tictactoe' ? 'ttt' : gameType,
+                bestOf,
+                turnTimeLimit,
+                autoBotFill: true,
+              }
+        );
+        return;
+      }
+
       if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
 
       if (isFirebaseConfigured && db) {
@@ -990,6 +1010,16 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const leaveQueue = useCallback(async () => {
+    if (USE_SERVER_API) {
+      const isSakar = normalizeGameId(queuedGame || '') === 'sakarhtar';
+      sendServerMessage({ type: isSakar ? 'sakar:quick:leave' : 'queue:leave' });
+      if (queueTimerRef.current !== null) window.clearTimeout(queueTimerRef.current);
+      setCurrentRoom(null);
+      setQueuedGame(null);
+      setQueueStatus(null);
+      setSakarQuickCount(0);
+      return;
+    }
     if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
     if (queueRoomIdRef.current && isFirebaseConfigured && db) {
       await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
@@ -998,7 +1028,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setCurrentRoom(null);
     setQueuedGame(null);
     setQueueStatus(null);
-  }, []);
+  }, [queuedGame, sendServerMessage]);
 
   const joinSakarQuick = useCallback(() => {
     setSakarQuickCount((c) => Math.min(8, c + 1));
@@ -1006,6 +1036,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   }, [joinQueue]);
 
   const startSakarQuickNow = useCallback(async () => {
+    if (USE_SERVER_API) {
+      sendServerMessage({ type: 'sakar:quick:start_now' });
+      return;
+    }
     if (queueTimerRef.current) window.clearTimeout(queueTimerRef.current);
     if (queueRoomIdRef.current && isFirebaseConfigured && db) {
       await deleteDoc(doc(db, 'rooms', queueRoomIdRef.current)).catch(() => {});
@@ -1023,6 +1057,19 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     async (move: any) => {
       if (!activeMatch || activeMatch.status === 'finished') return;
       const gType = normalizeGameId(activeMatch.gameType);
+      if (USE_SERVER_API) {
+        const payload =
+          gType === 'tictactoe'
+            ? { index: move?.index ?? move }
+            : gType === 'connect4'
+            ? { col: move?.col ?? move }
+            : gType === 'rps'
+            ? { choice: move?.choice ?? move }
+            : { optionIndex: move?.answerIndex ?? move?.optionIndex ?? move };
+        soundEngine.playClick();
+        sendServerMessage({ type: 'match:move', matchId: activeMatch.id, payload });
+        return;
+      }
       const me = resolveCurrentPlayer();
       const players = activeMatch.players || [me];
       const p1 = players[0];
@@ -1354,6 +1401,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const forfeitMatch = useCallback(async () => {
     if (!activeMatch) return;
+    if (USE_SERVER_API) {
+      sendServerMessage({ type: 'match:forfeit', matchId: activeMatch.id });
+      return;
+    }
     clearBotTimers();
     const me = resolveCurrentPlayer();
     const other = (activeMatch.players || []).find((p: any) => p.id !== me?.id) || { id: 'aegis_bot' };
@@ -1369,6 +1420,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const sendMatchChat = useCallback(
     async (text: string) => {
       if (!text.trim() || !activeMatch) return;
+      if (USE_SERVER_API) {
+        sendServerMessage({ type: 'match:chat', matchId: activeMatch.id, content: text.trim().slice(0, 240) });
+        return;
+      }
       const me = resolveCurrentPlayer();
       const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
       setMatchChat((prev) => [...prev, msg]);
@@ -1382,6 +1437,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const sendRoomChat = useCallback(
     async (text: string) => {
       if (!text.trim() || !currentRoom) return;
+      if (USE_SERVER_API) {
+        sendServerMessage({ type: 'room:chat', roomId: currentRoom.id, content: text.trim().slice(0, 240) });
+        return;
+      }
       const me = resolveCurrentPlayer();
       const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
       setRoomChat((prev) => [...prev, msg]);
@@ -1393,7 +1452,17 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const sendChallenge = useCallback(
-    (_targetUserId: string, gameType: GameType) => {
+    (targetUserId: string, gameType: GameType) => {
+      if (USE_SERVER_API) {
+        const normalized = normalizeGameId(gameType);
+        sendServerMessage({
+          type: 'challenge:send',
+          targetUserId,
+          gameType: normalized === 'tictactoe' ? 'ttt' : normalized === 'sakarhtar' ? 'sakar_htar' : normalized,
+          bestOf: 3,
+        });
+        return;
+      }
       const player = resolveCurrentPlayer();
       clearBotTimers();
       setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
@@ -1403,11 +1472,15 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const respondChallenge = useCallback(
-    (_challengeId: string, accept: boolean) => {
+    (challengeId: string, accept: boolean) => {
       setPendingChallenge(null);
-      if (accept) pushToast('success', 'Challenge accepted!');
+      if (USE_SERVER_API) {
+        sendServerMessage({ type: 'challenge:respond', inviteId: challengeId, accept });
+      } else if (accept) {
+        pushToast('success', 'Challenge accepted!');
+      }
     },
-    [pushToast]
+    [pushToast, sendServerMessage]
   );
 
   const unreadNotiCount = notifications.filter((n) => !n.read).length;
