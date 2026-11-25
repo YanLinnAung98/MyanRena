@@ -21,7 +21,17 @@ If Render later permits a zero-cost service without payment details, treat it as
 
 ## Firebase / Firestore status
 
-The frontend Firebase Web SDK configuration now points to project `vanguard-arena-17ced` in `vanguard-arena/firebase-applet-config.json`. The provided `databaseURL` is the project's Realtime Database endpoint, but the app currently uses Cloud Firestore APIs (not Realtime Database APIs). However, the current sign-up/sign-in flow in `vanguard-arena/src/components/LandingView.tsx` is browser-local: it derives a local player ID and stores a PBKDF2 password hash and Recovery PIN hash in `localStorage`. It does **not** call Firebase Authentication.
+The frontend Firebase Web SDK configuration points to project `vanguard-arena-17ced` in `vanguard-arena/firebase-applet-config.json`. The supplied `databaseURL` is a Realtime Database endpoint; the current client integration uses Cloud Firestore, not Realtime Database. The GitHub Pages client now supports Firebase Email/Password accounts: sign-up asks for a unique 3–24 character lowercase username and a real email address; sign-in uses that email and password. Username remains the public player handle. Password recovery for Firebase accounts sends a Firebase reset email. Existing browser-local accounts remain available on the browser where they were created by signing in with the old username; they are not automatically migrated to Firebase.
+
+### Firebase Console steps still required
+
+1. In **Authentication → Settings → Authorized domains**, add `yanlinnaung98.github.io` (the host for `https://yanlinnaung98.github.io/MyanRena/`).
+2. In **Firestore Database → Rules**, publish the contents of `vanguard-arena/firestore.rules`. Do not replace these rules with test-mode `allow read, write: if true`.
+3. In **Authentication → Sign-in method**, keep **Email/Password** enabled.
+
+The app sends a verification email after sign-up, but currently allows authenticated users to use their own public profile before email verification; only verified accounts can access the rules' verified-only admin/match paths. No service-account private key is required in the browser.
+
+The existing rules protect the public profile document and username reservation, and authorize friend requests for their sender and recipient. Other collections/features are not yet fully migrated to Firebase. GitHub Pages still cannot host the Node.js API or WebSocket multiplayer server, so the current Firebase Auth work does not by itself make the hosted multiplayer backend or every social/game feature cloud-backed.
 
 The checked-in `firestore.rules` requires a signed-in Firebase user with a verified email for profile writes (`isVerified()`) and enforces a strict public-profile schema. The current browser-local sign-in does not create that Firebase Auth identity, so the current app authentication model and those rules are not aligned. Do not loosen the rules to public writes; that would expose player data and moderation controls. Do not claim that accounts, profiles, social data, or matches are safely cloud-backed until Firebase Authentication, the Firestore document schema, and rules are migrated and tested together.
 
