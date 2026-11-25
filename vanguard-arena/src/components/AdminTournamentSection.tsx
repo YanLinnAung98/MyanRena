@@ -235,7 +235,19 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       [ids[i], ids[j]] = [ids[j], ids[i]];
     }
 
-    const matchups = await createMatchupsAndFirestoreMatches(tr, ids, 1);
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှု မရှိသေးပါ။ ပွဲစဉ်များ ဖန်တီး၍ မရပါ။');
+      return;
+    }
+
+    let matchups: TournamentMatchup[];
+    try {
+      matchups = await createMatchupsAndFirestoreMatches(tr, ids, 1);
+    } catch (error) {
+      console.error('Tournament match creation failed:', error);
+      onNotify('error', 'ပြိုင်ပွဲပွဲစဉ် ဖန်တီးမှု မအောင်မြင်ပါ။ Firestore Rules ကို စစ်ဆေးပါ။');
+      return;
+    }
 
     const saved = await updateTournamentFields(
       tr.id,
