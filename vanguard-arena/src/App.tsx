@@ -97,6 +97,7 @@ class GlobalErrorBoundary extends React.Component<
 }
 
 type LobbyTab = 'lobby' | 'tournaments' | 'leaderboard' | 'social' | 'profile';
+const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
 
 function readStoredToken(): string | null {
   if (typeof window === 'undefined') return null;
@@ -186,29 +187,37 @@ function VanguardAppCore() {
         }
         const initialToken = readStoredToken();
         if (initialToken && active) {
-          const saved = readActiveSessionUser();
-          if (saved) {
-            setUser(
-              initialToken === 'admin-token'
-                ? saved
-                : ({ ...saved, role: 'player', isAdmin: false } as UserProfile)
-            );
-          } else {
+          if (USE_SERVER_API) {
+            // Always validate stored sessions with the backend; never trust a cached admin role.
             const meRes = await fetch('/api/auth/me', {
               headers: { Authorization: `Bearer ${initialToken}` },
             }).catch(() => null);
             if (meRes?.ok && active) {
               const me = await meRes.json();
-              if (me.user) {
-                setUser(
-                  initialToken === 'admin-token'
-                    ? me.user
-                    : ({ ...me.user, role: 'player', isAdmin: false } as UserProfile)
-                );
+              if (me.user) setUser(me.user as UserProfile);
+              else {
+                clearStoredToken();
+                setToken(null);
               }
             } else if (active) {
               clearStoredToken();
               setToken(null);
+            }
+          } else {
+            const saved = readActiveSessionUser();
+            if (saved) {
+              setUser({ ...saved, role: 'player', isAdmin: false } as UserProfile);
+            } else {
+              const meRes = await fetch('/api/auth/me', {
+                headers: { Authorization: `Bearer ${initialToken}` },
+              }).catch(() => null);
+              if (meRes?.ok && active) {
+                const me = await meRes.json();
+                if (me.user) setUser({ ...me.user, role: 'player', isAdmin: false } as UserProfile);
+              } else if (active) {
+                clearStoredToken();
+                setToken(null);
+              }
             }
           }
         }
@@ -244,10 +253,9 @@ function VanguardAppCore() {
     lang,
     onUserUpdate: React.useCallback(
       (nextUser: UserProfile) => {
-        const enforced =
-          token === 'admin-token'
-            ? nextUser
-            : ({ ...nextUser, role: 'player', isAdmin: false } as UserProfile);
+        const enforced = USE_SERVER_API
+          ? nextUser
+          : ({ ...nextUser, role: 'player', isAdmin: false } as UserProfile);
         setUser(enforced);
       },
       [token]
@@ -285,7 +293,7 @@ function VanguardAppCore() {
 
   const handleAuthenticated = (nextToken: string, nextUser: UserProfile, rememberMe: boolean) => {
     clearStoredToken();
-    const isAdminAccount = nextToken === 'admin-token' && nextUser.username === 'yanlinnaung';
+    const isAdminAccount = USE_SERVER_API && nextUser.role === 'admin';
     const cleanProfile = {
       ...nextUser,
       role: isAdminAccount ? 'admin' : 'player',
@@ -482,7 +490,7 @@ function VanguardAppCore() {
     );
   }
 
-  const isActualAdmin = token === 'admin-token' && user.role === 'admin';
+  const isActualAdmin = USE_SERVER_API && user.role === 'admin';
 
   if (socket.maintenanceMode && !isActualAdmin) {
     return (
