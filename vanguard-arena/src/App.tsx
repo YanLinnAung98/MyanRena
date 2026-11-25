@@ -233,20 +233,49 @@ function VanguardAppCore() {
 
   // Live Incoming Friend Request Counter for Social Tab Badge
   React.useEffect(() => {
-    if (!user?.id || !isFirebaseConfigured || !db) {
+    if (!user?.id) {
+      setPendingFriendReqCount(0);
+      return;
+    }
+
+    if (USE_SERVER_API && token) {
+      let active = true;
+      const refreshCount = async () => {
+        try {
+          const response = await fetch('/api/social', {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (!response.ok) return;
+          const social = await response.json();
+          if (active) {
+            setPendingFriendReqCount(Array.isArray(social.incomingRequests) ? social.incomingRequests.length : 0);
+          }
+        } catch (error) {
+          console.warn('Friend request count refresh failed:', error);
+        }
+      };
+      void refreshCount();
+      const timer = window.setInterval(() => void refreshCount(), 7000);
+      return () => {
+        active = false;
+        window.clearInterval(timer);
+      };
+    }
+
+    if (!isFirebaseConfigured || !db) {
       setPendingFriendReqCount(0);
       return;
     }
     const unsub = onSnapshot(collection(db, 'friendRequests'), (snap) => {
       let count = 0;
       snap.forEach((d) => {
-        const r = d.data();
-        if (r.toUserId === user.id && r.status === 'pending') count += 1;
+        const request = d.data();
+        if (request.toUserId === user.id && request.status === 'pending') count += 1;
       });
       setPendingFriendReqCount(count);
     });
     return () => unsub();
-  }, [user?.id]);
+  }, [user?.id, token]);
 
   const socket = useArenaSocket({
     token: user ? token : null,
