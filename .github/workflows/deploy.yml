@@ -41,6 +41,10 @@ jobs:
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npm install --legacy-peer-deps
 
+      - name: Run TypeScript validation
+        working-directory: ${{ steps.find_dir.outputs.app_dir }}
+        run: npm run lint
+
       - name: Build production bundle
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npx vite build
