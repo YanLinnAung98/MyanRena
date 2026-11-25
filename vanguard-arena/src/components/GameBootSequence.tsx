@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CloudDownload, ShieldCheck, Sparkles } from 'lucide-react';
+import { CloudDownload, ShieldCheck } from 'lucide-react';
 import {
   BOOT_CONFIG,
   bootAssetPath,
@@ -18,7 +18,7 @@ interface GameBootSequenceProps {
   onComplete: () => void;
 }
 
-type BootPhase = 'studio' | 'loading' | 'done';
+type BootPhase = 'loading' | 'done';
 
 function formatBytes(bytes: number): string {
   if (bytes <= 0) return '0 KB';
@@ -27,63 +27,26 @@ function formatBytes(bytes: number): string {
 }
 
 export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComplete }) => {
-  const [phase, setPhase] = useState<BootPhase>('studio');
-  const [studioMedia, setStudioMedia] = useState<BootMediaAsset>({ kind: 'none', url: null });
+  const [phase, setPhase] = useState<BootPhase>('loading');
   const [loadingMedia, setLoadingMedia] = useState<BootMediaAsset>({ kind: 'none', url: null });
-  const [mediaResolved, setMediaResolved] = useState(false);
 
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState(
-    lang === 'my' ? 'ဆာဗာနှင့် ချိတ်ဆက်စစ်ဆေးနေသည်...' : 'Connecting to Vanguard Server...'
+    lang === 'my' ? 'ဆာဗာနှင့် ချိတ်ဆက်စစ်ဆေးနေသည်...' : 'Connecting to MyanRena...'
   );
   const [versionInfo, setVersionInfo] = useState(`v${BOOT_CONFIG.defaultAppVersion}`);
   const [downloadBadge, setDownloadBadge] = useState<string | null>(null);
-  const [canSkipStudio, setCanSkipStudio] = useState(false);
 
   const completedRef = useRef(false);
 
-  // 1. Studio နှင့် Loading အတွက် Video / Image ဖိုင်များကို ကြိုတင်စစ်ဆေးမည်
+  // Resolve the loading artwork only; the redundant Vanguard Studio intro is removed.
   useEffect(() => {
     let active = true;
-    Promise.all([
-      resolveBootMedia(BOOT_CONFIG.studioCandidates),
-      resolveBootMedia(BOOT_CONFIG.loadingCandidates),
-    ]).then(([studio, loading]) => {
-      if (!active) return;
-      setStudioMedia(studio);
-      setLoadingMedia(loading);
-      setMediaResolved(true);
+    resolveBootMedia(BOOT_CONFIG.loadingCandidates).then((loading) => {
+      if (active) setLoadingMedia(loading);
     });
-    return () => {
-      active = false;
-    };
+    return () => { active = false; };
   }, []);
-
-  // 2. Stage 1: Game Studio Intro Timing
-  useEffect(() => {
-    if (phase !== 'studio' || !mediaResolved) return;
-
-    const skipTimer = window.setTimeout(() => setCanSkipStudio(true), 900);
-
-    if (studioMedia.kind === 'video') {
-      const safetyTimer = window.setTimeout(() => {
-        setPhase('loading');
-      }, BOOT_CONFIG.studioMaxVideoMs);
-      return () => {
-        window.clearTimeout(skipTimer);
-        window.clearTimeout(safetyTimer);
-      };
-    }
-
-    const imageTimer = window.setTimeout(() => {
-      setPhase('loading');
-    }, BOOT_CONFIG.studioImageDurationMs);
-
-    return () => {
-      window.clearTimeout(skipTimer);
-      window.clearTimeout(imageTimer);
-    };
-  }, [phase, mediaResolved, studioMedia.kind]);
 
   // 3. Stage 2: Game Loading & In-Game Data Check / Download (အနည်းဆုံး ၃ စက္ကန့်)
   useEffect(() => {
@@ -162,7 +125,7 @@ export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComp
       if (cancelled) return;
       setProgress(100);
       setStatusText(
-        lang === 'my' ? 'အဆင်သင့်ဖြစ်ပါပြီ — ဂိမ်းထဲသို့ ဝင်ရောက်နေသည်...' : 'Ready! Entering Vanguard Arena...'
+        lang === 'my' ? 'အဆင်သင့်ဖြစ်ပါပြီ — ဂိမ်းထဲသို့ ဝင်ရောက်နေသည်...' : 'Ready! Entering MyanRena...'
       );
       window.setTimeout(finishBoot, 320);
     };
@@ -185,74 +148,6 @@ export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComp
           className="fixed inset-0 z-[100] bg-[#050811] text-white overflow-hidden select-none"
         >
           <AnimatePresence mode="wait">
-            {/* STAGE 1: GAME STUDIO INTRO */}
-            {phase === 'studio' && (
-              <motion.div
-                key="boot-studio"
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.45 }}
-                onClick={() => canSkipStudio && setPhase('loading')}
-                className="relative w-full h-full flex items-center justify-center bg-[#050811]"
-              >
-                {studioMedia.kind === 'video' && studioMedia.url ? (
-                  <video
-                    src={studioMedia.url}
-                    autoPlay
-                    muted
-                    playsInline
-                    onEnded={() => setPhase('loading')}
-                    onError={() => setPhase('loading')}
-                    className="w-full h-full object-cover"
-                  />
-                ) : studioMedia.kind === 'image' && studioMedia.url ? (
-                  <picture className="block w-full h-full">
-                    <source
-                      media="(max-width: 767px), (orientation: portrait)"
-                      srcSet={bootAssetPath('assets/boot-studio-mobile.svg')}
-                    />
-                    <motion.img
-                      src={studioMedia.url}
-                      alt="MyanRena Game Studio"
-                      initial={{ scale: 1.06, opacity: 0.2 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ duration: 2.2, ease: 'easeOut' }}
-                      className="w-full h-full object-cover"
-                    />
-                  </picture>
-                ) : (
-                  /* Fallback Studio Emblem (ပုံ/Video မထည့်ရသေးလျှင် အလိုအလျောက်ပေါ်မည်) */
-                  <motion.div
-                    initial={{ scale: 0.88, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ duration: 0.9, ease: 'easeOut' }}
-                    className="flex flex-col items-center gap-4 text-center px-6"
-                  >
-                    <div className="w-24 h-24 rounded-3xl bg-gradient-to-br from-amber-400 via-amber-500 to-amber-700 p-[2px] shadow-[0_0_50px_rgba(245,158,11,0.45)]">
-                      <div className="w-full h-full rounded-3xl bg-[#080d1a] flex items-center justify-center">
-                        <Sparkles className="w-11 h-11 text-amber-400" />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-2xl font-display font-black tracking-[0.28em] text-amber-300">
-                        VANGUARD
-                      </div>
-                      <div className="text-[11px] tracking-[0.45em] text-slate-400 uppercase mt-1">
-                        GAME STUDIO
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-
-                {canSkipStudio && (
-                  <div className="absolute bottom-7 right-6 text-[11px] text-white/50 tracking-wider uppercase">
-                    Tap to skip
-                  </div>
-                )}
-              </motion.div>
-            )}
-
             {/* STAGE 2: GAME LOADING & IN-GAME DATA DOWNLOAD */}
             {phase === 'loading' && (
               <motion.div
