@@ -32,6 +32,7 @@ export const BOOT_CONFIG = {
       bootAssetPath('assets/boot-studio.webp'),
       bootAssetPath('assets/boot-studio.png'),
       bootAssetPath('assets/boot-studio.jpg'),
+      bootAssetPath('assets/boot-studio-desktop.svg'),
     ],
   },
   loadingCandidates: {
@@ -40,6 +41,7 @@ export const BOOT_CONFIG = {
       bootAssetPath('assets/boot-loading.webp'),
       bootAssetPath('assets/boot-loading.png'),
       bootAssetPath('assets/boot-loading.jpg'),
+      bootAssetPath('assets/boot-loading-desktop.svg'),
     ],
   },
   corePreloadUrls: [
