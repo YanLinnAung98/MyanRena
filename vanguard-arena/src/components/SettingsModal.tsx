@@ -16,10 +16,28 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { doc, setDoc } from 'firebase/firestore';
-import { db, isFirebaseConfigured } from '../lib/firebase.ts';
+import { updatePassword } from 'firebase/auth';
+import { auth } from '../lib/firebase.ts';
 import type { Language, UserProfile } from '../types.ts';
 import { soundEngine, type GraphicsQuality, type UserGameSettings } from '../utils/sound.ts';
+
+const LOCAL_HASH_ITERATIONS = 310_000;
+
+async function hashLocalSecret(secret: string): Promise<{ algorithm: string; salt: string; hash: string }> {
+  if (!globalThis.crypto?.subtle) {
+    throw new Error('Secure password storage requires a modern HTTPS browser.');
+  }
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
+    key,
+    256
+  );
+  let binary = '';
+  new Uint8Array(bits).forEach((byte) => { binary += String.fromCharCode(byte); });
+  return { algorithm: 'pbkdf2-sha256', salt: btoa(String.fromCharCode(...salt)), hash: btoa(binary) };
+}
 
 interface SettingsModalProps {
   open: boolean;
@@ -69,24 +87,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     const clean = newPass.trim();
-    if (clean.length < 4) {
-      onNotify('error', lang === 'my' ? 'စကားဝှက် အနည်းဆုံး ၄ လုံး ထည့်ပါ။' : 'Password must be at least 4 characters.');
+    if (clean.length < 8) {
+      onNotify('error', lang === 'my' ? 'စကားဝှက် အနည်းဆုံး ၈ လုံး ထည့်ပါ။' : 'Password must be at least 8 characters.');
       return;
     }
     setSavingPass(true);
     try {
-      const localKey = `myanrena_acc_${user.id}`;
-      const raw = localStorage.getItem(localKey);
-      if (raw) {
+      if (auth?.currentUser && auth.currentUser.uid === user.id) {
+        await updatePassword(auth.currentUser, clean);
+      } else {
+        const localKey = `myanrena_acc_${user.id}`;
+        const raw = localStorage.getItem(localKey);
+        if (!raw || import.meta.env.VITE_USE_SERVER_API === 'true') {
+          throw new Error(lang === 'my'
+            ? 'ဒီအကောင့်အတွက် လုံခြုံသော Password ပြောင်းလဲမှု မရရှိသေးပါ။ Account Recovery ကို အသုံးပြုပါ။'
+            : 'Secure password changes are unavailable for this account. Use account recovery.');
+        }
         const parsed = JSON.parse(raw);
-        parsed.password = clean;
+        parsed.passwordHash = await hashLocalSecret(clean);
+        delete parsed.password;
+        delete parsed.recoveryPin;
         localStorage.setItem(localKey, JSON.stringify(parsed));
-      }
-      if (isFirebaseConfigured && db && user.role !== 'admin') {
-        await setDoc(doc(db, 'users', user.id), { password: clean }, { merge: true }).catch(() => {});
       }
       setNewPass('');
       onNotify('success', lang === 'my' ? 'စကားဝှက် အသစ်ပြောင်းလဲပြီးပါပြီ!' : 'Password updated successfully!');
+    } catch (error: any) {
+      console.error('Password change failed:', error);
+      onNotify('error', error?.code === 'auth/requires-recent-login'
+        ? (lang === 'my' ? 'လုံခြုံရေးအတွက် ပြန်လည်ဝင်ရောက်ပြီးမှ Password ပြောင်းပါ။' : 'Please sign in again before changing your password.')
+        : (error?.message || (lang === 'my' ? 'စကားဝှက် ပြောင်းလဲမှု မအောင်မြင်ပါ။' : 'Password change failed.')));
     } finally {
       setSavingPass(false);
     }
@@ -329,10 +358,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="flex gap-2">
                   <input
                     type="password"
-                    minLength={4}
+                    minLength={8}
                     value={newPass}
                     onChange={(e) => setNewPass(e.target.value)}
-                    placeholder={lang === 'my' ? 'စကားဝှက်အသစ် (၄ လုံးအထက်)' : 'New password (min 4 chars)'}
+                    placeholder={lang === 'my' ? 'စကားဝှက်အသစ် (၈ လုံးအထက်)' : 'New password (min 8 chars)'}
                     className="flex-1 h-9 px-3 rounded-lg bg-[#101728] border border-white/10 text-xs text-white"
                   />
                   <button
