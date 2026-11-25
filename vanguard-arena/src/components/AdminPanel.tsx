@@ -63,6 +63,8 @@ interface AdminPanelProps {
   onNotify: (level: string, message: string) => void;
 }
 
+const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
+
 type AdminSection =
   | 'overview'
   | 'users'
@@ -75,6 +77,7 @@ type AdminSection =
   | 'logs';
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({
+  token,
   currentUser,
   livePingMs = 20,
   onSwitchToLobby,
@@ -341,42 +344,52 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const runServerModeration = async (
+    target: any,
+    action: 'suspend' | 'unsuspend' | 'ban' | 'unban',
+    durationHours?: number
+  ) => {
+    if (!USE_SERVER_API || !token) {
+      onNotify('error', 'လက်ရှိ GitHub Pages + Firebase Free mode တွင် Server-side Moderation မရရှိပါ။ လုံခြုံသော backend server ချိတ်ဆက်ပြီးမှ အသုံးပြုနိုင်ပါမည်။');
+      return false;
+    }
+    try {
+      const response = await fetch(`/api/admin/users/${encodeURIComponent(target.id)}/moderate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ action, durationHours, reason: 'Administrator action' }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Moderation action failed.');
+      await logAdminAction(action.toUpperCase(), `${target.displayName}: ${data.actionTaken || action}`);
+      onNotify('success', `${target.displayName}: ${data.actionTaken || action}`);
+      return true;
+    } catch (error: any) {
+      console.error('Server moderation failed:', error);
+      onNotify('error', error?.message || 'Server moderation failed.');
+      return false;
+    }
+  };
+
   const handleTimedSuspend = async (target: any, minutes: number) => {
     if (target.role === 'admin') return;
-    const until = new Date(Date.now() + minutes * 60 * 1000).toISOString();
-    if (isFirebaseConfigured && db) {
-      await setDoc(
-        doc(db, 'users', target.id),
-        { status: 'suspended', suspendedUntil: until },
-        { merge: true }
-      ).catch(() => {});
-    }
-    await logAdminAction('SUSPEND_PLAYER', `${target.displayName} for ${minutes}m`);
-    onNotify('info', `${target.displayName} အား ${minutes} မိနစ် Suspend လုပ်ပြီးပါပြီ။`);
+    await runServerModeration(target, 'suspend', Math.max(1 / 60, minutes / 60));
   };
 
   const handleUserStatus = async (target: any, status: 'active' | 'banned') => {
     if (target.role === 'admin') return;
-    if (isFirebaseConfigured && db) {
-      await setDoc(
-        doc(db, 'users', target.id),
-        { status, suspendedUntil: status === 'active' ? '' : target.suspendedUntil || '' },
-        { merge: true }
-      ).catch(() => {});
-    }
-    await logAdminAction('USER_STATUS', `${target.displayName} -> ${status}`);
-    onNotify('success', `${target.displayName} -> ${status.toUpperCase()}`);
+    await runServerModeration(target, status === 'active' ? 'unban' : 'ban');
   };
 
   const handleDeleteUser = async (target: any) => {
     if (target.role === 'admin') return;
-    if (!window.confirm(`${target.displayName} (${target.gameId}) အကောင့်ကို အပြီးဖျက်မည်လား?`)) return;
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'users', target.id)).catch(() => {});
-    }
-    await logAdminAction('DELETE_USER', `Deleted ${target.displayName}`);
-    setEditingUser(null);
-    onNotify('info', 'အကောင့် ဖျက်ပြီးပါပြီ။');
+    onNotify(
+      'error',
+      'Account အပြီးဖျက်ခြင်းကို GitHub Pages + Firebase client မှ လုံခြုံစွာ မလုပ်နိုင်ပါ။ Authentication Admin backend လိုအပ်သောကြောင့် ဒီလုပ်ဆောင်ချက်ကို ပိတ်ထားပါသည်။'
+    );
   };
 
   const handleSendDirectNoti = async (target: any) => {
