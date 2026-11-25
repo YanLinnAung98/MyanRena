@@ -517,7 +517,7 @@ function VanguardAppCore() {
         >
           <AdminPanel
             token={token}
-            adminUser={user}
+            currentUser={user}
             livePingMs={socket.pingMs}
             lang={lang}
             onChangeLang={handleChangeLang}
