@@ -1910,6 +1910,7 @@ app.get('/healthz', (_req, res) => {
 });
 
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
 type RateLimitEntry = { count: number; resetAt: number };
 const authRateLimitBuckets = new Map<string, RateLimitEntry>();
