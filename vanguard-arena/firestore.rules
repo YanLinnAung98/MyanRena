@@ -299,7 +299,7 @@ service cloud.firestore {
           && data.players is list
           && data.players.size() >= 1
           && data.players.size() <= 2
-          && data.players.hasAny([{'id': request.auth.uid}]);
+          && (data.players[0].id == request.auth.uid || (data.players.size() == 2 && data.players[1].id == request.auth.uid));
       }
       allow get: if isValidId(roomId) && (isRoomParticipant(existing()) || isAdmin());
       allow list: if isAdmin() || (
@@ -322,7 +322,6 @@ service cloud.firestore {
         && request.resource.data.status == 'waiting'
         && request.resource.data.activeMatchId == null;
       allow update: if isValidId(roomId) && isVerified()
-        && isRoomParticipant(existing())
         && request.resource.data.id == existing().id
         && request.resource.data.hostId == existing().hostId
         && request.resource.data.gameType == existing().gameType
@@ -332,6 +331,8 @@ service cloud.firestore {
           (
             existing().status == 'waiting'
             && existing().players.size() == 1
+            && existing().players[0].id == existing().hostId
+            && request.auth.uid != existing().hostId
             && request.resource.data.status == 'playing'
             && request.resource.data.players is list
             && request.resource.data.players.size() == 2
@@ -341,7 +342,8 @@ service cloud.firestore {
             && request.resource.data.diff(existing()).affectedKeys().hasOnly(['players', 'status', 'activeMatchId'])
           ) ||
           (
-            request.resource.data.diff(existing()).affectedKeys().hasOnly(['chat'])
+            isRoomParticipant(existing())
+            && request.resource.data.diff(existing()).affectedKeys().hasOnly(['chat'])
             && request.resource.data.chat is list
             && request.resource.data.chat.size() <= 500
           )
