@@ -196,3 +196,127 @@ input, select, textarea {
 @media (prefers-reduced-motion: reduce) {
   .cyber-cta-gold { transition: none; }
 }
+
+
+/* --------------------------------------------------------------------------
+   MyanRena UI quality pass — shared interaction, accessibility and responsive
+   polish. Kept additive so existing game-specific layouts and mechanics remain
+   untouched.
+   -------------------------------------------------------------------------- */
+:root {
+  --mr-radius-card: 1.125rem;
+  --mr-radius-control: .75rem;
+  --mr-space-page: clamp(.75rem, 2.8vw, 1.5rem);
+  --mr-focus-ring: 0 0 0 3px rgba(8, 13, 24, .92), 0 0 0 5px rgba(244, 207, 122, .9);
+  --mr-ease-standard: cubic-bezier(.2, .75, .25, 1);
+}
+
+html {
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  scrollbar-gutter: stable;
+}
+
+body {
+  min-width: 320px;
+  line-height: 1.5;
+}
+
+button, a, input, select, textarea {
+  font: inherit;
+}
+
+:where(button, a, [role="button"], input, select, textarea):focus-visible {
+  outline: none;
+  box-shadow: var(--mr-focus-ring);
+}
+
+:where(button, a, [role="button"]) {
+  touch-action: manipulation;
+}
+
+:where(button:not(:disabled), a, [role="button"]) {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+:where(button:disabled, input:disabled, select:disabled, textarea:disabled) {
+  cursor: not-allowed;
+}
+
+.cyber-panel {
+  border-radius: var(--mr-radius-card);
+  transition:
+    border-color .2s var(--mr-ease-standard),
+    background-color .2s var(--mr-ease-standard),
+    box-shadow .2s var(--mr-ease-standard);
+}
+
+.cyber-panel:focus-within {
+  border-color: rgba(232, 185, 92, .38);
+}
+
+.cyber-cta-gold {
+  min-height: 2.625rem;
+  border-radius: var(--mr-radius-control);
+  font-weight: 750;
+  letter-spacing: .005em;
+}
+
+.cyber-cta-gold:focus-visible {
+  box-shadow: var(--mr-focus-ring);
+}
+
+input, select, textarea {
+  min-width: 0;
+  color: #f3f6fb;
+  accent-color: var(--mr-gold);
+}
+
+input::placeholder, textarea::placeholder {
+  color: #8796ad;
+  opacity: 1;
+}
+
+:where(img, video) {
+  max-width: 100%;
+}
+
+:where(img) {
+  height: auto;
+}
+
+.lang-my, [lang="my"] {
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .cyber-panel {
+    border-radius: 1rem;
+  }
+
+  .cyber-cta-gold {
+    min-height: 2.75rem;
+  }
+
+  :where(input, select, textarea) {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+
+  .cyber-panel,
+  .cyber-cta-gold {
+    transition: none !important;
+  }
+
+  .cyber-cta-gold::after {
+    animation: none !important;
+  }
+}
