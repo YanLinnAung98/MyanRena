@@ -291,9 +291,9 @@ export const GameArenaSetupView: React.FC<GameArenaSetupViewProps> = ({
   ];
 
   return (
-    <div className="max-w-3xl mx-auto px-3 sm:px-6 py-2.5 sm:py-5 h-[calc(100dvh-7.5rem)] lg:h-auto flex flex-col gap-2.5 sm:gap-4 overflow-hidden lg:overflow-visible">
+    <div className="max-w-5xl mx-auto px-3 sm:px-6 py-4 sm:py-7 min-h-[calc(100dvh-7.5rem)] flex flex-col gap-3 sm:gap-5 overflow-visible">
       {/* COMPACT GAME TITLE HEADER (No giant image banner) */}
-      <div className="cyber-panel rounded-2xl px-3 py-2.5 sm:px-4 sm:py-3 border border-amber-400/35 flex items-center justify-between gap-2 shrink-0">
+      <div className="cyber-panel rounded-[1.35rem] px-4 py-3.5 sm:px-6 sm:py-5 border border-amber-300/25 flex items-center justify-between gap-3 shrink-0 shadow-[0_18px_45px_rgba(0,0,0,.24)]">
         <div className="flex items-center gap-2.5 min-w-0">
           <button
             type="button"

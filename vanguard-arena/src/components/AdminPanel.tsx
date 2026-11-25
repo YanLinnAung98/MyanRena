@@ -518,7 +518,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
   return (
     <div className="min-h-dvh cyber-bg text-slate-100">
-      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-4 space-y-4">
+      <div className="max-w-7xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">\n        <section className="relative isolate overflow-hidden rounded-[1.5rem] border border-amber-300/20 bg-[#101a2b] px-5 py-5 sm:px-7 sm:py-6 shadow-[0_18px_48px_rgba(0,0,0,.25)]"><div className="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_85%_0%,rgba(232,185,92,.16),transparent_42%),linear-gradient(115deg,#15243a,#0b1321_70%,#171b29)]"/><div className="text-[10px] font-black tracking-[.22em] text-amber-200/80">MYANRENA • OPERATIONS</div><h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight text-white">Admin Command Center</h1><p className="mt-1 text-xs sm:text-sm text-slate-300">Monitor the community, manage competitions and configure the live game service.</p></section>
         {/* Master Admin Header */}
         <div className="cyber-panel rounded-2xl p-4 border border-amber-500/40 flex flex-wrap items-center justify-between gap-3 shadow-xl">
           <div className="flex items-center gap-3">
