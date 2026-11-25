@@ -183,6 +183,11 @@ export const LandingView: React.FC<LandingViewProps> = ({
         );
       }
 
+      if (!USE_SERVER_API && isFirebaseConfigured && (!auth || !db)) {
+        throw new Error(lang === 'my'
+          ? 'Firebase ချိတ်ဆက်မှု မအောင်မြင်ပါ။ Config ကို စစ်ဆေးပါ။'
+          : 'Firebase could not initialize. Please check the project configuration.');
+      }
       if (USE_SERVER_API && authMode === 'signup') {
         if (!/^[a-z0-9_]{3,24}$/.test(cleanUser)) {
           throw new Error(
@@ -724,7 +729,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <span>{USE_SERVER_API
                   ? (lang === 'my' ? 'လုံခြုံသော Hosted Backend ဖြင့် ချိတ်ဆက်ထားပါသည်' : 'Connected to secured hosted backend')
                   : isFirebaseConfigured
-                    ? (lang === 'my' ? 'Firebase Cloud Account — Device အများအပြားမှ ဝင်နိုင်သည်' : 'Firebase cloud account — sign in across devices')
+                    ? (lang === 'my' ? 'အသစ်ဖွင့်သော Firebase အကောင့်များ Cloud မှ အသုံးပြုနိုင်သည်' : 'New Firebase accounts sync through the cloud')
                     : (lang === 'my' ? 'အကောင့်ကို ဒီ Browser ထဲတွင်သာ သိမ်းဆည်းထားသည်' : 'Account is stored in this browser only')}</span>
               </div>
             </div>
