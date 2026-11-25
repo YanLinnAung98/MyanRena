@@ -788,7 +788,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
               </div>
             ) : (
               chatPartnerIds.map((pid) => {
-                const partner = allUsers.find((u) => u.id === pid);
+                const partner = otherUsers.find((u) => u.id === pid);
                 if (!partner) return null;
                 const selected = activeChatUserId === pid;
                 return (
