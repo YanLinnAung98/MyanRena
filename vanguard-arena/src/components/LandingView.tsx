@@ -410,6 +410,27 @@ export const LandingView: React.FC<LandingViewProps> = ({
             </div>
           </motion.div>
 
+          <section className="mr-landing-mobile-hero lg:hidden p-4 sm:p-5 space-y-3">
+            <div className="flex items-center gap-2 text-[9px] font-black tracking-[.22em] text-amber-200/85 uppercase">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,.8)]" />
+              MYANRENA • PLAY TOGETHER
+            </div>
+            <h1 className="fluid-title font-display font-black tracking-tight text-white leading-tight">{heroTitle}</h1>
+            <p className="text-xs sm:text-sm text-slate-300 leading-6 max-w-xl">{heroSubtitle}</p>
+            <div className="grid grid-cols-4 gap-2 pt-1">
+              {GAME_LIST.map((g) => {
+                const nid = normalizeGameId(g.id);
+                const title = nid === 'sakarhtar' ? 'ဉာဏ်စမ်း' : lang === 'my' ? g.nameMy : g.name;
+                return (
+                  <div key={g.id} className="rounded-xl border border-white/10 bg-black/20 p-1.5 text-center min-w-0">
+                    <img src={GAME_ARTWORKS[nid]} alt={title} className="w-full aspect-square object-cover rounded-lg" />
+                    <div className="mt-1 text-[9px] font-bold text-slate-200 truncate">{title}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
           <div id="auth-card" className="lg:col-span-5 w-full max-w-md mx-auto">
             <div className="p-5 sm:p-7 rounded-[1.5rem] cyber-panel border border-amber-300/25 shadow-[0_24px_65px_rgba(0,0,0,.38)] space-y-5">
               <div className="flex items-center justify-between gap-2">
