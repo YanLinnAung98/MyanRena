@@ -186,7 +186,9 @@ service cloud.firestore {
       allow create: if isSignedIn() && isValidId(requestId)
         && validFriendRequest(request.resource.data)
         && request.resource.data.fromUserId == request.auth.uid
-        && request.resource.data.status == 'pending';
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
       allow update: if isSignedIn()
         && validFriendRequest(request.resource.data)
         && request.resource.data.id == resource.data.id
@@ -222,7 +224,9 @@ service cloud.firestore {
       allow create: if isSignedIn()
         && isValidId(messageId)
         && validMessage(request.resource.data)
-        && request.resource.data.fromUserId == request.auth.uid;
+        && request.resource.data.fromUserId == request.auth.uid
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
       allow update, delete: if false;
     }
 
