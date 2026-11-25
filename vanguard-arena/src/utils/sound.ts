@@ -304,6 +304,19 @@ class VanguardSoundEngine {
    * အဝိုင်းပြား ချသံ + Row အနက် (0=အပေါ်ဆုံး, 5=အောက်ဆုံး) အလိုက်
    * အောက်ခြေထိသံနှင့် ၂ ချက် ပြန်ကန်သံ (Double Bounce) တွဲဖွင့်ပေးမည်
    */
+  /** Compatibility aliases used by the current board components. */
+  public playDrop(row = 5) {
+    this.playDiscDropSequence(row);
+  }
+
+  public playTick() {
+    this.playDiscHover();
+  }
+
+  public playMove() {
+    this.playClick();
+  }
+
   public playDiscDropSequence(row: number) {
     if (!this.settings.sfxEnabled) return;
 
