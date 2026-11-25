@@ -48,6 +48,9 @@ jobs:
       - name: Build production bundle
         run: npm run build
 
+      - name: TypeScript validation
+        run: npm run lint
+
       - name: Backend startup and authentication smoke test
         env:
           NODE_ENV: production
