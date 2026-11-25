@@ -49,7 +49,7 @@ service cloud.firestore {
         && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 2048))
         && (!('frameId' in data) || (data.frameId is string && data.frameId.size() <= 64))
         && (!('bio' in data) || (data.bio is string && data.bio.size() <= 180))
-        && (!('favoriteGame' in data) || data.favoriteGame in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar'])
+        && (!('favoriteGame' in data) || data.favoriteGame in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar', 'sakar_htar'])
         && (!('bannerId' in data) || (data.bannerId is string && data.bannerId.size() <= 80))
         && (!('bannerUrl' in data) || (data.bannerUrl is string && data.bannerUrl.size() <= 2048))
         && (!('country' in data) || (data.country is string && data.country.size() <= 56))
