@@ -58,7 +58,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
 
   return (
     <div className="max-w-7xl mx-auto px-3 sm:px-6 pt-3 sm:pt-5 pb-5 space-y-4 sm:space-y-5">
-      <section className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 pb-3">
+      <section className="mr-arena-banner flex flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 sm:py-5">
         <div>
           <div className="text-[10px] font-bold tracking-[.18em] text-amber-300/80 uppercase">MYANRENA • GAME CENTER</div>
           <h1 className="mt-1 text-xl sm:text-2xl font-black tracking-tight text-white">{isMy ? 'ဂိမ်းခန်းမ' : 'Game Hall'}</h1>
@@ -75,7 +75,7 @@ export const LobbyView: React.FC<LobbyViewProps> = ({
         <div className="grid grid-cols-2 xl:grid-cols-4 gap-2.5 sm:gap-3">
           {FULL_GAME_CARDS.map((game, index) => {
             const locked = Boolean(featureLocks?.[game.id]);
-            return <TiltCard3D key={game.id} disabled={locked} glowColor={game.glow} onClick={() => {if (!locked) setSelectedGame(game.id);}} className="group relative block overflow-hidden rounded-2xl sm:rounded-[1.35rem] border border-white/[0.12] bg-[#101a2b] text-left shadow-[0_12px_35px_rgba(0,0,0,.2)] transition duration-300 hover:-translate-y-1 hover:border-amber-200/50 hover:shadow-[0_24px_56px_rgba(0,0,0,.42)]">
+            return <TiltCard3D key={game.id} disabled={locked} glowColor={game.glow} onClick={() => {if (!locked) setSelectedGame(game.id);}} className="mr-interactive-card group relative block overflow-hidden rounded-2xl sm:rounded-[1.35rem] border border-white/[0.12] bg-[#101a2b] text-left shadow-[0_12px_35px_rgba(0,0,0,.2)] transition duration-300 hover:-translate-y-1 hover:border-amber-200/50 hover:shadow-[0_24px_56px_rgba(0,0,0,.42)]">
               <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${game.accent} to-transparent opacity-70`}/>
               <div className="relative overflow-hidden"><div className="h-[128px] sm:h-[154px] lg:h-[168px] overflow-hidden bg-[#080e19]"><GameStage3D gameType={game.id} compact/></div><div className="absolute inset-0 bg-gradient-to-t from-[#0c1422] via-[#0c1422]/10 to-transparent"/>
                 <div className="absolute left-2 top-2 flex items-center gap-2"><span className="inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-[#070b13]/80 px-2.5 py-1.5 text-[9px] font-extrabold tracking-[.12em] text-amber-100 shadow-[0_5px_20px_rgba(0,0,0,.3)] backdrop-blur-md"><GameBadgeIcon gameType={game.id} className="h-6 w-6 drop-shadow-[0_2px_8px_rgba(255,255,255,.18)]"/>{game.badgeText}</span><span className="rounded-lg border border-white/10 bg-black/50 px-2 py-1.5 text-[9px] font-bold text-white/80 backdrop-blur-md">{game.players}</span></div>
