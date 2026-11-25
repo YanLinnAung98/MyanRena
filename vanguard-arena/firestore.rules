@@ -64,16 +64,48 @@ service cloud.firestore {
     }
 
     function isValidMatch(data, matchId) {
-      return data.keys().hasAll(['matchId', 'gameType', 'player1Id', 'player2Id', 'status', 'createdAt', 'updatedAt'])
-        && data.keys().hasOnly(['matchId', 'gameType', 'player1Id', 'player2Id', 'winnerId', 'status', 'createdAt', 'updatedAt'])
-        && data.matchId is string && data.matchId == matchId && data.matchId.size() <= 128
-        && data.gameType in ['connect4', 'ttt', 'rps']
-        && data.player1Id is string && data.player1Id.size() >= 1 && data.player1Id.size() <= 128
-        && data.player2Id is string && data.player2Id.size() >= 1 && data.player2Id.size() <= 128
-        && (!('winnerId' in data) || (data.winnerId is string && data.winnerId.size() <= 128))
+      return data.keys().hasAll(['id', 'gameType', 'mode', 'isRealtimePvp', 'status', 'players', 'turnUserId', 'scores', 'round', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'gameType', 'mode', 'isRealtimePvp', 'difficulty', 'bestOf', 'turnTimeLimit',
+          'turnDeadline', 'status', 'players', 'turnUserId', 'scores', 'round', 'tttBoard',
+          'c4Board', 'rpsPicks', 'rpsLastRound', 'riddles', 'riddleIndex', 'roundAnswers',
+          'chat', 'winnerId', 'isDraw', 'createdAt', 'updatedAtMs', 'tournamentId',
+          'tournamentTitle', 'matchupId', 'winningCells', 'botPhase', 'botTargetCol'
+        ])
+        && data.id is string && data.id == matchId && data.id.size() <= 128
+        && data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar']
+        && data.mode is string && data.mode.size() <= 32
+        && data.isRealtimePvp is bool
         && data.status in ['active', 'finished']
-        && data.createdAt is timestamp
-        && data.updatedAt is timestamp;
+        && data.players is list && data.players.size() == 2
+        && data.players[0].id is string && data.players[0].id.size() >= 1 && data.players[0].id.size() <= 128
+        && data.players[1].id is string && data.players[1].id.size() >= 1 && data.players[1].id.size() <= 128
+        && data.players[0].id != data.players[1].id
+        && data.turnUserId is string && data.turnUserId.size() <= 128
+        && data.scores is map
+        && data.round is number && data.round >= 1 && data.round <= 1000
+        && data.createdAt is string && data.createdAt.size() <= 40
+        && (!('difficulty' in data) || (data.difficulty is string && data.difficulty.size() <= 20))
+        && (!('bestOf' in data) || data.bestOf in [3, 5])
+        && (!('turnTimeLimit' in data) || (data.turnTimeLimit is number && data.turnTimeLimit >= 5 && data.turnTimeLimit <= 180))
+        && (!('turnDeadline' in data) || (data.turnDeadline is string && data.turnDeadline.size() <= 40))
+        && (!('tttBoard' in data) || (data.tttBoard is list && data.tttBoard.size() == 9))
+        && (!('c4Board' in data) || (data.c4Board is list && data.c4Board.size() == 6))
+        && (!('rpsPicks' in data) || data.rpsPicks is map)
+        && (!('rpsLastRound' in data) || data.rpsLastRound == null || data.rpsLastRound is map)
+        && (!('riddles' in data) || (data.riddles is list && data.riddles.size() <= 100))
+        && (!('riddleIndex' in data) || (data.riddleIndex is number && data.riddleIndex >= 0))
+        && (!('roundAnswers' in data) || data.roundAnswers is map)
+        && (!('chat' in data) || (data.chat is list && data.chat.size() <= 500))
+        && (!('winnerId' in data) || data.winnerId == null || (data.winnerId is string && data.winnerId.size() <= 128))
+        && (!('isDraw' in data) || data.isDraw is bool)
+        && (!('updatedAtMs' in data) || data.updatedAtMs is number)
+        && (!('tournamentId' in data) || (data.tournamentId is string && data.tournamentId.size() <= 128))
+        && (!('tournamentTitle' in data) || (data.tournamentTitle is string && data.tournamentTitle.size() <= 80))
+        && (!('matchupId' in data) || (data.matchupId is string && data.matchupId.size() <= 128))
+        && (!('winningCells' in data) || data.winningCells is list)
+        && (!('botPhase' in data) || (data.botPhase is string && data.botPhase.size() <= 32))
+        && (!('botTargetCol' in data) || data.botTargetCol == null || data.botTargetCol is number);
     }
 
     function isValidFrame(data, frameId) {
@@ -262,24 +294,33 @@ service cloud.firestore {
 
     // Match History Records
     match /matches/{matchId} {
-      allow get: if isValidId(matchId) && isSignedIn()
-        && (existing().player1Id == request.auth.uid || existing().player2Id == request.auth.uid || isAdmin());
-      allow list: if isSignedIn() && (resource.data.player1Id == request.auth.uid || resource.data.player2Id == request.auth.uid || isAdmin());
+      function isMatchParticipant(data) {
+        return isSignedIn()
+          && data.players is list
+          && data.players.size() == 2
+          && (data.players[0].id == request.auth.uid || data.players[1].id == request.auth.uid);
+      }
+      allow get: if isValidId(matchId)
+        && (isMatchParticipant(existing()) || isAdmin());
+      allow list: if isMatchParticipant(resource.data) || isAdmin();
       allow create: if isValidId(matchId) && isVerified()
         && isValidMatch(incoming(), matchId)
-        && (incoming().player1Id == request.auth.uid || isAdmin())
-        && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
+        && (isMatchParticipant(incoming()) || isAdmin());
       allow update: if isValidId(matchId) && isVerified()
         && isValidMatch(incoming(), matchId)
-        && incoming().matchId == existing().matchId
+        && incoming().id == existing().id
         && incoming().createdAt == existing().createdAt
-        && incoming().updatedAt == request.time
+        && incoming().players[0].id == existing().players[0].id
+        && incoming().players[1].id == existing().players[1].id
+        && (isMatchParticipant(existing()) || isAdmin())
         && (
           isAdmin() ||
-          (existing().status != 'finished'
-            && (existing().player1Id == request.auth.uid || existing().player2Id == request.auth.uid)
-            && incoming().diff(existing()).affectedKeys().hasOnly(['winnerId', 'status', 'updatedAt']))
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'tttBoard', 'c4Board', 'turnUserId', 'scores', 'rpsPicks', 'rpsLastRound',
+            'riddles', 'riddleIndex', 'roundAnswers', 'chat', 'winnerId', 'isDraw',
+            'status', 'round', 'turnDeadline', 'updatedAtMs', 'winningCells',
+            'botPhase', 'botTargetCol'
+          ])
         );
       allow delete: if isValidId(matchId) && isAdmin();
     }
