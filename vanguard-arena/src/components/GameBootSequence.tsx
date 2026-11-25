@@ -198,7 +198,7 @@ export const GameBootSequence: React.FC<GameBootSequenceProps> = ({ lang, onComp
                   </span>
                   <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 border border-emerald-500/30 text-emerald-300 backdrop-blur-sm">
                     <ShieldCheck className="w-3.5 h-3.5" />
-                    <span>Vanguard Cloud</span>
+                    <span>MyanRena Network</span>
                   </span>
                 </div>
 
