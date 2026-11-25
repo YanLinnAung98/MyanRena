@@ -208,70 +208,79 @@ export const GameBadgeIcon: React.FC<{ gameType?: string; className?: string }> 
   className = 'w-7 h-7',
 }) => {
   const g = (gameType || '').toLowerCase();
-  const uid = `game_${g}_${React.useId().replace(/:/g, '')}`;
+  const uid = `myanrena_game_${g}_${React.useId().replace(/:/g, '')}`;
   const palette = g === 'tictactoe'
-    ? { deep: '#082f49', mid: '#0891b2', bright: '#67e8f9', accent: '#fbbf24' }
+    ? { deep: '#082f49', mid: '#0e7490', bright: '#67e8f9', accent: '#fbbf24' }
     : g === 'rps'
-    ? { deep: '#4a044e', mid: '#c026d3', bright: '#f0abfc', accent: '#67e8f9' }
+    ? { deep: '#3b164f', mid: '#9333a8', bright: '#f0abfc', accent: '#67e8f9' }
     : g === 'sakarhtar'
-    ? { deep: '#451a03', mid: '#d97706', bright: '#fde68a', accent: '#a7f3d0' }
+    ? { deep: '#4a2a12', mid: '#b7791f', bright: '#fde68a', accent: '#a7f3d0' }
     : { deep: '#172554', mid: '#2563eb', bright: '#93c5fd', accent: '#fbbf24' };
 
   return (
-    <svg viewBox="0 0 64 64" className={className} fill="none" role="img" aria-label={g === 'tictactoe' ? 'Tic Tac Toe' : g === 'rps' ? 'Rock Paper Scissors' : g === 'sakarhtar' ? 'Myanmar Quiz' : 'Connect Four'}>
+    <svg viewBox="0 0 64 64" className={className} fill="none" role="img"
+      aria-label={g === 'tictactoe' ? 'Tic Tac Toe' : g === 'rps' ? 'Rock Paper Scissors' : g === 'sakarhtar' ? 'Myanmar Quiz' : 'Connect Four'}>
       <defs>
         <linearGradient id={uid + '_shell'} x1="8" y1="4" x2="56" y2="60" gradientUnits="userSpaceOnUse">
           <stop stopColor={palette.bright} />
-          <stop offset=".48" stopColor={palette.mid} />
+          <stop offset=".5" stopColor={palette.mid} />
           <stop offset="1" stopColor={palette.deep} />
         </linearGradient>
-        <linearGradient id={uid + '_shine'} x1="14" y1="9" x2="48" y2="48" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#fff" stopOpacity=".42" />
-          <stop offset="1" stopColor="#fff" stopOpacity="0" />
+        <linearGradient id={uid + '_glass'} x1="15" y1="12" x2="49" y2="53" gradientUnits="userSpaceOnUse">
+          <stop stopColor="#fff" stopOpacity=".12" />
+          <stop offset="1" stopColor="#fff" stopOpacity=".015" />
         </linearGradient>
         <filter id={uid + '_shadow'} x="-30%" y="-30%" width="160%" height="170%">
-          <feGaussianBlur stdDeviation="2.2" />
+          <feGaussianBlur stdDeviation="2" />
         </filter>
       </defs>
-      <path d="M32 3.5 55 16v31.5L32 61 9 47.5V16L32 3.5Z" fill={palette.mid} opacity=".38" filter={`url(#${uid}_shadow)`} />
-      <path d="M32 3.5 55 16v31.5L32 61 9 47.5V16L32 3.5Z" fill={`url(#${uid}_shell)`} stroke={palette.bright} strokeWidth="1.8" />
-      <path d="M32 9 49.5 18.5v25L32 54 14.5 43.5v-25L32 9Z" fill="#07101f" fillOpacity=".82" stroke="#fff" strokeOpacity=".2" />
-      <path d="M32 3.5 55 16v8L32 11 9 24v-8L32 3.5Z" fill={`url(#${uid}_shine)`} />
+      <path d="M32 3 55 16v31L32 61 9 47V16L32 3Z" fill={palette.mid} opacity=".35" filter={`url(#${uid}_shadow)`} />
+      <path d="M32 3 55 16v31L32 61 9 47V16L32 3Z" fill={`url(#${uid}_shell)`} stroke={palette.bright} strokeWidth="1.7" />
+      <path d="M32 8.5 50 18.5v25L32 54 14 43.5v-25L32 8.5Z" fill="#07101f" stroke="#fff" strokeOpacity=".22" />
+      <path d="M32 8.5 50 18.5v5L32 13 14 23.5v-5L32 8.5Z" fill={`url(#${uid}_glass)`} />
+
       {g === 'tictactoe' ? (
         <>
-          <path d="m19 19 10 10m0-10L19 29" stroke={palette.bright} strokeWidth="5" strokeLinecap="round" />
-          <circle cx="41" cy="40" r="7" stroke={palette.accent} strokeWidth="4.5" />
-          <path d="M17 43h10m20-25-4 5" stroke="#fff" strokeOpacity=".5" strokeWidth="2" strokeLinecap="round" />
+          <rect x="17" y="16" width="30" height="32" rx="5" fill="#0b1727" stroke={palette.bright} strokeOpacity=".6" strokeWidth="1.4" />
+          <path d="M27 17v30M37 17v30M18 27h28M18 37h28" stroke="#b6d9eb" strokeOpacity=".42" strokeWidth="1.4" />
+          <path d="m20 19 6 6m0-6-6 6" stroke={palette.bright} strokeWidth="3.2" strokeLinecap="round" />
+          <circle cx="32" cy="32" r="4.2" stroke={palette.accent} strokeWidth="3" />
+          <path d="m39 39 6 6m0-6-6 6" stroke={palette.bright} strokeWidth="3.2" strokeLinecap="round" />
+          <path d="M18 13h8" stroke="#fff" strokeOpacity=".7" strokeWidth="1.5" strokeLinecap="round" />
         </>
       ) : g === 'rps' ? (
         <>
-          <path d="m32 14 17 30H15L32 14Z" fill={palette.mid} fillOpacity=".5" stroke={palette.bright} strokeWidth="2.5" strokeLinejoin="round" />
-          <path d="m32 20 11 20H21l11-20Z" fill="#fff" fillOpacity=".12" />
-          <circle cx="32" cy="33" r="5.5" fill={palette.accent} stroke="#fff" strokeWidth="1.5" />
-          <path d="m18 18 4 4m24 18 3 3" stroke="#fff" strokeOpacity=".65" strokeWidth="2" strokeLinecap="round" />
+          <circle cx="32" cy="32" r="17" fill="#101525" stroke={palette.bright} strokeOpacity=".55" strokeWidth="1.5" />
+          <path d="M22 25c-1.5-2.8-1.1-5.7 1.1-6.7 2.1-.9 4.2.8 4.8 3.2l1.2 4.1v-7.2c0-2.4 1.2-4 3-4s3 1.6 3 4v7.2l1.2-5.2c.6-2.4 2.4-3.4 4.1-2.6 1.8.8 2.1 2.6 1.4 5l-2.4 10.1c-.8 5.1-4.4 8.2-9.3 8.2h-1.5c-4.2 0-7.1-2.7-7.8-6.6L19 28c-.5-2.4.6-4 2.4-4.2 1.1-.1 2 .3 2.6 1.2Z" fill={palette.mid} stroke={palette.bright} strokeWidth="1.6" strokeLinejoin="round" />
+          <path d="M27 45h11" stroke={palette.accent} strokeWidth="2.5" strokeLinecap="round" />
+          <path d="m43 15 4 1-1 4" stroke="#fff" strokeOpacity=".8" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </>
       ) : g === 'sakarhtar' ? (
         <>
-          <path d="M16 26c0-9 7-15 16-15s16 6 16 15v9c0 7-7 12-16 12s-16-5-16-12v-9Z" fill={palette.mid} fillOpacity=".45" stroke={palette.bright} strokeWidth="2.5" />
-          <path d="M20 27c3-5 7-7 12-7s9 2 12 7" stroke="#fff" strokeOpacity=".7" strokeWidth="2" strokeLinecap="round" />
-          <ellipse cx="25" cy="31" rx="4.5" ry="6" fill={palette.accent} />
-          <ellipse cx="39" cy="31" rx="4.5" ry="6" fill={palette.accent} />
-          <circle cx="25" cy="31" r="1.7" fill="#172033" /><circle cx="39" cy="31" r="1.7" fill="#172033" />
-          <path d="m32 34-5 7h10l-5-7Z" fill="#fb923c" />
-          <path d="M25 47 20 54m19-7 5 7" stroke={palette.bright} strokeWidth="2.5" strokeLinecap="round" />
+          <path d="M15 29 20 18l8 5h8l8-5 5 11v9c0 8-7 12-17 12s-17-4-17-12v-9Z" fill={palette.mid} stroke={palette.bright} strokeWidth="1.8" strokeLinejoin="round" />
+          <path d="m20 20 7 5m17-5-7 5" stroke="#fff" strokeOpacity=".8" strokeWidth="1.5" strokeLinecap="round" />
+          <ellipse cx="25" cy="34" rx="6.5" ry="7.5" fill="#f8fafc" />
+          <ellipse cx="39" cy="34" rx="6.5" ry="7.5" fill="#f8fafc" />
+          <circle cx="26.5" cy="34" r="3.2" fill="#10243a" />
+          <circle cx="37.5" cy="34" r="3.2" fill="#10243a" />
+          <circle cx="27.5" cy="32.8" r="1" fill="#fff" />
+          <circle cx="38.5" cy="32.8" r="1" fill="#fff" />
+          <path d="m32 38-4 5h8l-4-5Z" fill="#f59e0b" stroke="#fde68a" strokeWidth=".8" />
+          <path d="M22 47 18 52m24-5 4 5" stroke={palette.bright} strokeWidth="2" strokeLinecap="round" />
+          <path d="M24 15h16" stroke={palette.accent} strokeWidth="2" strokeLinecap="round" />
         </>
       ) : (
         <>
-          <rect x="17" y="15" width="30" height="34" rx="5" fill={palette.mid} fillOpacity=".35" stroke={palette.bright} strokeWidth="2.5" />
-          <circle cx="24" cy="23" r="4.2" fill={palette.accent} stroke="#fff" strokeOpacity=".6" />
-          <circle cx="40" cy="23" r="4.2" fill="#fb7185" stroke="#fff" strokeOpacity=".6" />
-          <circle cx="32" cy="32" r="4.2" fill={palette.accent} stroke="#fff" strokeOpacity=".6" />
-          <circle cx="24" cy="41" r="4.2" fill="#fb7185" stroke="#fff" strokeOpacity=".6" />
-          <circle cx="40" cy="41" r="4.2" fill={palette.accent} stroke="#fff" strokeOpacity=".6" />
-          <path d="M20 17h24" stroke="#fff" strokeOpacity=".55" strokeWidth="1.5" strokeLinecap="round" />
+          <rect x="16" y="13" width="32" height="38" rx="6" fill={palette.mid} fillOpacity=".3" stroke={palette.bright} strokeWidth="1.8" />
+          <path d="M21 19h22v28H21z" fill="#081326" stroke="#fff" strokeOpacity=".18" />
+          {[[26,24],[37,24],[26,32],[37,32],[26,40],[37,40]].map(([cx,cy],i) => (
+            <circle key={i} cx={cx} cy={cy} r="3.5" fill={i % 2 === 0 ? palette.accent : '#fb7185'} stroke="#fff" strokeOpacity=".55" strokeWidth=".8" />
+          ))}
+          <path d="M19 16h26" stroke="#fff" strokeOpacity=".75" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="m43 12 5 3-5 3" stroke={palette.bright} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
         </>
       )}
-      <path d="m13 13 3 2m32 34 3 2" stroke="#fff" strokeOpacity=".75" strokeWidth="2" strokeLinecap="round" />
+      <path d="m12 13 3 2m34 34 3 2" stroke="#fff" strokeOpacity=".75" strokeWidth="1.7" strokeLinecap="round" />
     </svg>
   );
 };
