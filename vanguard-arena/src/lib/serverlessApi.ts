@@ -81,32 +81,8 @@ export function readActiveSessionUser(): any | null {
 }
 
 export function readServerlessStore() {
-  const adminDev = detectClientDevice();
   const defaultStore = {
-    users: {
-      admin_yanlinnaung: {
-        id: 'admin_yanlinnaung',
-        username: 'yanlinnaung',
-        displayName: 'Yan Linn Aung',
-        gameId: '163104',
-        role: 'admin',
-        isAdmin: true,
-        xp: 3000,
-        rank: 'Legend',
-        wins: 45,
-        losses: 2,
-        draws: 1,
-        frameId: 'legend',
-        status: 'active',
-        online: true,
-        lastSeenMs: Date.now(),
-        ...adminDev,
-        avatarUrl: createAvatarSvg('YL', '#f59e0b', '#090d16'),
-        friends: [],
-        blocked: [],
-        createdAt: new Date().toISOString(),
-      },
-    } as Record<string, any>,
+    users: {} as Record<string, any>,
     tournaments: [] as any[],
     rooms: [] as any[],
     riddles: [...QUIZ_BANK_100],
@@ -234,7 +210,11 @@ function jsonResponse(data: any, status = 200): Response {
   });
 }
 
-if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
+if (
+  typeof window !== 'undefined' &&
+  import.meta.env.VITE_USE_SERVER_API !== 'true' &&
+  !(window as any).__vanguardApiPatched
+) {
   (window as any).__vanguardApiPatched = true;
   const nativeFetch = window.fetch.bind(window);
 
@@ -261,15 +241,13 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
     const activeSaved = readActiveSessionUser();
 
     let currentUser: any = null;
-    if (token === 'admin-token') {
-      currentUser = store.users.admin_yanlinnaung;
-    } else if (token) {
+    if (token) {
       const uid = token.replace(/^token_/, '').replace(/^local_/, '');
       currentUser =
         store.users[uid] ||
         (activeSaved && activeSaved.id === uid ? activeSaved : null) ||
         activeSaved;
-      if (currentUser && currentUser.id !== 'admin_yanlinnaung') {
+      if (currentUser) {
         currentUser.role = 'player';
         currentUser.isAdmin = false;
       }
@@ -284,7 +262,6 @@ if (typeof window !== 'undefined' && !(window as any).__vanguardApiPatched) {
 
     if (path === '/api/auth/me') {
       if (!token) return jsonResponse({ error: 'Unauthorized' }, 401);
-      if (token === 'admin-token') return jsonResponse({ user: store.users.admin_yanlinnaung });
       if (isFirebaseConfigured && db) {
         const uid = token.replace(/^token_/, '');
         const snap = await getDoc(doc(db, 'users', uid)).catch(() => null);
