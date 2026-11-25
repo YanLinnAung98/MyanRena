@@ -170,6 +170,23 @@ export const LandingView: React.FC<LandingViewProps> = ({
         );
       }
 
+      if (USE_SERVER_API && authMode === 'signup') {
+        if (!/^[a-z0-9_]{3,24}$/.test(cleanUser)) {
+          throw new Error(
+            lang === 'my'
+              ? 'အကောင့်အမည်ကို အင်္ဂလိပ်စာလုံးအသေး၊ ဂဏန်း၊ underscore ဖြင့် ၃ မှ ၂၄ လုံးအထိ ထည့်ပါ။'
+              : 'Use 3-24 lowercase letters, numbers, or underscores for your username.'
+          );
+        }
+        if (cleanPass.length < 8) {
+          throw new Error(
+            lang === 'my'
+              ? 'စကားဝှက် အနည်းဆုံး ၈ လုံးထားပါ။'
+              : 'Password must be at least 8 characters.'
+          );
+        }
+      }
+
       if (USE_SERVER_API) {
         const endpoint = authMode === 'signin' ? '/api/auth/login' : '/api/auth/register';
         const response = await fetch(endpoint, {
@@ -667,7 +684,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 <input
                   type="password"
                   required
-                  minLength={4}
+                  minLength={USE_SERVER_API ? 8 : 4}
                   value={recNewPassword}
                   onChange={(e) => setRecNewPassword(e.target.value)}
                   placeholder={t.auth.newPasswordLabel}
