@@ -41,13 +41,19 @@ service cloud.firestore {
 
     function isValidUserPublic(data, userId) {
       return data.keys().hasAll(['uid', 'username', 'gameId', 'displayName', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
-        && data.keys().hasOnly(['uid', 'username', 'gameId', 'displayName', 'avatarUrl', 'frameId', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'username', 'gameId', 'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame', 'bannerId', 'bannerUrl', 'country', 'showCountry', 'xp', 'wins', 'losses', 'draws', 'updatedAt'])
         && data.uid is string && data.uid == userId && data.uid.size() <= 128
         && data.username is string && data.username.matches('^[a-z0-9_]{3,24}$')
         && data.gameId is string && data.gameId.size() >= 4 && data.gameId.size() <= 20
         && data.displayName is string && data.displayName.size() >= 2 && data.displayName.size() <= 32
         && (!('avatarUrl' in data) || (data.avatarUrl is string && data.avatarUrl.size() <= 2048))
         && (!('frameId' in data) || (data.frameId is string && data.frameId.size() <= 64))
+        && (!('bio' in data) || (data.bio is string && data.bio.size() <= 180))
+        && (!('favoriteGame' in data) || data.favoriteGame in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar'])
+        && (!('bannerId' in data) || (data.bannerId is string && data.bannerId.size() <= 80))
+        && (!('bannerUrl' in data) || (data.bannerUrl is string && data.bannerUrl.size() <= 2048))
+        && (!('country' in data) || (data.country is string && data.country.size() <= 56))
+        && (!('showCountry' in data) || data.showCountry is bool)
         && data.xp is number && data.xp >= 0 && data.xp <= 10000000
         && data.wins is number && data.wins >= 0 && data.wins <= 1000000
         && data.losses is number && data.losses >= 0 && data.losses <= 1000000
@@ -183,7 +189,10 @@ service cloud.firestore {
         && incoming().losses == existing().losses
         && incoming().draws == existing().draws
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'avatarUrl', 'frameId', 'updatedAt']);
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame',
+          'bannerId', 'bannerUrl', 'country', 'showCountry', 'updatedAt'
+        ]);
       allow delete: if isValidId(userId) && isAdmin();
 
       // Strictly Isolated Private PII Subcollection
