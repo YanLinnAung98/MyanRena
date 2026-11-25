@@ -1897,6 +1897,38 @@ app.use(express.json({ limit: '4mb' }));
 app.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true, service: 'myanrena-api', timestamp: new Date().toISOString() });
 });
+
+app.disable('x-powered-by');
+
+type RateLimitEntry = { count: number; resetAt: number };
+const authRateLimitBuckets = new Map<string, RateLimitEntry>();
+
+function authRateLimit(scope: string, maxRequests: number, windowMs: number) {
+  return (req: Request, res: Response, next: NextFunction) => {
+    const now = Date.now();
+    const address = req.ip || req.socket.remoteAddress || 'unknown';
+    const key = `${scope}:${address}`;
+    let entry = authRateLimitBuckets.get(key);
+
+    if (!entry || entry.resetAt <= now) {
+      entry = { count: 0, resetAt: now + windowMs };
+      authRateLimitBuckets.set(key, entry);
+    }
+
+    if (entry.count >= maxRequests) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((entry.resetAt - now) / 1000))));
+      return res.status(429).json({ error: 'Too many attempts. Please wait before trying again.' });
+    }
+
+    entry.count += 1;
+    if (authRateLimitBuckets.size > 10000) {
+      for (const [bucketKey, bucket] of authRateLimitBuckets) {
+        if (bucket.resetAt <= now) authRateLimitBuckets.delete(bucketKey);
+      }
+    }
+    next();
+  };
+}
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 interface AuthReq extends express.Request {
@@ -1935,7 +1967,7 @@ function requireAdmin(req: AuthReq, res: express.Response, next: express.NextFun
 }
 
 // ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
-app.post('/api/auth/register', (req, res) => {
+app.post('/api/auth/register', authRateLimit('register', 5, 60 * 60 * 1000), (req, res) => {
   const username = sanitizeText(req.body?.username, 24).toLowerCase();
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
   const displayName = sanitizeText(req.body?.displayName || username, 32) || username;
@@ -1976,7 +2008,7 @@ app.post('/api/auth/register', (req, res) => {
   res.json({ token, user, recoveryPin });
 });
 
-app.post('/api/auth/recover-pin', (req, res) => {
+app.post('/api/auth/recover-pin', authRateLimit('recover-pin', 5, 15 * 60 * 1000), (req, res) => {
   const username = sanitizeText(req.body?.username, 32).toLowerCase();
   const pin = sanitizeText(req.body?.pin, 12);
   const newPassword = typeof req.body?.newPassword === 'string' ? req.body.newPassword : '';
@@ -1984,8 +2016,8 @@ app.post('/api/auth/recover-pin', (req, res) => {
   if (!username || !/^\d{6}$/.test(pin)) {
     return res.status(400).json({ error: 'Valid username and 6-digit Recovery PIN are required.' });
   }
-  if (newPassword.length < 4 || newPassword.length > 64) {
-    return res.status(400).json({ error: 'New password must be 4-64 characters.' });
+  if (newPassword.length < 8 || newPassword.length > 64) {
+    return res.status(400).json({ error: 'New password must be 8-64 characters.' });
   }
 
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as Record<string, unknown> | undefined;
@@ -2005,9 +2037,12 @@ app.post('/api/auth/recover-email', (_req, res) => {
   });
 });
 
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', authRateLimit('login', 10, 15 * 60 * 1000), (req, res) => {
   const username = sanitizeText(req.body?.username, 32).toLowerCase();
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!username || password.length < 1 || password.length > 64) {
+    return res.status(400).json({ error: 'Username and password are required.' });
+  }
 
   const row = db.prepare('SELECT * FROM users WHERE username = ?').get(username) as Record<string, unknown> | undefined;
   if (!row || !verifyPassword(password, String(row.password_hash))) {
