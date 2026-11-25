@@ -99,39 +99,96 @@ jobs:
 
           const base = `http://127.0.0.1:${process.env.PORT}`;
           const username = `ci_${Date.now().toString(36)}`;
+          const username2 = `${username}_b`;
           const password = `Smoke-${randomBytes(18).toString('hex')}-Aa9!`;
+          const resetPassword = `Reset-${randomBytes(18).toString('hex')}-Bb8!`;
+
+          async function post(path, body, token) {
+            return fetch(`${base}${path}`, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
+              },
+              body: JSON.stringify(body),
+            });
+          }
 
           const health = await fetch(`${base}/healthz`);
           assert.equal(health.status, 200, 'health endpoint should respond');
           assert.equal((await health.json()).ok, true, 'health endpoint should report ok');
 
-          const register = await fetch(`${base}/api/auth/register`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password, displayName: 'CI Smoke Player' }),
+          const register = await post('/api/auth/register', {
+            username, password, displayName: 'CI Smoke Player A',
           });
           const registered = await register.json();
-          assert.equal(register.status, 200, `registration should succeed: ${registered.error || ''}`);
-          assert.ok(registered.recoveryPin, 'registration should return a recovery PIN');
+          assert.equal(register.status, 200, `first registration should succeed: ${registered.error || ''}`);
+          assert.ok(/^\d{6}$/.test(registered.recoveryPin), 'registration should return a six-digit recovery PIN');
 
-          const login = await fetch(`${base}/api/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password }),
-          });
+          const login = await post('/api/auth/login', { username, password });
           const loggedIn = await login.json();
           assert.equal(login.status, 200, `login should succeed: ${loggedIn.error || ''}`);
           assert.ok(loggedIn.token, 'login should return a session token');
+
+          const register2 = await post('/api/auth/register', {
+            username: username2, password, displayName: 'CI Smoke Player B',
+          });
+          const registered2 = await register2.json();
+          assert.equal(register2.status, 200, `second registration should succeed: ${registered2.error || ''}`);
+          assert.ok(registered2.token, 'second player should receive a session token');
 
           const social = await fetch(`${base}/api/social`, {
             headers: { Authorization: `Bearer ${loggedIn.token}` },
           });
           assert.equal(social.status, 200, 'authenticated social API should respond');
-          const socialData = await social.json();
+          let socialData = await social.json();
           assert.ok(Array.isArray(socialData.friends), 'social API should return friend IDs');
           assert.ok(Array.isArray(socialData.relatedUsers), 'social API should return related profiles');
 
-          const wsUrl = `ws://127.0.0.1:${process.env.PORT}/ws?token=${encodeURIComponent(loggedIn.token)}`;
+          const request = await post('/api/social/requests', { targetUserId: registered2.user.id }, loggedIn.token);
+          assert.equal(request.status, 200, 'friend request should be created');
+          const requestId = `${registered.user.id}__${registered2.user.id}`;
+
+          const accept = await post(`/api/social/requests/${encodeURIComponent(requestId)}/accept`, {}, registered2.token);
+          assert.equal(accept.status, 200, 'recipient should accept friend request');
+
+          const friendsRes = await fetch(`${base}/api/social`, {
+            headers: { Authorization: `Bearer ${loggedIn.token}` },
+          });
+          socialData = await friendsRes.json();
+          assert.ok(socialData.friends.includes(registered2.user.id), 'accepted friend should appear in social graph');
+
+          const dm = await post('/api/social/messages', {
+            targetUserId: registered2.user.id, content: 'CI direct message smoke test',
+          }, loggedIn.token);
+          const dmData = await dm.json();
+          assert.equal(dm.status, 200, `direct message should send: ${dmData.error || ''}`);
+          assert.equal(dmData.message?.text, 'CI direct message smoke test', 'sent message should be returned');
+
+          const block = await post(`/api/social/blocks/${encodeURIComponent(registered2.user.id)}`, {}, loggedIn.token);
+          assert.equal(block.status, 200, 'blocking a player should succeed');
+          const blockedMessage = await post('/api/social/messages', {
+            targetUserId: registered2.user.id, content: 'This must be rejected',
+          }, loggedIn.token);
+          assert.equal(blockedMessage.status, 403, 'blocked players should not receive messages');
+
+          const unblock = await fetch(`${base}/api/social/blocks/${encodeURIComponent(registered2.user.id)}`, {
+            method: 'DELETE',
+            headers: { Authorization: `Bearer ${loggedIn.token}` },
+          });
+          assert.equal(unblock.status, 200, 'unblocking a player should succeed');
+
+          const recover = await post('/api/auth/recover-pin', {
+            username, pin: registered.recoveryPin, newPassword: resetPassword,
+          });
+          assert.equal(recover.status, 200, 'Recovery PIN should reset the password');
+
+          const recoveredLogin = await post('/api/auth/login', { username, password: resetPassword });
+          const recovered = await recoveredLogin.json();
+          assert.equal(recoveredLogin.status, 200, `new password should authenticate: ${recovered.error || ''}`);
+          assert.ok(recovered.token, 'recovered login should return a new session token');
+
+          const wsUrl = `ws://127.0.0.1:${process.env.PORT}/ws?token=${encodeURIComponent(recovered.token)}`;
           const socket = new WebSocket(wsUrl);
           await new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -143,7 +200,7 @@ jobs:
               try { message = JSON.parse(buffer.toString()); } catch { return; }
               if (message.type === 'init') {
                 clearTimeout(timer);
-                assert.equal(message.user?.id, loggedIn.user.id, 'WebSocket should authenticate the player');
+                assert.equal(message.user?.id, registered.user.id, 'WebSocket should authenticate the recovered account');
                 socket.close();
                 resolve();
               } else if (message.type === 'auth:error') {
@@ -157,7 +214,7 @@ jobs:
             });
           });
 
-          console.log('Backend smoke test passed: health, register, login, social API, and authenticated WebSocket.');
+          console.log('Backend smoke test passed: health, register, login, Recovery PIN reset, friend requests, block/unblock, direct messages, social API, and authenticated WebSocket.');
           NODE
 
       - name: Prepare GitHub Pages output
