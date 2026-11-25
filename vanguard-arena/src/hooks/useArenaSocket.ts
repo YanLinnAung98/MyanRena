@@ -887,7 +887,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           window.clearTimeout(queueTimerRef.current);
           queueTimerRef.current = null;
         }
-        const isSakar = gameType === 'sakarhtar' || gameType === 'sakar_htar';
+        const isSakar = gameType === 'sakarhtar';
         sendServerMessage(
           isSakar
             ? { type: 'sakar:quick:join', autoBotFill: true }
@@ -1525,7 +1525,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     sakarQuickCount,
     pendingChallenge,
     pendingWarnings,
-    socialRefreshTick,
     incomingDMs,
     toasts,
     pushToast,
