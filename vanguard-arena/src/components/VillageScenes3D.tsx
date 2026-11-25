@@ -378,7 +378,7 @@ export const WiseOwlTreeQuizScene: React.FC<{
   const [bonkingKidId, setBonkingKidId] = React.useState<string | null>(null);
   const [cheeringKidId, setCheeringKidId] = React.useState<string | null>(null);
   const [owlDiving, setOwlDiving] = React.useState<boolean>(false);
-  const [flashedOpt, setFlashedOpt] = React.useState<{ idx: number; correct: boolean } | null>(null);
+  const [flashedOpt, setFlashedOpt] = React.useState<{ idx: number; correct: boolean | null } | null>(null);
 
   if (!current) return null;
   const questionText = lang === 'my' ? current.questionMy || current.question : current.questionEn || current.question;
@@ -388,6 +388,17 @@ export const WiseOwlTreeQuizScene: React.FC<{
 
   const handleSelectOption = (oIdx: number) => {
     if (flashedOpt || isFinished || alreadyAnswered) return;
+    // The authoritative server deliberately hides the answer key until reveal.
+    // In that mode, show a neutral selection animation and let the server score it.
+    if (typeof current.answerIndex !== 'number') {
+      setFlashedOpt({ idx: oIdx, correct: null });
+      setTimeout(() => {
+        setFlashedOpt(null);
+        onAnswer(oIdx);
+      }, 450);
+      return;
+    }
+
     const isCorrect = oIdx === current.answerIndex;
     setFlashedOpt({ idx: oIdx, correct: isCorrect });
 
@@ -514,9 +525,11 @@ export const WiseOwlTreeQuizScene: React.FC<{
           {opts.map((opt, oIdx) => {
             const flash = flashedOpt?.idx === oIdx;
             const cls = flash
-              ? flashedOpt.correct
+              ? flashedOpt.correct === true
                 ? '!bg-emerald-500/35 !border-emerald-400'
-                : '!bg-rose-500/35 !border-rose-400'
+                : flashedOpt.correct === false
+                ? '!bg-rose-500/35 !border-rose-400'
+                : '!bg-amber-500/30 !border-amber-300'
               : '';
             return (
               <motion.button
