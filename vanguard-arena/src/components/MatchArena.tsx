@@ -52,10 +52,12 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
 
   const gType = normalizeGameId(match.gameType);
   const isFullBleed = gType === 'tictactoe';
-  const players: any[] = match.players || [currentUser];
+  const players: any[] = Array.isArray(match.players)
+    ? match.players
+    : [match.player1, match.player2].filter(Boolean);
   const p1 = players[0] || currentUser;
-  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
-  const isPvp = Boolean(match.isRealtimePvp && players.length >= 2);
+  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '', isBot: true };
+  const isPvp = Boolean((match.isRealtimePvp || match.mode === 'pvp' || match.mode === 'matchmaking') && players.length >= 2 && !rawP2.isBot);
 
   // 4-Row တွင် မောင်ဖိုးသား၊ Tic-Tac-Toe တွင် မပုတု၏ Profile ပုံနှင့် နာမည်ကို သုံးမည်
   const p2 =
