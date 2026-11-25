@@ -1,8 +1,10 @@
 {
-  "apiKey": "AIzaSyDVpL90m8SwxNbzg2OWwx2t-Mc4HkWNd3M",
-  "authDomain": "arena-25951.firebaseapp.com",
-  "projectId": "arena-25951",
-  "storageBucket": "arena-25951.firebasestorage.app",
-  "messagingSenderId": "458808626041",
-  "appId": "1:458808626041:web:9a29b60c97431cb2fc7da8"
+  "apiKey": "AIzaSyBvz5il2rAYXsjbHs1YtmrEPNMTD2z-2Ug",
+  "authDomain": "vanguard-arena-17ced.firebaseapp.com",
+  "databaseURL": "https://vanguard-arena-17ced-default-rtdb.asia-southeast1.firebasedatabase.app",
+  "projectId": "vanguard-arena-17ced",
+  "storageBucket": "vanguard-arena-17ced.firebasestorage.app",
+  "messagingSenderId": "958617375268",
+  "appId": "1:958617375268:web:db5dac152546ca38757eb1",
+  "measurementId": "G-BS3M02S8JJ"
 }
