@@ -7,6 +7,7 @@ import {
   getDoc,
   getDocs,
   onSnapshot,
+  runTransaction,
   setDoc,
   updateDoc,
 } from 'firebase/firestore';
@@ -657,25 +658,101 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         const board: Array<string | null> = [...(next.tttBoard || Array(9).fill(null))];
         const idx = typeof move === 'number' ? move : Number(move?.index ?? -1);
         if (!Number.isInteger(idx) || idx < 0 || idx > 8 || board[idx] !== null) return;
-        if (isPvp && (!me?.id || next.turnUserId !== me.id || !p1?.id || !p2?.id)) return;
-        if (!isPvp && me?.id !== p1?.id) return;
-
+        if (!me?.id || !p1?.id) return;
         soundEngine.playClick();
-        const moverMark = isPvp && me?.id === p2.id ? 'O' : 'X';
-        board[idx] = moverMark;
-        let outcome = checkTTTWinner(board);
 
-        if (!isPvp && !outcome) {
+        if (isPvp) {
+          if (isFirebaseConfigured && db) {
+            try {
+              const matchRef = doc(db, 'matches', activeMatch.id);
+              const committed = await runTransaction(db, async (transaction) => {
+                const snapshot = await transaction.get(matchRef);
+                if (!snapshot.exists()) return null;
+                const latest = snapshot.data() as any;
+                const latestPlayers = Array.isArray(latest.players) ? latest.players : players;
+                const latestP1 = latestPlayers[0];
+                const latestP2 = latestPlayers[1];
+                if (latest.status !== 'active' || latest.turnUserId !== me.id || !latestP1?.id || !latestP2?.id) return null;
+                const latestBoard: Array<string | null> = [...(latest.tttBoard || Array(9).fill(null))];
+                if (latestBoard[idx] !== null) return null;
+                const mark = me.id === latestP1.id ? 'X' : me.id === latestP2.id ? 'O' : null;
+                if (!mark) return null;
+                latestBoard[idx] = mark;
+                const latestOutcome = checkTTTWinner(latestBoard);
+                const updated: any = {
+                  ...latest,
+                  tttBoard: latestBoard,
+                  turnUserId: latestOutcome ? null : (me.id === latestP1.id ? latestP2.id : latestP1.id),
+                };
+                let winnerId: string | null = null;
+                if (latestOutcome) {
+                  updated.status = 'finished';
+                  if (latestOutcome === 'DRAW') updated.isDraw = true;
+                  else {
+                    winnerId = latestOutcome === 'X' ? latestP1.id : latestP2.id;
+                    updated.winnerId = winnerId;
+                    updated.scores = { ...latest.scores, [winnerId]: (latest.scores?.[winnerId] || 0) + 1 };
+                  }
+                }
+                transaction.set(matchRef, stripUndefined(updated));
+                return { match: updated, outcome: latestOutcome, winnerId };
+              });
+              if (!committed) return;
+              setActiveMatch(committed.match);
+              if (committed.outcome === 'DRAW') {
+                soundEngine.playDraw();
+                applyXpDelta('draw', activeMatch.id);
+              } else if (committed.winnerId) {
+                const didWin = committed.winnerId === me.id;
+                if (didWin) soundEngine.playWin();
+                else soundEngine.playLose();
+                applyXpDelta(didWin ? 'win' : 'loss', activeMatch.id);
+              }
+            } catch (error) {
+              console.error('Tic-Tac-Toe match sync failed:', error);
+              pushToast('error', 'Move could not sync. Please check your connection.');
+            }
+            return;
+          }
+
+          if (next.turnUserId !== me.id || !p2?.id) return;
+          board[idx] = me.id === p1.id ? 'X' : 'O';
+          const outcome = checkTTTWinner(board);
+          next.tttBoard = board;
+          if (outcome) {
+            next.status = 'finished';
+            next.turnUserId = null;
+            if (outcome === 'DRAW') {
+              next.isDraw = true;
+              soundEngine.playDraw();
+              applyXpDelta('draw', next.id);
+            } else {
+              const winnerId = outcome === 'X' ? p1.id : p2.id;
+              next.winnerId = winnerId;
+              next.scores = { ...next.scores, [winnerId]: (next.scores?.[winnerId] || 0) + 1 };
+              const didWin = winnerId === me.id;
+              if (didWin) soundEngine.playWin();
+              else soundEngine.playLose();
+              applyXpDelta(didWin ? 'win' : 'loss', next.id);
+            }
+          } else {
+            next.turnUserId = me.id === p1.id ? p2.id : p1.id;
+          }
+          setActiveMatch(next);
+          return;
+        }
+
+        if (me.id !== p1.id) return;
+        board[idx] = 'X';
+        let outcome = checkTTTWinner(board);
+        if (!outcome) {
           const botPick = pickSmartTTTMove(board, next.difficulty || 'medium');
           if (botPick >= 0 && board[botPick] === null) {
             board[botPick] = 'O';
             outcome = checkTTTWinner(board);
           }
         }
-
         next.tttBoard = board;
-        if (isPvp && !outcome) next.turnUserId = me?.id === p1.id ? p2.id : p1.id;
-
         if (outcome) {
           next.status = 'finished';
           next.turnUserId = null;
@@ -687,20 +764,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             const winnerId = outcome === 'X' ? p1.id : p2.id;
             next.winnerId = winnerId;
             next.scores = { ...next.scores, [winnerId]: (next.scores?.[winnerId] || 0) + 1 };
-            const didCurrentPlayerWin = winnerId === me?.id;
-            if (didCurrentPlayerWin) soundEngine.playWin();
+            const didWin = winnerId === me.id;
+            if (didWin) soundEngine.playWin();
             else soundEngine.playLose();
-            applyXpDelta(didCurrentPlayerWin ? 'win' : 'loss', next.id);
+            applyXpDelta(didWin ? 'win' : 'loss', next.id);
           }
         }
-
         setActiveMatch(next);
-        if (isPvp && isFirebaseConfigured && db) {
-          await setDoc(doc(db, 'matches', next.id), stripUndefined(next)).catch((error) => {
-            console.error('Tic-Tac-Toe match sync failed:', error);
-            pushToast('error', 'Move could not sync. Please check your connection.');
-          });
-        }
         return;
       }
 
