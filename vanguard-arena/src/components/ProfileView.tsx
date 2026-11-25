@@ -33,6 +33,13 @@ import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { ShareProfileModal } from './ShareProfileModal.tsx';
 
+const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
+const MAX_PROFILE_IMAGE_DATA_URL_LENGTH = 260_000;
+
+function isSupportedProfileImage(file: File): boolean {
+  return ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(file.type.toLowerCase());
+}
+
 interface ProfileViewProps {
   lang: Language;
   token: string;
@@ -126,7 +133,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     let cloudOk = true;
     if (isFirebaseConfigured && db) {
       try {
-        await setDoc(doc(db, 'users', user.id), fullUserPayload, { merge: true });
+        // Never copy login credentials or recovery secrets into a public profile document.
+      const { password: _password, recoveryPin: _recoveryPin, ...cloudSafeUser } = fullUserPayload as UserProfile & {
+        password?: string;
+        recoveryPin?: string;
+      };
+      await setDoc(doc(db, 'users', user.id), cloudSafeUser, { merge: true });
 
         // Also sync any matching Firestore doc by gameId or username (in case legacy doc ID differed)
         if (user.gameId) {
@@ -166,49 +178,86 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleFileSelected = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (!isSupportedProfileImage(file)) {
+      onNotify('error', lang === 'my' ? 'JPG, PNG, WEBP သို့မဟုတ် GIF ပုံဖိုင်ကိုသာ အသုံးပြုပါ။' : 'Choose a JPG, PNG, WEBP, or GIF image.');
+      return;
+    }
+    if (file.size > MAX_PROFILE_IMAGE_BYTES) {
+      onNotify('error', lang === 'my' ? 'ပုံဖိုင်အရွယ်အစား 5 MB ထက် မကျော်ရပါ။' : 'Image must be 5 MB or smaller.');
+      return;
+    }
     const reader = new FileReader();
     reader.onload = () => {
       if (typeof reader.result === 'string') {
         setCropSource(reader.result);
         setZoom(1.15);
         setOffset({ x: 0, y: 0 });
+      } else {
+        onNotify('error', lang === 'my' ? 'ပုံဖိုင်ကို ဖတ်မရပါ။ နောက်တစ်ကြိမ် စမ်းပါ။' : 'Could not read that image. Please try again.');
       }
     };
+    reader.onerror = () => onNotify('error', lang === 'my' ? 'ပုံဖိုင်ဖတ်ရာတွင် အမှားဖြစ်နေပါသည်။' : 'There was a problem reading the image.');
     reader.readAsDataURL(file);
-    e.target.value = '';
   };
 
   const handleBannerUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    if (!isSupportedProfileImage(file)) {
+      onNotify('error', lang === 'my' ? 'JPG, PNG, WEBP သို့မဟုတ် GIF ပုံဖိုင်ကိုသာ အသုံးပြုပါ။' : 'Choose a JPG, PNG, WEBP, or GIF image.');
+      return;
+    }
+    if (file.size > MAX_PROFILE_IMAGE_BYTES) {
+      onNotify('error', lang === 'my' ? 'Banner ပုံဖိုင် 5 MB ထက် မကျော်ရပါ။' : 'Banner image must be 5 MB or smaller.');
+      return;
+    }
     const reader = new FileReader();
+    reader.onerror = () => onNotify('error', lang === 'my' ? 'Banner ပုံကို ဖတ်မရပါ။' : 'Could not read the banner image.');
     reader.onload = () => {
-      if (typeof reader.result !== 'string') return;
+      if (typeof reader.result !== 'string') {
+        onNotify('error', lang === 'my' ? 'Banner ပုံဖိုင် မမှန်ကန်ပါ။' : 'The selected banner is not a valid image.');
+        return;
+      }
       const img = new Image();
+      img.onerror = () => onNotify('error', lang === 'my' ? 'Banner ပုံကို ဖွင့်မရပါ။ အခြားပုံတစ်ပုံ ရွေးပါ။' : 'Could not decode this image. Choose another file.');
       img.onload = async () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 800;
-        canvas.height = 260;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 800;
+          canvas.height = 260;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) throw new Error('IMAGE_CANVAS_UNAVAILABLE');
 
-        const scale = Math.max(800 / img.width, 260 / img.height);
-        const w = img.width * scale;
-        const h = img.height * scale;
-        ctx.drawImage(img, (800 - w) / 2, (260 - h) / 2, w, h);
+          const scale = Math.max(800 / img.width, 260 / img.height);
+          const w = img.width * scale;
+          const h = img.height * scale;
+          ctx.drawImage(img, (800 - w) / 2, (260 - h) / 2, w, h);
 
-        const bannerDataUrl = canvas.toDataURL('image/webp', 0.82);
-        setCustomBannerUrl(bannerDataUrl);
-        const ok = await persistProfilePatch({ bannerUrl: bannerDataUrl, bannerId: 'custom' });
-        if (ok) {
-          onNotify('success', lang === 'my' ? 'Profile Banner အသစ် တင်ပြီးပါပြီ!' : 'Banner updated!');
+          let bannerDataUrl = canvas.toDataURL('image/webp', 0.72);
+          if (bannerDataUrl.length > MAX_PROFILE_IMAGE_DATA_URL_LENGTH) {
+            bannerDataUrl = canvas.toDataURL('image/webp', 0.56);
+          }
+          if (bannerDataUrl.length > MAX_PROFILE_IMAGE_DATA_URL_LENGTH) {
+            onNotify('error', lang === 'my' ? 'ချုံ့ပြီးနောက် ပုံအရွယ်အစား ကြီးနေသေးပါသည်။ အခြားပုံတစ်ပုံ အသုံးပြုပါ။' : 'The optimized banner is still too large. Please choose another image.');
+            return;
+          }
+          const ok = await persistProfilePatch({ bannerUrl: bannerDataUrl, bannerId: 'custom' });
+          if (ok) {
+            setCustomBannerUrl(bannerDataUrl);
+            setSelectedBannerId('custom');
+            onNotify('success', lang === 'my' ? 'Profile Banner ကို ပြောင်းလဲပြီးပါပြီ။' : 'Profile banner updated.');
+          }
+        } catch (error) {
+          console.error('Profile banner processing failed:', error);
+          onNotify('error', lang === 'my' ? 'Banner ပြင်ဆင်ရာတွင် အမှားဖြစ်နေပါသည်။' : 'Unable to process this banner.');
         }
       };
       img.src = reader.result;
     };
     reader.readAsDataURL(file);
-    e.target.value = '';
   };
 
   const handlePointerDown = (e: React.PointerEvent) => {
@@ -256,11 +305,20 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     ctx.drawImage(img, drawX, drawY, drawW, drawH);
     ctx.restore();
 
-    const croppedDataUrl = canvas.toDataURL('image/webp', 0.88);
-    setCropSource(null);
-    const ok = await persistProfilePatch({ avatarUrl: croppedDataUrl });
-    if (ok) {
-      onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
+    try {
+      const croppedDataUrl = canvas.toDataURL('image/webp', 0.82);
+      if (croppedDataUrl.length > 180_000) {
+        onNotify('error', lang === 'my' ? 'Avatar ပုံအရွယ်အစား ကြီးနေပါသည်။ အခြားပုံတစ်ပုံ ရွေးပါ။' : 'The cropped avatar is too large. Please choose another image.');
+        return;
+      }
+      const ok = await persistProfilePatch({ avatarUrl: croppedDataUrl });
+      if (ok) {
+        setCropSource(null);
+        onNotify('success', lang === 'my' ? 'Profile ဓာတ်ပုံ ပြောင်းလဲပြီးပါပြီ!' : 'Avatar updated!');
+      }
+    } catch (error) {
+      console.error('Avatar processing failed:', error);
+      onNotify('error', lang === 'my' ? 'Avatar ပြင်ဆင်ရာတွင် အမှားဖြစ်နေပါသည်။' : 'Unable to process this avatar.');
     }
   };
 
@@ -288,8 +346,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const handleSaveProfile = async (e: React.FormEvent) => {
     e.preventDefault();
     const cleanName = displayName.trim();
-    if (!cleanName) {
-      onNotify('error', lang === 'my' ? 'အမည် ထည့်သွင်းပေးပါ။' : 'Display name cannot be empty.');
+    if (cleanName.length < 2 || cleanName.length > 32) {
+      onNotify('error', lang === 'my' ? 'အမည်ကို အနည်းဆုံး ၂ လုံး၊ အများဆုံး ၃၂ လုံး ထည့်ပါ။' : 'Display name must be between 2 and 32 characters.');
       return;
     }
     setSaving(true);
@@ -325,6 +383,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const gifts = Array.isArray(user.gifts) ? user.gifts : [];
   const unlockedFrames = Array.isArray(user.unlockedFrames) ? user.unlockedFrames : [];
   const unlockedBanners = Array.isArray(user.unlockedBanners) ? user.unlockedBanners : [];
+  const profileChecks = [
+    Boolean(user.avatarUrl),
+    Boolean(user.bio?.trim()),
+    Boolean(user.favoriteGame),
+    Boolean(user.bannerUrl || user.bannerId),
+    Boolean(user.country?.trim()),
+  ];
+  const profileCompletion = Math.round((profileChecks.filter(Boolean).length / profileChecks.length) * 100);
 
   return (
     <div className="max-w-5xl mx-auto px-3 sm:px-6 py-5 sm:py-7 space-y-5 sm:space-y-6">
@@ -411,6 +477,35 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
       </div>
+
+      <section className="cyber-panel rounded-2xl border border-white/10 p-4 sm:p-5 space-y-3" aria-label={lang === 'my' ? 'Profile completeness' : 'Profile completeness'}>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-xs font-bold text-white">{lang === 'my' ? 'Profile ပြည့်စုံမှု' : 'Profile strength'}</div>
+            <p className="mt-1 text-[10px] text-slate-400">{lang === 'my' ? 'ကိုယ်ပိုင်အမှတ်အသားကို ပိုမိုပြည့်စုံအောင် ဖြည့်ပါ။' : 'Complete your profile so other players can recognize you.'}</p>
+          </div>
+          <div className="text-xl font-black tabular-nums text-amber-300">{profileCompletion}%</div>
+        </div>
+        <div className="h-2 overflow-hidden rounded-full bg-white/10" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={profileCompletion}>
+          <div className="h-full rounded-full bg-gradient-to-r from-amber-500 to-emerald-400 transition-all" style={{ width: `${profileCompletion}%` }} />
+        </div>
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {[
+            lang === 'my' ? 'Avatar' : 'Avatar',
+            'Bio',
+            lang === 'my' ? 'အကြိုက်ဆုံးဂိမ်း' : 'Favorite game',
+            'Banner',
+            lang === 'my' ? 'နိုင်ငံ' : 'Country',
+          ].map((label, index) => (
+            <div key={label} className="flex items-center gap-1.5 text-[10px] text-slate-400">
+              <span className={`w-4 h-4 rounded-full flex items-center justify-center ${profileChecks[index] ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-500'}`}>
+                {profileChecks[index] ? <Check className="w-3 h-3" /> : <span>·</span>}
+              </span>
+              <span className="truncate">{label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
 
       {/* Received Gifts & Trophies */}
       {gifts.length > 0 && (
