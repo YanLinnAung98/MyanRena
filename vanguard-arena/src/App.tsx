@@ -391,7 +391,16 @@ function VanguardAppCore() {
       return;
     }
     if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayUnion(user.id) }).catch(() => {});
+      try {
+        await updateDoc(doc(db, 'tournaments', tid), { participants: arrayUnion(user.id) });
+      } catch (error) {
+        console.error('Tournament join failed:', error);
+        socket.pushToast('error', 'ပြိုင်ပွဲစာရင်းသွင်းမှု မအောင်မြင်ပါ။ Firestore Rules သို့မဟုတ် အင်တာနက်ချိတ်ဆက်မှုကို စစ်ဆေးပါ။');
+        return;
+      }
+    } else {
+      socket.pushToast('error', 'Firebase ချိတ်ဆက်မှု မရရှိသေးပါ။');
+      return;
     }
     socket.pushToast('success', 'ပြိုင်ပွဲစာရင်း သွင်းပြီးပါပြီ!');
   };
@@ -409,7 +418,16 @@ function VanguardAppCore() {
       return;
     }
     if (isFirebaseConfigured && db) {
-      await updateDoc(doc(db, 'tournaments', tid), { participants: arrayRemove(user.id) }).catch(() => {});
+      try {
+        await updateDoc(doc(db, 'tournaments', tid), { participants: arrayRemove(user.id) });
+      } catch (error) {
+        console.error('Tournament leave failed:', error);
+        socket.pushToast('error', 'ပြိုင်ပွဲမှ ထွက်ခွာမှု မအောင်မြင်ပါ။ Firestore Rules သို့မဟုတ် အင်တာနက်ချိတ်ဆက်မှုကို စစ်ဆေးပါ။');
+        return;
+      }
+    } else {
+      socket.pushToast('error', 'Firebase ချိတ်ဆက်မှု မရရှိသေးပါ။');
+      return;
     }
     socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
   };
