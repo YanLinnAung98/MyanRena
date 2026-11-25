@@ -120,7 +120,7 @@ export interface MatchParticipant {
   displayName: string;
   avatarUrl?: string;
   frameId?: string;
-  xp?: number;
+  xp: number;
   rank?: string;
   pingMs?: number;
   isBot?: boolean;
@@ -212,7 +212,7 @@ export interface SakarHtarQuestion {
 }
 
 export interface SakarHtarState {
-  gameType: 'sakar_htar' | 'sakarhtar';
+  gameType: 'sakar_htar';
   seatCapacity: number;
   totalQuestions: number;
   questionIndex: number;
