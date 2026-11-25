@@ -3,27 +3,21 @@ services:
     name: myanrena-api
     runtime: node
     region: singapore
-    plan: 0.5c-512mb
+    plan: free
     rootDir: vanguard-arena
     buildCommand: npm install --legacy-peer-deps && npm run lint && npm run build
     startCommand: npm start
     healthCheckPath: /healthz
-    disk:
-      name: myanrena-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_VERSION
         value: 24.22.1
       - key: DATA_DIR
-        value: /var/data
+        value: /tmp/myanrena-data
       - key: VITE_USE_SERVER_API
         value: "true"
       - key: ADMIN_USERNAME
         value: yanlinnaung
       - key: ADMIN_INITIAL_PASSWORD
-        sync: false
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
         sync: false
       - key: CORS_ORIGINS
         value: https://yanlinnaung98.github.io
