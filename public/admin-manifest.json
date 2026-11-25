@@ -1,8 +1,8 @@
 {
-  "name": "Vanguard Master Admin",
-  "short_name": "VG Admin",
-  "description": "Dedicated Server & Game Control Center for Vanguard Arena Admin",
-  "start_url": "./admin.html",
+  "name": "MyanRena",
+  "short_name": "MyanRena",
+  "description": "MyanRena game and player platform",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
