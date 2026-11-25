@@ -21,7 +21,7 @@ The GitHub Pages deployment is a static/offline-compatible frontend. It cannot h
 - The GitHub Pages URL remains a static deployment and does not become the backend automatically. Use the Render URL for the complete server-backed experience.
 - `/api/auth/recover-email` is intentionally disabled until an email provider is configured. Players should save their six-digit Recovery PIN securely.
 - The default administrator username is `yanlinnaung`. The administrator password is supplied only through `ADMIN_INITIAL_PASSWORD`.
-- If a legacy database contains the old built-in administrator password hash, startup replaces that credential and invalidates old sessions. Set `ADMIN_INITIAL_PASSWORD` before the first production boot to retain access.
+- The administrator password exists only in the `ADMIN_INITIAL_PASSWORD` deployment secret. On an existing database, startup rotates the administrator password to the configured secret when it differs and revokes existing administrator sessions. If an administrator account already exists, the server will refuse to start when this secret is missing.
 - The CI workflow starts the Node server and smoke-tests health, registration, login, social data, and authenticated WebSocket state before publishing the static Pages artifact.
 
 ## Local backend check
