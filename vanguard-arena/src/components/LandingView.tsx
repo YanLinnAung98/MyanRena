@@ -162,11 +162,11 @@ export const LandingView: React.FC<LandingViewProps> = ({
             : 'Username must be at least 2 characters.'
         );
       }
-      if (cleanPass.length < 4) {
+      if (cleanPass.length < 8) {
         throw new Error(
           lang === 'my'
-            ? 'စကားဝှက် အနည်းဆုံး ၄ လုံး ရိုက်ထည့်ပါ။'
-            : 'Password must be at least 4 characters.'
+            ? 'စကားဝှက် အနည်းဆုံး ၈ လုံး ရိုက်ထည့်ပါ။'
+            : 'Password must be at least 8 characters.'
         );
       }
 
@@ -338,7 +338,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
     setRecLoading(true);
     try {
       const cleanUser = recUsername.trim().toLowerCase();
-      if (USE_SERVER_API && recNewPassword.trim().length < 8) {
+      if (recNewPassword.trim().length < 8) {
         throw new Error(lang === 'my' ? 'စကားဝှက်အသစ် အနည်းဆုံး ၈ လုံးထားပါ။' : 'New password must be at least 8 characters.');
       }
       if (!/^\d{6}$/.test(recPin.trim())) {
