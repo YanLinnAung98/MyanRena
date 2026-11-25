@@ -1,7 +1,7 @@
 export type Language = 'my' | 'en';
-export type GameType = 'connect4' | 'tictactoe' | 'rps' | 'sakarhtar';
+export type GameType = 'connect4' | 'tictactoe' | 'ttt' | 'rps' | 'sakarhtar' | 'sakar_htar';
 export type Difficulty = 'easy' | 'medium' | 'hard';
-export type TurnTimeLimit = 15 | 20 | 30;
+export type TurnTimeLimit = 10 | 15 | 20 | 30;
 
 export interface PlayerGift {
   id: string;
@@ -26,6 +26,7 @@ export interface UserProfile {
   gameId: string;
   role?: 'user' | 'player' | 'admin';
   isAdmin?: boolean;
+  isBanned?: boolean;
   avatarUrl?: string;
   frameId?: string;
   bannerId?: string;
@@ -84,6 +85,11 @@ export interface Tournament {
   rules?: string;
   gameType: GameType | string;
   bracketSize: 8 | 16 | 32;
+  maxPlayers?: number;
+  roundsPerMatch?: number;
+  turnTimeLimit?: TurnTimeLimit;
+  startMode?: string;
+  [key: string]: any;
   prizeXp: number;
   prizeLabel?: string;
   minXpRequired?: number;
@@ -104,3 +110,22 @@ export interface LandingContent {
   heroSubtitleEn?: string;
   [key: string]: any;
 }
+
+export type ActiveMatch = any;
+export type Announcement = any;
+export type BracketMatch = any;
+export type ChatMessage = any;
+export type CustomRoom = any;
+export type CustomRoomChatMessage = any;
+export type FeatureLocks = any;
+export type GameMode = string;
+export type MatchmakingSettings = any;
+export type MatchMoveLogEntry = any;
+export type MatchParticipant = any;
+export type OfficialWarning = any;
+export type OnlinePlayer = any;
+export type PlayerReport = any;
+export type ProfileFrame = any;
+export type ReportCategory = any;
+export type RPSChoice = any;
+export type SakarRiddle = any;
