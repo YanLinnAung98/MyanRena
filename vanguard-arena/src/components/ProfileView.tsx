@@ -131,25 +131,26 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
     // 2. Write FULL merged user document to Firestore so doc always exists & triggers onSnapshot on every client + Admin
     let cloudOk = true;
-    if (isFirebaseConfigured && db) {
+    const cloudDb = db;
+    if (isFirebaseConfigured && cloudDb) {
       try {
         // Never copy login credentials or recovery secrets into a public profile document.
       const { password: _password, recoveryPin: _recoveryPin, ...cloudSafeUser } = fullUserPayload as UserProfile & {
         password?: string;
         recoveryPin?: string;
       };
-      await setDoc(doc(db, 'users', user.id), cloudSafeUser, { merge: true });
+      await setDoc(doc(cloudDb, 'users', user.id), cloudSafeUser, { merge: true });
 
         // Also sync any matching Firestore doc by gameId or username (in case legacy doc ID differed)
         if (user.gameId) {
           const snap = await getDocs(
-            query(collection(db, 'users'), where('gameId', '==', user.gameId))
+            query(collection(cloudDb, 'users'), where('gameId', '==', user.gameId))
           ).catch(() => null);
           if (snap) {
             const updates: Promise<any>[] = [];
             snap.forEach((d) => {
               if (d.id !== user.id) {
-                updates.push(setDoc(doc(db, 'users', d.id), cleanPatch, { merge: true }));
+                updates.push(setDoc(doc(cloudDb, 'users', d.id), cleanPatch, { merge: true }));
               }
             });
             if (updates.length > 0) await Promise.all(updates);
