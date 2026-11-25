@@ -41,12 +41,9 @@ jobs:
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
         run: npm install --legacy-peer-deps
 
-      - name: Run TypeScript validation (non-blocking while legacy errors are resolved)
+      - name: Run TypeScript validation
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
-        run: |
-          if ! npm run lint; then
-            echo "::warning::TypeScript validation reports existing project-wide type errors. Production build will still run; resolve these errors in a dedicated type-safety pass."
-          fi
+        run: npm run lint
 
       - name: Build production bundle
         working-directory: ${{ steps.find_dir.outputs.app_dir }}
