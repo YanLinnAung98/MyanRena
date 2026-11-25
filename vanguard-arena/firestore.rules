@@ -190,10 +190,10 @@ service cloud.firestore {
         && (
           (
             isOwner(userId)
-            && incoming().xp == existing().xp
-            && incoming().wins == existing().wins
-            && incoming().losses == existing().losses
-            && incoming().draws == existing().draws
+            && (!('xp' in existing()) ? incoming().xp == 0 : incoming().xp == existing().xp)
+            && (!('wins' in existing()) ? incoming().wins == 0 : incoming().wins == existing().wins)
+            && (!('losses' in existing()) ? incoming().losses == 0 : incoming().losses == existing().losses)
+            && (!('draws' in existing()) ? incoming().draws == 0 : incoming().draws == existing().draws)
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame',
