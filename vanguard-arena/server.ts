@@ -7,7 +7,7 @@ import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { initializeApp, getApps } from 'firebase-admin/app';
+import { cert, initializeApp, getApps } from 'firebase-admin/app';
 import { getAuth as getAdminAuth } from 'firebase-admin/auth';
 import firebaseConfig from './firebase-applet-config.json' with { type: 'json' };
 import {
@@ -56,13 +56,25 @@ import type {
 } from './src/types.ts';
 
 // ─── FIREBASE ADMIN INIT ──────────────────────────────────────────────────────
+const serviceAccountRaw = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+let serviceAccount: Record<string, unknown> | null = null;
+if (serviceAccountRaw) {
+  try {
+    serviceAccount = JSON.parse(serviceAccountRaw) as Record<string, unknown>;
+  } catch {
+    throw new Error('FIREBASE_SERVICE_ACCOUNT_JSON must contain valid JSON.');
+  }
+}
 if (!getApps().length) {
-  initializeApp({ projectId: firebaseConfig.projectId });
+  initializeApp({
+    projectId: String(serviceAccount?.project_id || firebaseConfig.projectId),
+    ...(serviceAccount ? { credential: cert(serviceAccount as any) } : {}),
+  });
 }
 const adminAuth = getAdminAuth();
 
 // ─── FILESYSTEM & SQLITE PERSISTENCE ──────────────────────────────────────────
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(process.cwd(), 'data'));
 const UPLOADS_DIR = path.join(DATA_DIR, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -302,16 +314,42 @@ const DEFAULT_AVATAR = '/src/assets/images/avatar_preset_champ_1794716179403.jpg
 function seedDatabase() {
   const now = new Date().toISOString();
 
-  // Seed hidden isolated admin account (credentials verified server-side only)
-  const existingAdmin = db.prepare('SELECT id FROM users WHERE username = ?').get('yanlinnaung');
-  if (!existingAdmin) {
+  // Seed the administrator only from a deployment secret; never ship a default password.
+  const adminUsername = String(process.env.ADMIN_USERNAME || 'yanlinnaung').trim().toLowerCase();
+  const adminInitialPassword = String(process.env.ADMIN_INITIAL_PASSWORD || '');
+  if (!/^[a-z0-9_]{3,24}$/.test(adminUsername)) {
+    throw new Error('ADMIN_USERNAME must be 3-24 lowercase letters, numbers, or underscores.');
+  }
+  if (adminInitialPassword && adminInitialPassword.length < 12) {
+    throw new Error('ADMIN_INITIAL_PASSWORD must be at least 12 characters.');
+  }
+
+  const existingAdmin = db.prepare('SELECT id, role, password_hash FROM users WHERE username = ?').get(adminUsername) as
+    | { id: string; role: string; password_hash: string }
+    | undefined;
+
+  if (existingAdmin && existingAdmin.role !== 'admin') {
+    throw new Error('The configured ADMIN_USERNAME is already assigned to a non-admin account.');
+  }
+
+  if (existingAdmin && verifyPassword('163104', existingAdmin.password_hash)) {
+    const replacementPassword = adminInitialPassword || crypto.randomBytes(36).toString('base64url');
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(
+      hashPassword(replacementPassword),
+      existingAdmin.id
+    );
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(existingAdmin.id);
+    if (!adminInitialPassword) {
+      console.warn('Legacy default admin password has been disabled. Set ADMIN_INITIAL_PASSWORD to regain admin access.');
+    }
+  } else if (!existingAdmin && adminInitialPassword) {
     db.prepare(`
       INSERT INTO users (id, username, password_hash, game_id, display_name, avatar_url, frame_id, xp, wins, losses, draws, role, is_banned, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, 0, 0, 'admin', 0, ?)
     `).run(
       'admin_yanlinnaung',
-      'yanlinnaung',
-      hashPassword('163104'),
+      adminUsername,
+      hashPassword(adminInitialPassword),
       '#ADM-00001',
       'System Administrator',
       DEFAULT_AVATAR,
@@ -1835,15 +1873,27 @@ setInterval(() => {
 
 // ─── EXPRESS APP & AUTH MIDDLEWARE ────────────────────────────────────────────
 const app = express();
+const allowedOrigins = new Set(
+  String(process.env.CORS_ORIGINS || 'http://localhost:5173,https://yanlinnaung98.github.io')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+);
 
 app.use(cors({
-  origin: ['http://localhost:5173'], 
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.has(origin)) return callback(null, true);
+    return callback(new Error('Origin is not allowed by the CORS policy.'));
+  },
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  credentials: true,
 }));
 
 app.use(express.json({ limit: '4mb' }));
+app.get('/healthz', (_req, res) => {
+  res.status(200).json({ ok: true, service: 'myanrena-api', timestamp: new Date().toISOString() });
+});
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 interface AuthReq extends express.Request {
@@ -1891,10 +1941,11 @@ app.post('/api/auth/register', (req, res) => {
   if (!/^[a-z0-9_]{3,24}$/.test(username)) {
     return res.status(400).json({ error: 'Username must be 3-24 characters (letters, numbers, underscores).' });
   }
-  if (password.length < 4 || password.length > 64) {
-    return res.status(400).json({ error: 'Password must be 4-64 characters.' });
+  if (password.length < 8 || password.length > 64) {
+    return res.status(400).json({ error: 'Password must be 8-64 characters.' });
   }
-  if (username === 'yanlinnaung') {
+  const reservedAdmin = String(process.env.ADMIN_USERNAME || 'yanlinnaung').trim().toLowerCase();
+  if (username === reservedAdmin || username === 'admin') {
     return res.status(400).json({ error: 'Username is unavailable.' });
   }
 
@@ -1945,15 +1996,9 @@ app.post('/api/auth/recover-pin', (req, res) => {
   res.json({ ok: true });
 });
 
-app.post('/api/auth/recover-email', (req, res) => {
-  const email = sanitizeText(req.body?.email, 120).toLowerCase();
-  if (!email || !email.includes('@')) {
-    return res.status(400).json({ error: 'Please enter a valid email address.' });
-  }
-  res.json({
-    ok: true,
-    message:
-      'If your email is linked with Firebase Auth or your arena profile, reset instructions have been processed. Standard username accounts can also reset immediately via their 6-Digit Backup PIN.',
+app.post('/api/auth/recover-email', (_req, res) => {
+  res.status(501).json({
+    error: 'Email recovery is not configured on this server. Use your 6-digit Recovery PIN instead.',
   });
 });
 
@@ -4022,8 +4067,9 @@ async function bootstrap() {
     }
   }, 5000);
 
-  server.listen(3000, '0.0.0.0', () => {
-    console.log('Vanguard Arena server listening on http://0.0.0.0:3000');
+  const port = Number(process.env.PORT || 3000);
+  server.listen(port, '0.0.0.0', () => {
+    console.log(`Vanguard Arena server listening on http://0.0.0.0:${port}`);
   });
 }
 
