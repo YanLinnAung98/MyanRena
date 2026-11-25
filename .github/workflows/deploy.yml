@@ -45,11 +45,11 @@ jobs:
       - name: Install dependencies
         run: npm install --legacy-peer-deps
 
-      - name: TypeScript validation
-        run: npm run lint
-
       - name: Build production bundle
         run: npm run build
+
+      - name: TypeScript validation
+        run: npm run lint
 
       - name: Prepare GitHub Pages output
         working-directory: .
