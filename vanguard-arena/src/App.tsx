@@ -2,6 +2,7 @@ import './styles/cyberArena.css';
 import './lib/serverlessApi.ts';
 import React, { Suspense } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
+import { onAuthStateChanged, signOut } from 'firebase/auth';
 import {
   AlertTriangle,
   Award,
@@ -21,11 +22,11 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { arrayRemove, arrayUnion, collection, doc, onSnapshot, setDoc, updateDoc } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, doc, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
-import { db, isFirebaseConfigured, stripUndefined } from './lib/firebase.ts';
+import { auth, db, isFirebaseConfigured, stripUndefined } from './lib/firebase.ts';
 import {
   ACTIVE_USER_KEY,
   getPatchedLandingContent,
@@ -152,6 +153,7 @@ function VanguardAppCore() {
 
   const handleLogout = React.useCallback(async () => {
     soundEngine.stopAmbientMusic();
+    if (isFirebaseConfigured && auth) await signOut(auth).catch(() => {});
     if (token) {
       await fetch('/api/auth/logout', {
         method: 'POST',
@@ -166,6 +168,7 @@ function VanguardAppCore() {
 
   const handleKicked = React.useCallback((reason: string) => {
     soundEngine.stopAmbientMusic();
+    if (isFirebaseConfigured && auth) void signOut(auth).catch(() => {});
     clearStoredToken();
     setToken(null);
     setUser(null);
@@ -177,6 +180,15 @@ function VanguardAppCore() {
     let active = true;
     const init = async () => {
       try {
+        if (!USE_SERVER_API && isFirebaseConfigured && auth) {
+          await new Promise<void>((resolve) => {
+            let unsubscribe = () => {};
+            unsubscribe = onAuthStateChanged(auth, () => {
+              unsubscribe();
+              resolve();
+            });
+          });
+        }
         const bootRes = await fetch('/api/bootstrap').catch(() => null);
         if (bootRes?.ok && active) {
           const boot = await bootRes.json();
@@ -266,7 +278,11 @@ function VanguardAppCore() {
       setPendingFriendReqCount(0);
       return;
     }
-    const unsub = onSnapshot(collection(db, 'friendRequests'), (snap) => {
+    const incomingRequestsQuery = query(
+      collection(db, 'friendRequests'),
+      where('toUserId', '==', user.id)
+    );
+    const unsub = onSnapshot(incomingRequestsQuery, (snap) => {
       let count = 0;
       snap.forEach((d) => {
         const request = d.data();
