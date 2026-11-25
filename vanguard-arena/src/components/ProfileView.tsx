@@ -140,7 +140,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         uid: user.id,
         username: user.username,
         gameId: user.gameId,
-        displayName: fullUserPayload.displayName,
+        displayName: String(fullUserPayload.displayName || user.username || 'Player').slice(0, 32),
         avatarUrl: fullUserPayload.avatarUrl,
         frameId: fullUserPayload.frameId,
         bio: fullUserPayload.bio,
@@ -149,13 +149,14 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         bannerUrl: fullUserPayload.bannerUrl,
         country: fullUserPayload.country,
         showCountry: fullUserPayload.showCountry,
-        xp: user.xp,
-        wins: user.wins || 0,
-        losses: user.losses || 0,
-        draws: user.draws || 0,
+        xp: Number(user.xp) || 0,
+        wins: Number(user.wins) || 0,
+        losses: Number(user.losses) || 0,
+        draws: Number(user.draws) || 0,
         updatedAt: serverTimestamp(),
       });
-      await setDoc(doc(cloudDb, 'users', user.id), cloudSafeUser, { merge: true });
+      // Replace the public document so legacy password/private fields cannot linger in it.
+      await setDoc(doc(cloudDb, 'users', user.id), cloudSafeUser);
       } catch (err: any) {
         cloudOk = false;
         onNotify(
