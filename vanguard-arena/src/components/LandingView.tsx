@@ -207,6 +207,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
       if (!USE_SERVER_API && isFirebaseConfigured && auth && db && authMode === 'signup') {
         const cleanEmail = email.trim().toLowerCase();
+        const cleanDisplayName = displayName.trim() || username.trim();
+        if (cleanDisplayName.length < 2 || cleanDisplayName.length > 32) {
+          throw new Error(lang === 'my'
+            ? 'Display Name ကို စာလုံး ၂ လုံးမှ ၃၂ လုံးအတွင်း ထည့်ပါ။'
+            : 'Display name must be between 2 and 32 characters.');
+        }
         if (!/^[a-z0-9_]{3,24}$/.test(cleanUser)) {
           throw new Error(
             lang === 'my'
@@ -224,7 +230,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
           const newUser = buildPlayerProfile({
             id: uid,
             username: cleanUser,
-            displayName: displayName.trim() || username.trim(),
+            displayName: cleanDisplayName,
             gameId: `MR-${Math.floor(100000 + Math.random() * 900000)}`,
             xp: 1000,
             rank: 'Silver',
@@ -631,6 +637,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     <input
                       type="text"
                       value={displayName}
+                      maxLength={32}
                       onChange={(e) => setDisplayName(e.target.value)}
                       placeholder={t.auth.displayNamePlaceholder}
                       className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/15 text-sm text-white focus:outline-none focus:border-amber-400"
