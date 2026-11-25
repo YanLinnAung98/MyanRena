@@ -139,6 +139,13 @@ db.exec(`
     created_at TEXT NOT NULL
   );
 
+  CREATE TABLE IF NOT EXISTS user_blocks (
+    blocker_id TEXT NOT NULL,
+    blocked_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (blocker_id, blocked_id)
+  );
+
   CREATE TABLE IF NOT EXISTS frames (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -532,6 +539,10 @@ function rowToUser(row: Record<string, unknown>): UserProfile {
     losses: Number(row.losses),
     draws: Number(row.draws),
     role: row.role === 'admin' ? 'admin' : 'user',
+    friends: (db.prepare(
+      "SELECT CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END AS friend_id FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)"
+    ).all(String(row.id), String(row.id), String(row.id)) as { friend_id: string }[]).map((item) => String(item.friend_id)),
+    blocked: (db.prepare('SELECT blocked_id FROM user_blocks WHERE blocker_id = ?').all(String(row.id)) as { blocked_id: string }[]).map((item) => String(item.blocked_id)),
     isBanned: Number(row.is_banned) === 1,
     warningCount: Number(row.warning_count || 0),
     suspendedUntil: row.suspended_until ? String(row.suspended_until) : null,
@@ -2216,6 +2227,172 @@ app.get('/api/users/:id/profile', requireAuth, (req, res) => {
     })),
   });
 });
+
+function getSocialPayload(userId: string) {
+  const accepted = db.prepare(
+    "SELECT CASE WHEN requester_id = ? THEN addressee_id ELSE requester_id END AS friend_id FROM friendships WHERE status = 'accepted' AND (requester_id = ? OR addressee_id = ?)"
+  ).all(userId, userId, userId) as { friend_id: string }[];
+
+  const blocked = db.prepare('SELECT blocked_id FROM user_blocks WHERE blocker_id = ?')
+    .all(userId) as { blocked_id: string }[];
+
+  const incomingRows = db.prepare(
+    `SELECT f.id, f.requester_id, f.addressee_id, f.created_at, u.display_name, u.game_id, u.avatar_url, u.frame_id
+     FROM friendships f JOIN users u ON u.id = f.requester_id
+     WHERE f.addressee_id = ? AND f.status = 'pending'
+     ORDER BY f.created_at DESC LIMIT 100`
+  ).all(userId) as Record<string, unknown>[];
+
+  const outgoingRows = db.prepare(
+    `SELECT f.id, f.requester_id, f.addressee_id, f.created_at, u.display_name, u.game_id, u.avatar_url, u.frame_id
+     FROM friendships f JOIN users u ON u.id = f.addressee_id
+     WHERE f.requester_id = ? AND f.status = 'pending'
+     ORDER BY f.created_at DESC LIMIT 100`
+  ).all(userId) as Record<string, unknown>[];
+
+  const messages = db.prepare(
+    `SELECT m.id, m.sender_id, m.receiver_id, m.content, m.created_at, s.display_name AS sender_name
+     FROM direct_messages m JOIN users s ON s.id = m.sender_id
+     WHERE m.sender_id = ? OR m.receiver_id = ?
+     ORDER BY m.created_at DESC LIMIT 300`
+  ).all(userId, userId) as Record<string, unknown>[];
+
+  const requestShape = (row: Record<string, unknown>, outgoing: boolean) => ({
+    id: String(row.id),
+    fromUserId: String(row.requester_id),
+    fromName: outgoing ? '' : String(row.display_name),
+    fromGameId: outgoing ? '' : String(row.game_id),
+    fromAvatarUrl: outgoing ? '' : String(row.avatar_url),
+    fromFrameId: outgoing ? '' : String(row.frame_id),
+    toUserId: String(row.addressee_id),
+    toName: outgoing ? String(row.display_name) : '',
+    toGameId: outgoing ? String(row.game_id) : '',
+    status: 'pending',
+    createdAtMs: Date.parse(String(row.created_at)),
+  });
+
+  return {
+    friends: accepted.map((item) => String(item.friend_id)),
+    blocked: blocked.map((item) => String(item.blocked_id)),
+    incomingRequests: incomingRows.map((row) => requestShape(row, false)),
+    outgoingRequests: outgoingRows.map((row) => requestShape(row, true)),
+    messages: messages.reverse().map((row) => ({
+      id: String(row.id),
+      fromUserId: String(row.sender_id),
+      fromName: String(row.sender_name),
+      toUserId: String(row.receiver_id),
+      text: String(row.content),
+      createdAtMs: Date.parse(String(row.created_at)),
+    })),
+  };
+}
+
+app.get('/api/social', requireAuth, (req: AuthReq, res) => {
+  res.json(getSocialPayload(req.authUser!.id));
+});
+
+app.post('/api/social/requests', requireAuth, (req: AuthReq, res) => {
+  const user = req.authUser!;
+  const targetId = sanitizeText(req.body?.targetUserId, 64);
+  if (!targetId || targetId === user.id) return res.status(400).json({ error: 'Choose another player.' });
+
+  const target = getUserById(targetId);
+  if (!target || target.role === 'admin' || target.isBanned) return res.status(404).json({ error: 'Player not found.' });
+  const blocked = db.prepare(
+    'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+  ).get(user.id, targetId, targetId, user.id);
+  if (blocked) return res.status(403).json({ error: 'Friend requests are unavailable for this player.' });
+
+  const existing = db.prepare(
+    'SELECT status, requester_id FROM friendships WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?) LIMIT 1'
+  ).get(user.id, targetId, targetId, user.id) as { status: string; requester_id: string } | undefined;
+  if (existing?.status === 'accepted') return res.status(409).json({ error: 'You are already friends.' });
+  if (existing?.status === 'pending') return res.status(409).json({
+    error: existing.requester_id === user.id ? 'Friend request already sent.' : 'This player has already sent you a request.',
+  });
+
+  const id = `${user.id}__${targetId}`;
+  db.prepare('INSERT OR REPLACE INTO friendships (id, requester_id, addressee_id, status, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, user.id, targetId, 'pending', new Date().toISOString());
+  sendToUser(targetId, { type: 'social:update' });
+  res.json({ ok: true, social: getSocialPayload(user.id) });
+});
+
+app.post('/api/social/requests/:id/accept', requireAuth, (req: AuthReq, res) => {
+  const user = req.authUser!;
+  const requestId = String(req.params.id);
+  const request = db.prepare('SELECT * FROM friendships WHERE id = ? AND addressee_id = ? AND status = ?')
+    .get(requestId, user.id, 'pending') as { requester_id: string } | undefined;
+  if (!request) return res.status(404).json({ error: 'Friend request not found.' });
+
+  const blocked = db.prepare(
+    'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+  ).get(user.id, request.requester_id, request.requester_id, user.id);
+  if (blocked) return res.status(403).json({ error: 'This request cannot be accepted.' });
+
+  db.prepare("UPDATE friendships SET status = 'accepted' WHERE id = ?").run(requestId);
+  sendToUser(request.requester_id, { type: 'social:update' });
+  res.json({ ok: true, social: getSocialPayload(user.id) });
+});
+
+app.delete('/api/social/requests/:id', requireAuth, (req: AuthReq, res) => {
+  const user = req.authUser!;
+  db.prepare('DELETE FROM friendships WHERE id = ? AND (requester_id = ? OR addressee_id = ?)')
+    .run(String(req.params.id), user.id, user.id);
+  sendToUser(String(req.params.id).split('__')[0], { type: 'social:update' });
+  res.json({ ok: true, social: getSocialPayload(user.id) });
+});
+
+app.post('/api/social/blocks/:id', requireAuth, (req: AuthReq, res) => {
+  const user = req.authUser!;
+  const targetId = String(req.params.id);
+  if (!targetId || targetId === user.id) return res.status(400).json({ error: 'Invalid player.' });
+  const target = getUserById(targetId);
+  if (!target || target.role === 'admin') return res.status(404).json({ error: 'Player not found.' });
+
+  db.prepare('INSERT OR IGNORE INTO user_blocks (blocker_id, blocked_id, created_at) VALUES (?, ?, ?)')
+    .run(user.id, targetId, new Date().toISOString());
+  db.prepare('DELETE FROM friendships WHERE (requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)')
+    .run(user.id, targetId, targetId, user.id);
+  sendToUser(targetId, { type: 'social:update' });
+  res.json({ ok: true, social: getSocialPayload(user.id) });
+});
+
+app.delete('/api/social/blocks/:id', requireAuth, (req: AuthReq, res) => {
+  db.prepare('DELETE FROM user_blocks WHERE blocker_id = ? AND blocked_id = ?')
+    .run(req.authUser!.id, String(req.params.id));
+  res.json({ ok: true, social: getSocialPayload(req.authUser!.id) });
+});
+
+app.post('/api/social/messages', requireAuth, (req: AuthReq, res) => {
+  const user = req.authUser!;
+  const targetId = sanitizeText(req.body?.targetUserId, 64);
+  const content = sanitizeText(req.body?.content, 240);
+  if (!targetId || targetId === user.id || !content) return res.status(400).json({ error: 'Enter a message for another player.' });
+  const target = getUserById(targetId);
+  if (!target || target.role === 'admin' || target.isBanned) return res.status(404).json({ error: 'Player not found.' });
+  const blocked = db.prepare(
+    'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+  ).get(user.id, targetId, targetId, user.id);
+  if (blocked) return res.status(403).json({ error: 'Cannot message a blocked player.' });
+
+  const id = `dm_${crypto.randomUUID().slice(0, 12)}`;
+  const createdAt = new Date().toISOString();
+  db.prepare('INSERT INTO direct_messages (id, sender_id, receiver_id, content, created_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, user.id, targetId, content, createdAt);
+  const message = {
+    id,
+    fromUserId: user.id,
+    fromName: user.displayName,
+    toUserId: targetId,
+    text: content,
+    createdAtMs: Date.parse(createdAt),
+  };
+  sendToUser(targetId, { type: 'dm:received' });
+  sendToUser(user.id, { type: 'dm:received' });
+  res.json({ ok: true, message });
+});
+
 
 app.get('/api/matches/history', requireAuth, (req: AuthReq, res) => {
   const uid = req.authUser!.id;
