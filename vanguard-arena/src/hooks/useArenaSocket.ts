@@ -1006,7 +1006,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         );
       }, 6000);
     },
-    [resolveCurrentPlayer, pushToast, clearBotTimers]
+    [resolveCurrentPlayer, pushToast, clearBotTimers, sendServerMessage]
   );
 
   const leaveQueue = useCallback(async () => {
@@ -1050,7 +1050,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     setQueueStatus(null);
     setQueuedGame(null);
     setActiveMatch(buildPlayableMatch([player], { gameType: 'sakarhtar', mode: 'solo' }));
-  }, [resolveCurrentPlayer]);
+  }, [resolveCurrentPlayer, sendServerMessage]);
 
   // 6. Move Handler for All 4 Games (With Full Connect 4 Sound FX & Bot Phases)
   const sendMove = useCallback(
@@ -1396,7 +1396,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         setActiveMatch(next);
       }
     },
-    [activeMatch, resolveCurrentPlayer, applyXpDelta, clearBotTimers]
+    [activeMatch, resolveCurrentPlayer, applyXpDelta, clearBotTimers, sendServerMessage]
   );
 
   const forfeitMatch = useCallback(async () => {
@@ -1415,7 +1415,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
       await setDoc(doc(db, 'matches', activeMatch.id), stripUndefined(finished)).catch(() => {});
     }
-  }, [activeMatch, resolveCurrentPlayer, applyXpDelta, clearBotTimers]);
+  }, [activeMatch, resolveCurrentPlayer, applyXpDelta, clearBotTimers, sendServerMessage]);
 
   const sendMatchChat = useCallback(
     async (text: string) => {
@@ -1431,7 +1431,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
     },
-    [activeMatch, resolveCurrentPlayer]
+    [activeMatch, resolveCurrentPlayer, sendServerMessage]
   );
 
   const sendRoomChat = useCallback(
@@ -1448,7 +1448,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         await updateDoc(doc(db, 'rooms', currentRoom.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
     },
-    [currentRoom, resolveCurrentPlayer]
+    [currentRoom, resolveCurrentPlayer, sendServerMessage]
   );
 
   const sendChallenge = useCallback(
@@ -1468,7 +1468,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
       setSocialRefreshTick((n) => n + 1);
     },
-    [resolveCurrentPlayer, clearBotTimers]
+    [resolveCurrentPlayer, clearBotTimers, sendServerMessage]
   );
 
   const respondChallenge = useCallback(
