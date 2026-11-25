@@ -73,6 +73,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [serverSearchResults, setServerSearchResults] = React.useState<UserProfile[]>([]);
   const [serverRelatedUsers, setServerRelatedUsers] = React.useState<UserProfile[]>([]);
   const [cloudUsers, setCloudUsers] = React.useState<UserProfile[]>([]);
+  const [cloudPresence, setCloudPresence] = React.useState<Record<string, any>>({});
   const [cloudFriendIds, setCloudFriendIds] = React.useState<string[]>([]);
   const [cloudBlockedIds, setCloudBlockedIds] = React.useState<string[]>([]);
   const [blockedByOtherIds, setBlockedByOtherIds] = React.useState<string[]>([]);
@@ -157,6 +158,12 @@ export const SocialHub: React.FC<SocialHubProps> = ({
       setBlockedByOtherIds(Array.from(new Set(inboundBlocks.map((block) => block.blockerId))));
     };
 
+    const unsubPresence = onSnapshot(collection(db, 'presence'), (snap) => {
+      const next: Record<string, any> = {};
+      snap.docs.forEach((d) => { next[d.id] = d.data(); });
+      setCloudPresence(next);
+    }, (error) => console.warn('Player presence unavailable:', error));
+
     const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
       const profiles = snap.docs.map((d) => {
         const data = d.data();
@@ -209,6 +216,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
     return () => {
       unsubUsers();
+      unsubPresence();
       unsubOutMessages();
       unsubInMessages();
       unsubSentRequests();
@@ -260,8 +268,20 @@ export const SocialHub: React.FC<SocialHubProps> = ({
         : [...allUsers, ...serverRelatedUsers]
       : [...allUsers, ...cloudUsers];
     const unique = new Map(source.map((player) => [player.id, player]));
-    return Array.from(unique.values()).filter((player) => player.id !== currentUser.id);
-  }, [allUsers, cloudUsers, currentUser.id, serverRelatedUsers, serverSearchResults, searchQuery]);
+    return Array.from(unique.values())
+      .filter((player) => player.id !== currentUser.id)
+      .map((player) => {
+        const presence = cloudPresence[player.id];
+        const lastSeenMs = Number(presence?.lastSeenMs || 0);
+        const isOnline = Boolean(presence?.online && lastSeenMs > 0 && Date.now() - lastSeenMs < 90000);
+        return {
+          ...player,
+          online: isOnline,
+          lastSeenMs,
+          currentActivity: isOnline ? String(presence?.currentActivity || '') : '',
+        };
+      });
+  }, [allUsers, cloudUsers, cloudPresence, currentUser.id, serverRelatedUsers, serverSearchResults, searchQuery]);
 
   const friendProfiles = otherUsers.filter((u) => friendIds.includes(u.id) && !blockedIds.includes(u.id));
   const blockedProfiles = otherUsers.filter((u) => blockedIds.includes(u.id));
