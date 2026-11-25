@@ -550,6 +550,13 @@ function VanguardAppCore() {
 
   return (
 
+
+
+    <div
+      className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
+        !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
+      } ${rootClass}`}
+    >
       <style>{`
         .nav-icon{width:34px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid rgba(255,255,255,.11);border-radius:11px;background:rgba(255,255,255,.035);transition:all .2s ease}
         .nav-icon-cyan{color:#67e8f9;background:linear-gradient(145deg,rgba(8,145,178,.22),rgba(8,47,73,.35));border-color:rgba(103,232,249,.2)}
@@ -560,12 +567,6 @@ function VanguardAppCore() {
         .nav-icon-active .nav-icon{transform:translateY(-2px);box-shadow:0 0 0 1px rgba(251,191,36,.22),0 5px 18px rgba(245,158,11,.16);border-color:rgba(252,211,77,.38)}
         @media(min-width:1024px){.nav-icon{width:28px;height:26px;border-radius:9px}}
       `}</style>
-
-    <div
-      className={`h-dvh lg:h-auto lg:min-h-dvh-safe overflow-hidden lg:overflow-visible cyber-bg text-slate-100 flex flex-col ${
-        !socket.activeMatch ? 'pb-16 lg:pb-0' : ''
-      } ${rootClass}`}
-    >
       <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-[1360px] mx-auto px-3 sm:px-6 h-14 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
