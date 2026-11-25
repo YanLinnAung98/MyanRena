@@ -35,6 +35,7 @@ import {
   doc,
   onSnapshot,
   setDoc,
+  serverTimestamp,
 } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
@@ -299,7 +300,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
 
     const patch: any = stripUndefined({
       displayName: String(editingUser.displayName || '').trim() || editingUser.username,
-      bio: String(editingUser.bio || '').trim(),
+      bio: String(editingUser.bio || '').trim().slice(0, 180),
       xp: xpVal,
       rank: computedRank,
       frameId: editingUser.frameId || 'bronze',
@@ -307,24 +308,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       wins: Math.max(0, Number(editingUser.wins) || 0),
       losses: Math.max(0, Number(editingUser.losses) || 0),
       draws: Math.max(0, Number(editingUser.draws) || 0),
-      status: editingUser.status || 'active',
-      ...(editPassword.trim() ? { password: editPassword.trim() } : {}),
       updatedAtMs: Date.now(),
     });
 
-    const store = readServerlessStore();
-    if (store.users[editingUser.id]) {
-      store.users[editingUser.id] = { ...store.users[editingUser.id], ...patch };
-      writeServerlessStore(store);
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် Player အချက်အလက်ကို Cloud ပေါ် မသိမ်းနိုင်ပါ။');
+      return;
     }
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'users', editingUser.id), patch, { merge: true });
+    try {
+      await setDoc(
+        doc(db, 'users', editingUser.id),
+        { ...patch, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      const store = readServerlessStore();
+      if (store.users[editingUser.id]) {
+        store.users[editingUser.id] = { ...store.users[editingUser.id], ...patch };
+        writeServerlessStore(store);
+      }
+      broadcastLocalSync('ADMIN_EDIT_USER');
+      await logAdminAction('EDIT_PLAYER', `Edited ${patch.displayName} (${editingUser.gameId})`);
+      if (editPassword.trim()) {
+        onNotify('info', 'Profile ပြင်ဆင်ပြီးပါပြီ။ Password ကို ဒီ Admin Editor မှ မပြောင်းနိုင်ပါ။ Account recovery ကို အသုံးပြုပါ။');
+      } else {
+        onNotify('success', `${patch.displayName} ၏ Profile နှင့် Stats ကို ပြင်ဆင်ပြီးပါပြီ။`);
+      }
+      setEditPassword('');
+      setEditingUser(null);
+    } catch (error) {
+      console.error('Admin player update failed:', error);
+      onNotify('error', 'Player အချက်အလက် မသိမ်းနိုင်ပါ။ Admin permission နှင့် Firestore Rules ကို စစ်ဆေးပါ။');
     }
-    broadcastLocalSync('ADMIN_EDIT_USER');
-    await logAdminAction('EDIT_PLAYER', `Edited ${patch.displayName} (${editingUser.gameId})`);
-    setEditPassword('');
-    setEditingUser(null);
-    onNotify('success', `${patch.displayName} ၏ အချက်အလက်များကို Real-Time ပြင်ဆင်ပြီးပါပြီ!`);
   };
 
   const handleTimedSuspend = async (target: any, minutes: number) => {
