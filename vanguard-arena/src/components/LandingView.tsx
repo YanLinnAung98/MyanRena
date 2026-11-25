@@ -813,7 +813,7 @@ export const LandingView: React.FC<LandingViewProps> = ({
                     : t.auth.usernamePlaceholder}
                   className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
-                {!( !USE_SERVER_API && isFirebaseConfigured && recUsername.includes('@')) && (
+                {!( !USE_SERVER_API && isFirebaseConfigured && recUsername.includes('@')) && (<React.Fragment>
                 <input
                   type="text"
                   required
@@ -832,8 +832,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   placeholder={t.auth.newPasswordLabel}
                   className="w-full h-11 px-3.5 rounded-xl bg-[#070b14] border border-white/10 text-sm text-white"
                 />
-                )}
-                {recError && <div className="text-xs text-rose-300">{recError}</div>}
+                </React.Fragment>)}
+                {recError && <div className="text-xs text-rose-300">{recError}</div>
                 {recSuccess && <div className="text-xs text-emerald-300">{recSuccess}</div>}
                 <button
                   type="submit"
