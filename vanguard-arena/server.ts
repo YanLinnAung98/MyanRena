@@ -812,6 +812,7 @@ interface QueuedEntry {
   userId: string;
   xp: number;
   turnTimeLimit?: TurnTimeLimit;
+  bestOf?: 1 | 3 | 5;
   autoBotFill: boolean;
   joinedAt: number;
 }
@@ -1767,6 +1768,7 @@ function tryMatchmaking(gameType: GameType) {
             gameType,
             mode: 'matchmaking',
             turnTimeLimit: a.turnTimeLimit || b.turnTimeLimit,
+            bestOf: a.bestOf || b.bestOf || 3,
             player1: toParticipant(u1, getUserPingMs(u1.id)),
             player2: toParticipant(u2, getUserPingMs(u2.id)),
           });
@@ -1815,6 +1817,7 @@ setInterval(() => {
           mode: 'matchmaking',
           difficulty: pickBotDifficultyFromXp(bot.xp),
           turnTimeLimit: item.turnTimeLimit,
+          bestOf: item.bestOf || 3,
           player1: toParticipant(u, getUserPingMs(u.id)),
           player2: bot,
         });
@@ -3739,7 +3742,8 @@ async function bootstrap() {
           return;
         }
         if (['connect4', 'ttt', 'rps'].includes(gameType)) {
-          const entry: QueuedEntry = { userId: user.id, xp: freshUser.xp, turnTimeLimit, autoBotFill, joinedAt };
+          const bestOf: 1 | 3 | 5 = msg.bestOf === 5 ? 5 : msg.bestOf === 1 ? 1 : 3;
+          const entry: QueuedEntry = { userId: user.id, xp: freshUser.xp, turnTimeLimit, bestOf, autoBotFill, joinedAt };
           matchmakingQueues[gameType].push(entry);
           sendQueueTick(entry, gameType, matchmakingQueues[gameType].length, settings);
           schedulePresenceBroadcast();
