@@ -53,6 +53,102 @@ interface UseArenaSocketOptions {
 }
 
 const DISMISSED_NOTIS_KEY = 'vanguard_dismissed_notis_v1';
+const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
+
+function mapServerMatchToClient(serverMatch: any): any {
+  if (!serverMatch?.state) return serverMatch;
+  const state = serverMatch.state;
+  const rawType = String(state.gameType || serverMatch.gameType || '');
+  const gameType =
+    rawType === 'ttt' ? 'tictactoe' : rawType === 'sakar_htar' ? 'sakarhtar' : rawType;
+  const player1 = serverMatch.player1 || state.players?.[0] || null;
+  const player2 = serverMatch.player2 || state.players?.[1] || null;
+  const participants = rawType === 'sakar_htar' && Array.isArray(state.players)
+    ? state.players
+    : [player1, player2].filter(Boolean);
+  const isDraw = Boolean(serverMatch.isDraw || state.winner === 'draw');
+  const winnerId = serverMatch.winnerId ||
+    (state.winner === 1 ? player1?.id : state.winner === 2 ? player2?.id : null);
+  const scores: Record<string, number> = {};
+  if (rawType === 'rps') {
+    if (player1?.id) scores[player1.id] = Number(state.p1Score || 0);
+    if (player2?.id) scores[player2.id] = Number(state.p2Score || 0);
+  } else if (rawType === 'sakar_htar') {
+    (state.players || []).forEach((player: any) => { scores[player.id] = Number(player.score || 0); });
+  } else if (serverMatch.scores) {
+    Object.assign(scores, serverMatch.scores);
+  }
+
+  const uiMatch: any = {
+    ...serverMatch,
+    gameType,
+    players: participants,
+    isRealtimePvp: serverMatch.mode !== 'bot' && serverMatch.mode !== 'solo',
+    status: serverMatch.status === 'active' ? 'active' : serverMatch.status,
+    winnerId,
+    isDraw,
+    scores,
+    turnDeadline: serverMatch.turnDeadline || null,
+    bestOf: state.bestOf || serverMatch.bestOf || 3,
+    round: state.currentRound || 1,
+  };
+
+  if (rawType === 'connect4') {
+    uiMatch.c4Board = (state.board || []).map((row: number[]) =>
+      row.map((cell: number) => cell === 1 ? 'P1' : cell === 2 ? 'P2' : null)
+    );
+    uiMatch.turnUserId = state.turn === 1 ? player1?.id : player2?.id;
+    uiMatch.winningCells = state.winLine || [];
+    uiMatch.lastMove = state.lastMove
+      ? {
+          ...state.lastMove,
+          disc: state.board?.[state.lastMove.row]?.[state.lastMove.col] === 1 ? 'P1' : 'P2',
+        }
+      : null;
+  } else if (rawType === 'ttt' || rawType === 'tictactoe') {
+    uiMatch.tttBoard = (state.board || []).map((cell: number) => cell === 1 ? 'X' : cell === 2 ? 'O' : null);
+    uiMatch.turnUserId = state.turn === 1 ? player1?.id : player2?.id;
+  } else if (rawType === 'rps') {
+    uiMatch.rpsPicks = {};
+    if (state.p1Submitted && player1?.id && state.p1Choice) uiMatch.rpsPicks[player1.id] = state.p1Choice;
+    if (state.p2Submitted && player2?.id && state.p2Choice) uiMatch.rpsPicks[player2.id] = state.p2Choice;
+    uiMatch.rpsLastRound = state.lastReveal
+      ? {
+          p1Choice: state.lastReveal.p1Choice,
+          p2Choice: state.lastReveal.p2Choice,
+          winnerId: state.lastReveal.winner === 1
+            ? player1?.id
+            : state.lastReveal.winner === 2
+            ? player2?.id
+            : null,
+        }
+      : null;
+  } else if (rawType === 'sakar_htar') {
+    uiMatch.riddles = (state.questions || []).map((question: any) => ({
+      ...question,
+      question: question.questionMy,
+      options: question.options || [],
+      answerIndex: question.correctIndex,
+    }));
+    uiMatch.riddleIndex = Number(state.questionIndex || 0);
+    uiMatch.roundAnswers = Object.fromEntries(
+      (state.players || [])
+        .filter((player: any) => player.answeredCurrent && typeof player.selectedOptionCurrent === 'number')
+        .map((player: any) => [player.id, player.selectedOptionCurrent])
+    );
+  }
+  return uiMatch;
+}
+
+function mapServerChatMessage(message: any) {
+  return {
+    id: message?.id || `chat_${Date.now()}`,
+    sender: message?.senderName || message?.sender || 'Player',
+    text: message?.content || message?.text || '',
+    time: message?.createdAt ? Date.parse(message.createdAt) : Number(message?.time || Date.now()),
+    kind: message?.kind || 'text',
+  };
+}
 
 function readDismissedNotiIds(): Set<string> {
   try {
@@ -162,15 +258,17 @@ function pickSmartConnect4Col(grid: Array<Array<string | null>>, difficulty: str
 }
 
 export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
-  const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>('connected');
-  const [cloudError, setCloudError] = useState<string | null>(firebaseInitError);
+  const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>(
+    USE_SERVER_API ? 'connecting' : 'connected'
+  );
+  const [cloudError, setCloudError] = useState<string | null>(USE_SERVER_API ? null : firebaseInitError);
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [maintenanceMessage, setMaintenanceMessage] = useState('စနစ်အဆင့်မြှင့်တင်နေပါသဖြင့် ခေတ္တစောင့်ဆိုင်းပေးပါ။');
   const [pingMs, setPingMs] = useState<number>(20);
   const [landingContent, setLandingContent] = useState<LandingContent>(() => getPatchedLandingContent());
   const [announcement, setAnnouncement] = useState<{ title: string; message: string } | null>(null);
   const [notifications, setNotifications] = useState<ArenaNotification[]>([]);
-  const [frames] = useState<any[]>(SVG_FRAME_TEMPLATES);
+  const [frames, setFrames] = useState<any[]>(SVG_FRAME_TEMPLATES);
   const [featureLocks, setFeatureLocks] = useState<Record<string, boolean>>({});
   const [matchmakingSettings, setMatchmakingSettings] = useState<any>({ maxWaitSec: 30, xpRange: 400 });
   const [onlinePlayers, setOnlinePlayers] = useState<UserProfile[]>([]);
@@ -195,6 +293,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const xpAwardedMatchRef = useRef<string | null>(null);
   const alertedNotiIdsRef = useRef<Set<string>>(new Set());
   const botTimersRef = useRef<number[]>([]);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const clearBotTimers = useCallback(() => {
     botTimersRef.current.forEach((id) => window.clearTimeout(id));
@@ -215,7 +314,6 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const resolveCurrentPlayer = useCallback(() => {
     const store = readServerlessStore();
-    if (token === 'admin-token') return store.users.admin_yanlinnaung;
     const saved = readActiveSessionUser();
     if (saved) return saved;
     if (token) {
@@ -229,18 +327,35 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     addDismissedNotiId(notiId);
     setPendingWarnings((prev) => prev.filter((w) => w.id !== notiId));
     setNotifications((prev) => prev.map((n) => (n.id === notiId ? { ...n, read: true } : n)));
-    if (isFirebaseConfigured && db) {
+    if (USE_SERVER_API) {
+      await fetch(`/api/warnings/${encodeURIComponent(notiId)}/ack`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token || ''}` },
+      }).catch(() => {});
+    } else if (isFirebaseConfigured && db) {
       await updateDoc(doc(db, 'notifications', notiId), { read: true }).catch(() => {});
     }
-  }, []);
+  }, [token]);
 
   const markAllNotificationsRead = useCallback(() => {
     notifications.forEach((n) => addDismissedNotiId(n.id));
     setPendingWarnings([]);
     setNotifications((prev) => prev.map((n) => ({ ...n, read: true })));
-  }, [notifications]);
+    if (USE_SERVER_API && token) {
+      notifications.forEach((n) => {
+        void fetch(`/api/warnings/${encodeURIComponent(n.id)}/ack`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}` },
+        }).catch(() => {});
+      });
+    }
+  }, [notifications, token]);
 
-  const setAdminSocketMode = useCallback((_mode: 'admin' | 'lobby') => {}, []);
+  const setAdminSocketMode = useCallback((mode: 'admin' | 'lobby') => {
+    if (USE_SERVER_API && wsRef.current?.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({ type: 'admin:mode', mode }));
+    }
+  }, []);
 
   const applyXpDelta = useCallback(
     async (outcome: 'win' | 'loss' | 'draw', matchId?: string) => {
@@ -287,7 +402,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   // 1. REAL-TIME DEVICE PRESENCE HEARTBEAT
   useEffect(() => {
-    if (!token) return;
+    if (!token || USE_SERVER_API) return;
     const me = resolveCurrentPlayer();
     if (!me?.id) return;
 
@@ -343,8 +458,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   // 2. REAL-TIME USERS, RANKING & ADMIN NOTIFICATIONS LISTENER
   useEffect(() => {
-    if (!token) return;
-    const myId = token === 'admin-token' ? 'admin_yanlinnaung' : token.replace(/^token_/, '').replace(/^local_/, '');
+    if (!token || USE_SERVER_API) return;
+    const myId = token.replace(/^token_/, '').replace(/^local_/, '');
 
     const processNotifications = (rawList: ArenaNotification[]) => {
       const dismissed = readDismissedNotiIds();
@@ -501,7 +616,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   // 3. Real-Time Room Sync
   useEffect(() => {
-    if (!currentRoom?.id || !isFirebaseConfigured || !db) return;
+    if (USE_SERVER_API || !currentRoom?.id || !isFirebaseConfigured || !db) return;
     const roomId = currentRoom.id;
 
     const firestore = db;
@@ -542,7 +657,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   // 4. Real-Time Active Match Sync
   useEffect(() => {
-    if (!activeMatch?.id || !activeMatch?.isRealtimePvp || !isFirebaseConfigured || !db) return;
+    if (USE_SERVER_API || !activeMatch?.id || !activeMatch?.isRealtimePvp || !isFirebaseConfigured || !db) return;
     const matchId = activeMatch.id;
     const me = resolveCurrentPlayer();
 
