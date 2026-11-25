@@ -54,9 +54,8 @@ export interface UserProfile {
   lastSeenMs?: number;
   updatedAtMs?: number;
   status?: 'active' | 'warned' | 'suspended' | 'banned';
-  suspendedUntil?: string;
-  createdAt?: string;
   suspendedUntil?: string | null;
+  createdAt?: string;
   [key: string]: any;
 }
 
