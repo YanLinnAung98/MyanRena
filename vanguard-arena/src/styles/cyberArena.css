@@ -586,3 +586,19 @@ html, body {
     transform: none;
   }
 }
+
+
+/* Navigation icon family */
+.nav-icon {
+  width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid rgba(184,204,232,.13); border-radius: 10px;
+  background: rgba(255,255,255,.035);
+  transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease;
+}
+.nav-icon-cyan { color: #8bd9f4; background: linear-gradient(145deg,rgba(8,145,178,.2),rgba(8,47,73,.3)); border-color: rgba(139,217,244,.2); }
+.nav-icon-violet { color: #c4b5fd; background: linear-gradient(145deg,rgba(124,58,237,.2),rgba(46,16,101,.3)); border-color: rgba(196,181,253,.2); }
+.nav-icon-gold { color: #ffe1a0; background: linear-gradient(145deg,rgba(217,153,58,.22),rgba(69,45,15,.3)); border-color: rgba(255,225,160,.22); }
+.nav-icon-emerald { color: #6ee7b7; background: linear-gradient(145deg,rgba(5,150,105,.2),rgba(6,78,59,.3)); border-color: rgba(110,231,183,.2); }
+.nav-icon-rose { color: #fda4af; background: linear-gradient(145deg,rgba(225,29,72,.18),rgba(76,5,25,.3)); border-color: rgba(253,164,175,.2); }
+.nav-icon-active .nav-icon { transform: translateY(-2px); border-color: rgba(255,225,160,.48); box-shadow: 0 0 0 1px rgba(233,189,104,.15), 0 6px 18px rgba(233,189,104,.12); }
+@media (min-width: 1024px) { .nav-icon { width: 29px; height: 27px; border-radius: 9px; } }
