@@ -21,7 +21,7 @@ If Render later permits a zero-cost service without payment details, treat it as
 
 ## Firebase / Firestore status
 
-The frontend contains Firebase client configuration for project `arena-25951` and initializes the Firebase Web SDK. However, the current sign-up/sign-in flow in `src/components/LandingView.tsx` is browser-local: it derives a local player ID and stores a PBKDF2 password hash and Recovery PIN hash in `localStorage`. It does **not** call Firebase Authentication.
+The frontend Firebase Web SDK configuration now points to project `vanguard-arena-17ced` in `vanguard-arena/firebase-applet-config.json`. The provided `databaseURL` is the project's Realtime Database endpoint, but the app currently uses Cloud Firestore APIs (not Realtime Database APIs). However, the current sign-up/sign-in flow in `vanguard-arena/src/components/LandingView.tsx` is browser-local: it derives a local player ID and stores a PBKDF2 password hash and Recovery PIN hash in `localStorage`. It does **not** call Firebase Authentication.
 
 The checked-in `firestore.rules` requires a signed-in Firebase user with a verified email for profile writes (`isVerified()`) and enforces a strict public-profile schema. The current browser-local sign-in does not create that Firebase Auth identity, so the current app authentication model and those rules are not aligned. Do not loosen the rules to public writes; that would expose player data and moderation controls. Do not claim that accounts, profiles, social data, or matches are safely cloud-backed until Firebase Authentication, the Firestore document schema, and rules are migrated and tested together.
 
