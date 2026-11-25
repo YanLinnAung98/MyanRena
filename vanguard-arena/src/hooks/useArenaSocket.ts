@@ -404,11 +404,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       saveActiveSessionUser(updated);
       onUserUpdate(updated);
 
-      if (isFirebaseConfigured && db && updated.id) {
-        await setDoc(doc(db, 'users', updated.id), updated, { merge: true }).catch((e) =>
-          console.error('XP Sync Error:', e)
-        );
-      }
+      // Client-calculated XP is intentionally not written to the public profile.
+      // Trusted rewards require a server-authoritative match result; keep this local in Firebase-only mode.
     },
     [resolveCurrentPlayer, onUserUpdate]
   );
@@ -442,12 +439,18 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
       if (isFirebaseConfigured && db) {
         try {
-          await setDoc(doc(db, 'users', me.id), payload, { merge: true });
+          // Presence is isolated from public profile data and never writes the full user object.
+          await setDoc(doc(db, 'presence', me.id), {
+            uid: me.id,
+            online: isOnline,
+            currentActivity: String(activity).slice(0, 80),
+            lastSeenMs: Date.now(),
+          });
           setCloudError(null);
           setConnectionState('connected');
         } catch (err: any) {
-          setCloudError(err?.message || 'Firestore Write Error');
-          console.error('Heartbeat Firestore Error:', err);
+          setCloudError(err?.message || 'Firestore Presence Error');
+          console.error('Presence Firestore Error:', err);
         }
       }
     };
