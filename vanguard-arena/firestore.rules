@@ -361,7 +361,7 @@ service cloud.firestore {
         && request.resource.data.message is string
         && request.resource.data.message.size() >= 1
         && request.resource.data.message.size() <= 2000
-        && request.resource.data.type in ['broadcast', 'message', 'system', 'tournament']
+        && request.resource.data.type in ['broadcast', 'message', 'warning', 'system', 'tournament']
         && request.resource.data.senderName is string
         && request.resource.data.senderName.size() <= 80
         && request.resource.data.createdAtMs is number
