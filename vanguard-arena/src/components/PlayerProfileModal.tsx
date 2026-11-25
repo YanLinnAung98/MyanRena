@@ -174,6 +174,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
           stripUndefined({ friends: nextFriends, blocked: nextBlocked }),
           { merge: true }
         );
+        cloudSynced = true;
       } catch (error) {
         console.error('Unable to sync player relations:', error);
         cloudSynced = false;
