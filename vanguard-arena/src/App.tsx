@@ -22,7 +22,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { arrayRemove, arrayUnion, collection, doc, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
+import { arrayRemove, arrayUnion, collection, doc, getDoc, onSnapshot, query, setDoc, updateDoc, where } from 'firebase/firestore';
 import { useArenaSocket } from './hooks/useArenaSocket.ts';
 import { DEFAULT_LANDING_CONTENT } from './i18n/landingDefaults.ts';
 import { TRANSLATIONS } from './i18n/translations.ts';
@@ -430,6 +430,51 @@ function VanguardAppCore() {
       return;
     }
     socket.pushToast('info', 'ပြိုင်ပွဲစာရင်းမှ ထွက်ခွာပြီးပါပြီ။');
+  };
+
+  const handleLaunchBracketMatch = async (tournament: any, matchupId?: string) => {
+    if (!user || !tournament) return;
+    const matchups = Array.isArray(tournament.matchups) ? tournament.matchups : [];
+    const matchup = matchupId
+      ? matchups.find((item: any) => item.id === matchupId)
+      : matchups.find((item: any) =>
+          item.status !== 'finished' &&
+          (item.player1Id === user.id || item.player2Id === user.id)
+        );
+    if (!matchup || matchup.status === 'finished') {
+      socket.pushToast('info', 'သင့်အတွက် ကစားရန် ပွဲစဉ် မရှိသေးပါ။');
+      return;
+    }
+    if (matchup.player1Id !== user.id && matchup.player2Id !== user.id) {
+      socket.pushToast('error', 'ဤပွဲစဉ်တွင် သင်ပါဝင်ထားခြင်း မရှိပါ။');
+      return;
+    }
+    if (!matchup.matchId || !isFirebaseConfigured || !db) {
+      socket.pushToast('error', 'ပွဲစဉ်အချက်အလက်ကို Firebase မှ ရယူ၍ မရပါ။');
+      return;
+    }
+    try {
+      const matchSnap = await getDoc(doc(db, 'matches', matchup.matchId));
+      if (!matchSnap.exists()) {
+        socket.pushToast('error', 'ပွဲစဉ်ကို မတွေ့ပါ။ Admin ထံ အသိပေးပါ။');
+        return;
+      }
+      const match = matchSnap.data() as any;
+      const playerIds = Array.isArray(match.players) ? match.players.map((p: any) => p?.id) : [];
+      if (!playerIds.includes(user.id) || !playerIds.includes(matchup.player1Id === user.id ? matchup.player2Id : matchup.player1Id)) {
+        socket.pushToast('error', 'ပွဲစဉ်ကစားသမား အချက်အလက် မကိုက်ညီပါ။');
+        return;
+      }
+      if (match.status === 'finished') {
+        socket.pushToast('info', 'ဤပွဲစဉ် ပြီးဆုံးသွားပါပြီ။');
+        return;
+      }
+      socket.setActiveMatch(match);
+      socket.pushToast('success', 'ပြိုင်ပွဲပွဲစဉ်ထဲ ဝင်ရောက်ပြီးပါပြီ။');
+    } catch (error) {
+      console.error('Tournament match launch failed:', error);
+      socket.pushToast('error', 'ပွဲစဉ်ဖွင့်မရပါ။ Firestore Rules နှင့် အင်တာနက်ချိတ်ဆက်မှုကို စစ်ဆေးပါ။');
+    }
   };
 
   // Strictly sends a Pending Mutual Friend Request (never auto-adds without recipient acceptance)
@@ -860,7 +905,7 @@ function VanguardAppCore() {
             frames={socket.frames}
             onJoin={handleJoinTournament}
             onLeave={handleLeaveTournament}
-            onLaunchBracketMatch={() => {}}
+            onLaunchBracketMatch={handleLaunchBracketMatch}
           />
         ) : activeTab === 'leaderboard' ? (
           <LeaderboardView
