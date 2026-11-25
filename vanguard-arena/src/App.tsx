@@ -380,8 +380,9 @@ function VanguardAppCore() {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     });
-    const data = await res.json();
-    if (data.match) socket.setActiveMatch(data.match);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) socket.pushToast('error', data.error || 'Unable to start Sakar-Htar.');
+    else if (data.match && !USE_SERVER_API) socket.setActiveMatch(data.match);
   };
 
   const handleCreateSakarRoom = async (title: string, maxPlayers: number, gameType: GameType = 'sakarhtar') => {
