@@ -53,6 +53,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [displayName, setDisplayName] = React.useState(user.displayName || '');
   const [bio, setBio] = React.useState(user.bio || '');
   const [favoriteGame, setFavoriteGame] = React.useState<GameType>(user.favoriteGame || 'connect4');
+  const [gender, setGender] = React.useState<UserProfile['gender']>(user.gender || 'prefer-not-to-say');
+  const [ageRange, setAgeRange] = React.useState<UserProfile['ageRange']>(user.ageRange || undefined);
+  const [country, setCountry] = React.useState(user.country || '');
+  const [showGender, setShowGender] = React.useState(user.showGender === true);
+  const [showAgeRange, setShowAgeRange] = React.useState(user.showAgeRange === true);
+  const [showCountry, setShowCountry] = React.useState(user.showCountry === true);
   const [selectedFrame, setSelectedFrame] = React.useState(user.frameId || 'bronze');
   const [selectedBannerId, setSelectedBannerId] = React.useState(user.bannerId || 'cyber_gold');
   const [customBannerUrl, setCustomBannerUrl] = React.useState<string>(user.bannerUrl || '');
@@ -67,6 +73,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       setDisplayName(user.displayName || '');
       setBio(user.bio || '');
       setFavoriteGame(user.favoriteGame || 'connect4');
+      setGender(user.gender || 'prefer-not-to-say');
+      setAgeRange(user.ageRange || undefined);
+      setCountry(user.country || '');
+      setShowGender(user.showGender === true);
+      setShowAgeRange(user.showAgeRange === true);
+      setShowCountry(user.showCountry === true);
       setSelectedFrame(user.frameId || 'bronze');
       setSelectedBannerId(user.bannerId || 'cyber_gold');
       setCustomBannerUrl(user.bannerUrl || '');
@@ -286,6 +298,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         displayName: cleanName,
         bio: bio.trim().slice(0, 180),
         favoriteGame,
+        gender,
+        ageRange: ageRange || undefined,
+        country: country.trim().slice(0, 56),
+        showGender,
+        showAgeRange,
+        showCountry,
         frameId: selectedFrame,
       });
       if (ok) {
@@ -483,6 +501,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             placeholder={lang === 'my' ? 'သင့် Profile ဝင်ကြည့်ချိန် မြင်ရမည့် စာသား...' : 'Short bio...'}
             className="w-full p-3 rounded-xl bg-[#070b14] border border-white/10 text-xs text-white focus:outline-none focus:border-amber-400"
           />
+        </div>
+
+        <div className="rounded-xl border border-white/10 bg-[#080d17] p-3 space-y-3">
+          <div>
+            <h4 className="text-xs font-bold text-white">{lang === "my" ? "ကိုယ်ရေးအချက်အလက် (Optional)" : "About you (optional)"}</h4>
+            <p className="text-[10px] text-slate-500 mt-1">{lang === "my" ? "မဖြည့်လည်းရပါတယ်။ အချက်အလက်အားလုံးကို မူလအားဖြင့် Private ထားပါတယ်။" : "All fields are optional and private by default."}</p>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-2">
+            <label className="text-[10px] text-slate-400 space-y-1"><span>Gender</span><select value={gender || "prefer-not-to-say"} onChange={(e) => setGender(e.target.value as UserProfile["gender"])} className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white"><option value="prefer-not-to-say">{lang === "my" ? "မဖော်ပြလိုပါ" : "Prefer not to say"}</option><option value="woman">{lang === "my" ? "အမျိုးသမီး" : "Woman"}</option><option value="man">{lang === "my" ? "အမျိုးသား" : "Man"}</option><option value="non-binary">Non-binary</option><option value="self-describe">{lang === "my" ? "ကိုယ်တိုင်ဖော်ပြမည်" : "Self-describe"}</option></select></label>
+            <label className="text-[10px] text-slate-400 space-y-1"><span>{lang === "my" ? "အသက်အပိုင်းအခြား" : "Age range"}</span><select value={ageRange || ""} onChange={(e) => setAgeRange((e.target.value || undefined) as UserProfile["ageRange"])} className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white"><option value="">{lang === "my" ? "မဖော်ပြပါ" : "Not specified"}</option><option value="under-16">Under 16</option><option value="16-17">16–17</option><option value="18-24">18–24</option><option value="25-34">25–34</option><option value="35-plus">35+</option></select></label>
+            <label className="text-[10px] text-slate-400 space-y-1"><span>{lang === "my" ? "နိုင်ငံ" : "Country"}</span><input maxLength={56} value={country} onChange={(e) => setCountry(e.target.value)} placeholder="e.g. Myanmar" className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white" /></label>
+          </div>
+          <div className="flex flex-wrap gap-x-4 gap-y-2 text-[10px] text-slate-300">
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={showGender} onChange={(e) => setShowGender(e.target.checked)} />{lang === "my" ? "Gender ကို Public ပြမည်" : "Show gender publicly"}</label>
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={showAgeRange} onChange={(e) => setShowAgeRange(e.target.checked)} />{lang === "my" ? "အသက်အပိုင်းအခြား ပြမည်" : "Show age range publicly"}</label>
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={showCountry} onChange={(e) => setShowCountry(e.target.checked)} />{lang === "my" ? "နိုင်ငံ ပြမည်" : "Show country publicly"}</label>
+          </div>
         </div>
 
         <div className="flex justify-end">
