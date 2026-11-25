@@ -546,6 +546,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           case 'rooms:update':
             if (Array.isArray(message.openRooms)) setOpenRooms(message.openRooms);
             break;
+          case 'tournaments:update':
+            if (Array.isArray(message.tournaments)) setTournaments(message.tournaments);
+            break;
+          case 'social:update':
+          case 'dm:received':
+            setSocialRefreshTick((previous) => previous + 1);
+            break;
           case 'queue:tick':
             if (message.queue) {
               setQueueStatus(message.queue);
@@ -1491,6 +1498,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     maintenanceMode,
     maintenanceMessage,
     pingMs,
+    socialRefreshTick,
     landingContent,
     setLandingContent,
     announcement,
