@@ -862,7 +862,7 @@ function VanguardAppCore() {
 
       {/* Mobile Bottom Navigation with Incoming Friend Request Badge */}
       {!socket.activeMatch && (
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#080d18]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-12px_36px_rgba(0,0,0,.4)]">
+        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#080d18]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-12px_36px_rgba(0,0,0,.4)] safe-bottom-bar">
           <div className="grid grid-cols-5 h-[72px] items-center px-1">
             {navItems.map((item) => {
               const active = activeTab === item.id;
