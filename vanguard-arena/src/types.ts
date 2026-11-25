@@ -98,7 +98,7 @@ export interface Tournament {
   scheduledAt?: string;
   featuredOnBillboard?: boolean;
   status: 'open' | 'ongoing' | 'completed';
-  participants: string[];
+  participants: any[];
   matchups?: TournamentMatchup[];
   winners?: TournamentWinnerRecord[];
   createdAtMs?: number;
