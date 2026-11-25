@@ -33,7 +33,7 @@ export interface UserProfile {
   bio?: string;
   favoriteGame?: GameType;
   gender?: 'woman' | 'man' | 'non-binary' | 'self-describe' | 'prefer-not-to-say';
-  ageRange?: 'under-16' | '16-17' | '18-24' | '25-34' | '35-plus';
+  ageRange?: 'under-16' | '16-17' | '18-24' | '25-34' | '35-plus' | '';
   country?: string;
   showGender?: boolean;
   showAgeRange?: boolean;
