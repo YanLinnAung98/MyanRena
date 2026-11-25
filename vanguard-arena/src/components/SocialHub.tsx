@@ -70,6 +70,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [chatInput, setChatInput] = React.useState('');
   const [copiedMyId, setCopiedMyId] = React.useState(false);
   const [serverSearchResults, setServerSearchResults] = React.useState<UserProfile[]>([]);
+  const [serverRelatedUsers, setServerRelatedUsers] = React.useState<UserProfile[]>([]);
   const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
 
   React.useEffect(() => {
@@ -82,6 +83,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   const applySocialPayload = React.useCallback((payload: any) => {
     setMessages(Array.isArray(payload?.messages) ? payload.messages : []);
+    setServerRelatedUsers(Array.isArray(payload?.relatedUsers) ? payload.relatedUsers : []);
     setIncomingRequests(Array.isArray(payload?.incomingRequests) ? payload.incomingRequests : []);
     setOutgoingRequests(Array.isArray(payload?.outgoingRequests) ? payload.outgoingRequests : []);
     const friends = Array.isArray(payload?.friends) ? payload.friends : [];
@@ -182,9 +184,14 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const blockedIds: string[] = Array.isArray(currentUser.blocked) ? currentUser.blocked : [];
 
   const otherUsers = React.useMemo(() => {
-    const source = USE_SERVER_API && searchQuery.trim().length >= 2 ? serverSearchResults : allUsers;
-    return source.filter((u) => u.id !== currentUser.id);
-  }, [allUsers, currentUser.id, serverSearchResults, searchQuery]);
+    const source = USE_SERVER_API
+      ? searchQuery.trim().length >= 2
+        ? [...serverRelatedUsers, ...serverSearchResults]
+        : [...allUsers, ...serverRelatedUsers]
+      : allUsers;
+    const unique = new Map(source.map((player) => [player.id, player]));
+    return Array.from(unique.values()).filter((player) => player.id !== currentUser.id);
+  }, [allUsers, currentUser.id, serverRelatedUsers, serverSearchResults, searchQuery]);
 
   const friendProfiles = otherUsers.filter((u) => friendIds.includes(u.id) && !blockedIds.includes(u.id));
   const blockedProfiles = otherUsers.filter((u) => blockedIds.includes(u.id));
