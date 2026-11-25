@@ -24,6 +24,16 @@ The GitHub Pages deployment is a static/offline-compatible frontend. It cannot h
 - The administrator password exists only in the `ADMIN_INITIAL_PASSWORD` deployment secret. On an existing database, startup rotates the administrator password to the configured secret when it differs and revokes existing administrator sessions. If an administrator account already exists, the server will refuse to start when this secret is missing.
 - The CI workflow starts the Node server and smoke-tests health, registration, login, social data, and authenticated WebSocket state before publishing the static Pages artifact.
 
+## Existing data and account migration
+
+The new backend stores username/password accounts, match data, and social relationships in SQLite on the persistent Render disk. Existing Firestore-only player documents are **not automatically copied** into the new SQLite database. Keep the existing Firebase project and data intact until a controlled migration has been completed. Do not delete the original Firestore collections as part of the Render setup.
+
+The frontend's local/offline demo accounts are browser-specific and are not uploaded to the backend. Players who created accounts only in a browser's local storage need a separate import process before switching devices or moving to the hosted backend.
+
+## Dependency security note (checked 25 November 2026)
+
+CI currently reports four high-severity npm audit entries in the Firebase dependency chain. The actionable gRPC finding is caused by the Firebase Firestore package's pinned `@grpc/grpc-js` 1.9.x dependency. The Firebase maintainers merged [PR #10412](https://github.com/firebase/firebase-js-sdk/pull/10412) on 24 November 2026 to upgrade Firestore to gRPC 1.14.7 and add the corresponding connection-termination safeguards. The latest published Firebase JS SDK release notes currently list 13.4.0 (16 November 2026), which predates that merge. The CI audit step therefore reports the finding without forcing an unsafe major downgrade or an override that bypasses the upstream Firestore compatibility changes. Re-run `npm audit` after a Firebase release that includes PR #10412.
+
 ## Local backend check
 
 From `vanguard-arena/`:
