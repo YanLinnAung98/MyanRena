@@ -379,7 +379,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const handleSendWarning = async (target: any, reasonText = warnReason) => {
     if (!reasonText.trim()) return;
     const wid = `warn_${Date.now()}`;
-    if (isFirebaseConfigured && db) {
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် Warning မပို့နိုင်ပါ။');
+      return;
+    }
+    try {
       await setDoc(
         doc(db, 'warnings', wid),
         stripUndefined({
@@ -390,7 +394,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           acknowledged: false,
           createdAtMs: Date.now(),
         })
-      ).catch(() => {});
+      );
+    } catch (error) {
+      console.error('Warning delivery failed:', error);
+      onNotify('error', 'Warning မပို့နိုင်ပါ။ Firestore Rules နှင့် Connection ကို စစ်ဆေးပါ။');
+      return;
     }
     setWarnReason('');
     onNotify('success', `${target.displayName} ထံ Warning ပို့ပြီးပါပြီ!`);
@@ -412,8 +420,16 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
       answerIndex: newAnswerIdx,
       createdAtMs: Date.now(),
     });
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'riddles', id), item).catch(() => {});
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် မေးခွန်းကို Cloud ပေါ် မသိမ်းနိုင်ပါ။');
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'riddles', id), item);
+    } catch (error) {
+      console.error('Quiz question save failed:', error);
+      onNotify('error', 'မေးခွန်းသိမ်းဆည်းမှု မအောင်မြင်ပါ။ Firestore Rules နှင့် Connection ကို စစ်ဆေးပါ။');
+      return;
     }
     setNewQuestion('');
     setNewOpts(['', '', '', '']);
@@ -423,10 +439,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   };
 
   const handleDeleteRiddle = async (id: string) => {
-    if (isFirebaseConfigured && db) {
-      await deleteDoc(doc(db, 'riddles', id)).catch(() => {});
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှုမရှိသဖြင့် မေးခွန်းကို မဖျက်နိုင်ပါ။');
+      return;
     }
-    onNotify('info', 'မေးခွန်း ဖျက်ပြီးပါပြီ။');
+    try {
+      await deleteDoc(doc(db, 'riddles', id));
+      onNotify('info', 'မေးခွန်း ဖျက်ပြီးပါပြီ။');
+    } catch (error) {
+      console.error('Quiz question delete failed:', error);
+      onNotify('error', 'မေးခွန်းဖျက်မှု မအောင်မြင်ပါ။ Firestore Rules နှင့် Connection ကို စစ်ဆေးပါ။');
+    }
   };
 
   // Branding Save
