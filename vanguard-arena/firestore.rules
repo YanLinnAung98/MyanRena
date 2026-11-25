@@ -127,7 +127,7 @@ service cloud.firestore {
     // Public Player Profiles (no PII)
     match /users/{userId} {
       allow get: if isValidId(userId) && isSignedIn();
-      allow list: if isSignedIn() && resource.data.uid is string;
+      allow list: if isSignedIn();
       allow create: if isValidId(userId) && isOwner(userId)
         && isValidUserPublic(incoming(), userId)
         && incoming().updatedAt == request.time;
@@ -201,6 +201,49 @@ service cloud.firestore {
         );
       allow delete: if isSignedIn()
         && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+    }
+
+    // Direct messages are visible only to their sender and recipient.
+    match /messages/{messageId} {
+      function validMessage(data) {
+        return data.keys().hasAll(['id', 'fromUserId', 'fromName', 'toUserId', 'toName', 'text', 'createdAtMs'])
+          && data.keys().hasOnly(['id', 'fromUserId', 'fromName', 'toUserId', 'toName', 'text', 'createdAtMs'])
+          && data.id == messageId
+          && data.fromUserId is string && data.fromUserId.size() >= 1 && data.fromUserId.size() <= 128
+          && data.toUserId is string && data.toUserId.size() >= 1 && data.toUserId.size() <= 128
+          && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 64
+          && data.toName is string && data.toName.size() >= 1 && data.toName.size() <= 64
+          && data.text is string && data.text.size() >= 1 && data.text.size() <= 2000
+          && data.fromUserId != data.toUserId
+          && data.createdAtMs is number;
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(messageId)
+        && validMessage(request.resource.data)
+        && request.resource.data.fromUserId == request.auth.uid;
+      allow update, delete: if false;
+    }
+
+    // A block record is controlled by the player who created it.
+    match /userBlocks/{blockId} {
+      function validBlock(data) {
+        return data.keys().hasAll(['blockerId', 'blockedId', 'createdAtMs'])
+          && data.keys().hasOnly(['blockerId', 'blockedId', 'createdAtMs'])
+          && data.blockerId is string && data.blockerId.size() >= 1 && data.blockerId.size() <= 128
+          && data.blockedId is string && data.blockedId.size() >= 1 && data.blockedId.size() <= 128
+          && data.blockerId != data.blockedId
+          && blockId == data.blockerId + '__' + data.blockedId
+          && data.createdAtMs is number;
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.blockerId == request.auth.uid || resource.data.blockedId == request.auth.uid);
+      allow create: if isSignedIn()
+        && validBlock(request.resource.data)
+        && request.resource.data.blockerId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isSignedIn() && resource.data.blockerId == request.auth.uid;
     }
 
     // Match History Records
