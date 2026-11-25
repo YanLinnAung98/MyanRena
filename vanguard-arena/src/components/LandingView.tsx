@@ -49,7 +49,7 @@ async function hashLocalSecret(secret: string): Promise<{ algorithm: string; sal
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt, iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
     key,
     256
   );
@@ -60,7 +60,7 @@ async function verifyLocalSecret(secret: string, stored: any): Promise<boolean> 
   if (!stored || stored.algorithm !== 'pbkdf2-sha256' || !stored.salt || !stored.hash) return false;
   const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveBits']);
   const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: base64ToBytes(String(stored.salt)), iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: base64ToBytes(String(stored.salt)) as unknown as BufferSource, iterations: LOCAL_HASH_ITERATIONS, hash: 'SHA-256' },
     key,
     256
   );
