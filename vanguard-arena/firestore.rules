@@ -194,7 +194,12 @@ service cloud.firestore {
             && incoming().updatedAt == request.time
             && incoming().diff(existing()).affectedKeys().hasOnly([
               'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame',
-              'bannerId', 'bannerUrl', 'country', 'showCountry', 'updatedAt'
+              'bannerId', 'bannerUrl', 'country', 'showCountry', 'updatedAt',
+              // Permit owners to remove legacy fields from older public documents.
+              'password', 'email', 'recoveryPin', 'recoveryPinHash', 'role', 'isAdmin',
+              'status', 'friends', 'blocked', 'inventory', 'gifts', 'unlockedFrames',
+              'unlockedBanners', 'gender', 'ageRange', 'showGender', 'showAgeRange',
+              'createdAt', 'createdAtMs', 'updatedAtMs', 'rank'
             ])
           ) ||
           (
