@@ -487,7 +487,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const handleSendDm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeChatUserId || !chatInput.trim()) return;
-    const target = allUsers.find((u) => u.id === activeChatUserId);
+    const target = otherUsers.find((u) => u.id === activeChatUserId);
     const targetBlockedMe = blockedByOtherIds.includes(activeChatUserId);
 
     if (blockedIds.includes(activeChatUserId) || targetBlockedMe) {
@@ -531,7 +531,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
     soundEngine.playClick();
   };
 
-  const activeChatPartner = allUsers.find((u) => u.id === activeChatUserId);
+  const activeChatPartner = otherUsers.find((u) => u.id === activeChatUserId);
   const activeThread = messages.filter(
     (m) =>
       (m.fromUserId === currentUser.id && m.toUserId === activeChatUserId) ||
