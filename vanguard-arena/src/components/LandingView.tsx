@@ -591,7 +591,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
               <div className="flex items-center justify-center gap-1.5 text-[11px] text-slate-400">
                 <Lock className="w-3 h-3 text-amber-400" />
-                <span>{lang === 'my' ? 'Real-Time Cloud Sync ဖြင့် ချိတ်ဆက်ထားပါသည်' : 'Secured Real-Time Cloud Sync'}</span>
+                <span>{USE_SERVER_API
+                  ? (lang === 'my' ? 'လုံခြုံသော Hosted Backend ဖြင့် ချိတ်ဆက်ထားပါသည်' : 'Connected to secured hosted backend')
+                  : (lang === 'my' ? 'အကောင့်ကို ဒီ Browser ထဲတွင်သာ သိမ်းဆည်းထားသည်' : 'Account is stored in this browser only')}</span>
               </div>
             </div>
           </div>
@@ -615,6 +617,13 @@ export const LandingView: React.FC<LandingViewProps> = ({
                 </div>
               </div>
               <p className="text-xs text-slate-300">{t.auth.pinModalDesc}</p>
+              {!USE_SERVER_API && (
+                <p className="rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-xs leading-relaxed text-amber-100">
+                  {lang === 'my'
+                    ? 'သတိပြုရန် — ဤအကောင့်သည် ဒီ Browser ထဲတွင်သာ သိမ်းဆည်းထားပါသည်။ အခြား Device တွင် ဝင်ရောက်၍မရသေးသလို Browser Data ဖျက်မိပါက အကောင့်နှင့် Recovery PIN ကို ပြန်လည်ရယူမရနိုင်ပါ။'
+                    : 'This account is stored only in this browser. It cannot be used on another device, and clearing browser data will permanently remove the account and its Recovery PIN.'}
+                </p>
+              )}
               <div className="p-3.5 rounded-xl bg-[#070b14] border border-white/10 flex items-center justify-between">
                 <span className="text-2xl font-mono font-bold tracking-[0.25em] text-amber-400">
                   {signupPinModal.pin}
