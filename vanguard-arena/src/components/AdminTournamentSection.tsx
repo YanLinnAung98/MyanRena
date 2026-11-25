@@ -86,11 +86,20 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
 
   const managingTournament = tournaments.find((t) => t.id === managingTournamentId) || null;
 
-  const updateTournamentFields = async (tid: string, patch: Partial<Tournament>, toast?: string) => {
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'tournaments', tid), stripUndefined(patch), { merge: true }).catch(() => {});
+  const updateTournamentFields = async (tid: string, patch: Partial<Tournament>, toast?: string): Promise<boolean> => {
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှု မရရှိသေးပါ။ ပြောင်းလဲမှုကို မသိမ်းနိုင်ပါ။');
+      return false;
     }
-    if (toast) onNotify('success', toast);
+    try {
+      await setDoc(doc(db, 'tournaments', tid), stripUndefined(patch), { merge: true });
+      if (toast) onNotify('success', toast);
+      return true;
+    } catch (error) {
+      console.error('Tournament update failed:', error);
+      onNotify('error', 'ပြိုင်ပွဲအချက်အလက် သိမ်းဆည်းမှု မအောင်မြင်ပါ။ Firestore Rules ကို စစ်ဆေးပါ။');
+      return false;
+    }
   };
 
   /**
@@ -157,7 +166,7 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       });
 
       if (isFirebaseConfigured && db) {
-        await setDoc(doc(db, 'matches', matchId), matchDoc).catch(() => {});
+        await setDoc(doc(db, 'matches', matchId), matchDoc);
       }
 
       matchups.push({
@@ -196,8 +205,16 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
       createdAt: new Date().toISOString(),
     });
 
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'tournaments', id), item).catch(() => {});
+    if (!isFirebaseConfigured || !db) {
+      onNotify('error', 'Firebase ချိတ်ဆက်မှု မရရှိသေးပါ။ ပြိုင်ပွဲဖန်တီး၍ မရပါ။');
+      return;
+    }
+    try {
+      await setDoc(doc(db, 'tournaments', id), item);
+    } catch (error) {
+      console.error('Tournament creation failed:', error);
+      onNotify('error', 'ပြိုင်ပွဲဖန်တီးမှု မအောင်မြင်ပါ။ Firestore Rules ကို စစ်ဆေးပါ။');
+      return;
     }
     setTitle('');
     setDescription('');
@@ -220,11 +237,12 @@ export const AdminTournamentSection: React.FC<AdminTournamentSectionProps> = ({
 
     const matchups = await createMatchupsAndFirestoreMatches(tr, ids, 1);
 
-    await updateTournamentFields(
+    const saved = await updateTournamentFields(
       tr.id,
       { status: 'ongoing', matchups, featuredOnBillboard: true },
       `🚀 ${tr.title} စတင်ပြီး ပွဲစဉ် ${matchups.length} ခု ဖန်တီးလိုက်ပါပြီ! ကစားသမားများ ချက်ချင်းဝင်ဆော့နိုင်ပါပြီ။`
     );
+    if (!saved) return;
 
     if (isFirebaseConfigured && db) {
       const notiId = `noti_${Date.now()}`;
