@@ -15,7 +15,7 @@ import {
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
-import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { doc, getDoc, serverTimestamp, setDoc } from 'firebase/firestore';
 import { db, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
@@ -134,9 +134,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     const cloudDb = db;
     if (isFirebaseConfigured && cloudDb) {
       try {
-        // Sync only approved public profile fields. Never write passwords, recovery data,
-      // moderation flags, inventory, or client-editable XP/statistics to the public user document.
-      const cloudSafeUser = stripUndefined({
+        // Read trusted public stats first. Client-side match results must never overwrite them.
+        const publicUserRef = doc(cloudDb, 'users', user.id);
+        const publicUserSnapshot = await getDoc(publicUserRef);
+        const existingPublicUser = publicUserSnapshot.exists() ? publicUserSnapshot.data() : {};
+        // Sync only approved profile fields; preserve server/admin-managed stats and strip legacy private fields.
+        const cloudSafeUser = stripUndefined({
         uid: user.id,
         username: user.username,
         gameId: user.gameId,
@@ -149,14 +152,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         bannerUrl: fullUserPayload.bannerUrl,
         country: fullUserPayload.country,
         showCountry: fullUserPayload.showCountry,
-        xp: Number(user.xp) || 0,
-        wins: Number(user.wins) || 0,
-        losses: Number(user.losses) || 0,
-        draws: Number(user.draws) || 0,
+        rank: typeof existingPublicUser.rank === 'string' ? existingPublicUser.rank : undefined,
+        xp: Number(existingPublicUser.xp) || 0,
+        wins: Number(existingPublicUser.wins) || 0,
+        losses: Number(existingPublicUser.losses) || 0,
+        draws: Number(existingPublicUser.draws) || 0,
         updatedAt: serverTimestamp(),
       });
       // Replace the public document so legacy password/private fields cannot linger in it.
-      await setDoc(doc(cloudDb, 'users', user.id), cloudSafeUser);
+      await setDoc(publicUserRef, cloudSafeUser);
       } catch (err: any) {
         cloudOk = false;
         onNotify(
