@@ -32,6 +32,7 @@ import {
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { ShareProfileModal } from './ShareProfileModal.tsx';
+import { MyanmarCityPicker } from './MyanmarCityPicker.tsx';
 
 const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PROFILE_IMAGE_DATA_URL_LENGTH = 260_000;
@@ -62,10 +63,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [favoriteGame, setFavoriteGame] = React.useState<GameType>(user.favoriteGame || 'connect4');
   const [gender, setGender] = React.useState<UserProfile['gender']>(user.gender || 'prefer-not-to-say');
   const [ageRange, setAgeRange] = React.useState<UserProfile['ageRange']>(user.ageRange || undefined);
-  const [country, setCountry] = React.useState(user.country || '');
+  const [city, setCity] = React.useState(user.city || '');
   const [showGender, setShowGender] = React.useState(user.showGender === true);
   const [showAgeRange, setShowAgeRange] = React.useState(user.showAgeRange === true);
-  const [showCountry, setShowCountry] = React.useState(user.showCountry === true);
+  const [showCity, setShowCity] = React.useState(user.showCity === true || user.showCountry === true);
   const [selectedFrame, setSelectedFrame] = React.useState(user.frameId || 'bronze');
   const [selectedBannerId, setSelectedBannerId] = React.useState(user.bannerId || 'cyber_gold');
   const [customBannerUrl, setCustomBannerUrl] = React.useState<string>(user.bannerUrl || '');
@@ -82,10 +83,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       setFavoriteGame(user.favoriteGame || 'connect4');
       setGender(user.gender || 'prefer-not-to-say');
       setAgeRange(user.ageRange || undefined);
-      setCountry(user.country || '');
+      setCity(user.city || '');
       setShowGender(user.showGender === true);
       setShowAgeRange(user.showAgeRange === true);
-      setShowCountry(user.showCountry === true);
+      setShowCity(user.showCity === true || user.showCountry === true);
       setSelectedFrame(user.frameId || 'bronze');
       setSelectedBannerId(user.bannerId || 'cyber_gold');
       setCustomBannerUrl(user.bannerUrl || '');
@@ -150,8 +151,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         favoriteGame: fullUserPayload.favoriteGame,
         bannerId: fullUserPayload.bannerId,
         bannerUrl: fullUserPayload.bannerUrl,
-        country: fullUserPayload.country,
-        showCountry: fullUserPayload.showCountry,
+        city: fullUserPayload.city,
+        showCity: fullUserPayload.showCity,
         rank: typeof existingPublicUser.rank === 'string' ? existingPublicUser.rank : undefined,
         gifts: Array.isArray(existingPublicUser.gifts) ? existingPublicUser.gifts : undefined,
         unlockedFrames: Array.isArray(existingPublicUser.unlockedFrames) ? existingPublicUser.unlockedFrames : undefined,
@@ -367,10 +368,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         favoriteGame,
         gender,
         ageRange: ageRange || '',
-        country: country.trim().slice(0, 56),
+        city,
         showGender,
         showAgeRange,
-        showCountry,
+        showCity,
         frameId: selectedFrame,
       });
       if (ok) {
@@ -397,7 +398,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     Boolean(user.bio?.trim()),
     Boolean(user.favoriteGame),
     Boolean(user.bannerUrl || user.bannerId),
-    Boolean(user.country?.trim()),
+    Boolean(user.city || user.country?.trim()),
   ];
   const profileCompletion = Math.round((profileChecks.filter(Boolean).length / profileChecks.length) * 100);
 
@@ -504,7 +505,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             'Bio',
             lang === 'my' ? 'အကြိုက်ဆုံးဂိမ်း' : 'Favorite game',
             'Banner',
-            lang === 'my' ? 'နိုင်ငံ' : 'Country',
+            lang === 'my' ? 'မြို့' : 'City',
           ].map((label, index) => (
             <div key={label} className="flex items-center gap-1.5 text-[10px] text-slate-400">
               <span className={`w-4 h-4 rounded-full flex items-center justify-center ${profileChecks[index] ? 'bg-emerald-500/15 text-emerald-300' : 'bg-white/5 text-slate-500'}`}>
@@ -615,12 +616,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <div className="grid sm:grid-cols-3 gap-2">
             <label className="text-[10px] text-slate-400 space-y-1"><span>Gender</span><select value={gender || "prefer-not-to-say"} onChange={(e) => setGender(e.target.value as UserProfile["gender"])} className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white"><option value="prefer-not-to-say">{lang === "my" ? "မဖော်ပြလိုပါ" : "Prefer not to say"}</option><option value="woman">{lang === "my" ? "အမျိုးသမီး" : "Woman"}</option><option value="man">{lang === "my" ? "အမျိုးသား" : "Man"}</option><option value="non-binary">Non-binary</option><option value="self-describe">{lang === "my" ? "ကိုယ်တိုင်ဖော်ပြမည်" : "Self-describe"}</option></select></label>
             <label className="text-[10px] text-slate-400 space-y-1"><span>{lang === "my" ? "အသက်အပိုင်းအခြား" : "Age range"}</span><select value={ageRange || ""} onChange={(e) => { const next = (e.target.value || undefined) as UserProfile["ageRange"]; setAgeRange(next); if (next === "under-16") { setShowAgeRange(false); setShowGender(false); } }} className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white"><option value="">{lang === "my" ? "မဖော်ပြပါ" : "Not specified"}</option><option value="under-16">Under 16</option><option value="16-17">16–17</option><option value="18-24">18–24</option><option value="25-34">25–34</option><option value="35-plus">35+</option></select></label>
-            <label className="text-[10px] text-slate-400 space-y-1"><span>{lang === "my" ? "နိုင်ငံ" : "Country"}</span><input maxLength={56} value={country} onChange={(e) => setCountry(e.target.value)} placeholder="e.g. Myanmar" className="w-full h-10 rounded-lg bg-[#111827] border border-white/10 px-2 text-xs text-white" /></label>
+            <MyanmarCityPicker value={city} lang={lang} onChange={setCity} />
           </div>
           <div className="flex flex-wrap gap-x-4 gap-y-2 text-[10px] text-slate-300">
             <label className="flex items-center gap-1.5"><input type="checkbox" checked={showGender} disabled={ageRange === "under-16"} onChange={(e) => setShowGender(e.target.checked)} />{lang === "my" ? "Gender ကို Public ပြမည်" : "Show gender publicly"}</label>
             <label className="flex items-center gap-1.5"><input type="checkbox" checked={showAgeRange} disabled={ageRange === "under-16"} onChange={(e) => setShowAgeRange(e.target.checked)} />{lang === "my" ? "အသက်အပိုင်းအခြား ပြမည်" : "Show age range publicly"}</label>
-            <label className="flex items-center gap-1.5"><input type="checkbox" checked={showCountry} onChange={(e) => setShowCountry(e.target.checked)} />{lang === "my" ? "နိုင်ငံ ပြမည်" : "Show country publicly"}</label>
+            <label className="flex items-center gap-1.5"><input type="checkbox" checked={showCity} onChange={(e) => setShowCity(e.target.checked)} />{lang === "my" ? "မြို့ကို Public ပြမည်" : "Show city publicly"}</label>
           </div>
         </div>
 
