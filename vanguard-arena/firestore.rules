@@ -52,7 +52,627 @@ service cloud.firestore {
         && (!('favoriteGame' in data) || data.favoriteGame in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar', 'sakar_htar'])
         && (!('bannerId' in data) || (data.bannerId is string && data.bannerId.size() <= 80))
         && (!('bannerUrl' in data) || (data.bannerUrl is string && data.bannerUrl.size() <= 2048))
-        && (!('city' in data) || (data.city is string && data.city.size() <= 20))
+        && (!('city' in data) || (data.city is string && data.city.size() <= 20 && (data.city == '' || data.city.matches('^MMR[A-Z0-9]{4,17}
+        && (!('showCity' in data) || data.showCity is bool)
+        && (!('country' in data) || (data.country is string && data.country.size() <= 56))
+        && (!('showCountry' in data) || data.showCountry is bool)
+        && (!('rank' in data) || (data.rank is string && data.rank.size() <= 20))
+        && (!('gifts' in data) || (data.gifts is list && data.gifts.size() <= 100))
+        && (!('unlockedFrames' in data) || (data.unlockedFrames is list && data.unlockedFrames.size() <= 100))
+        && (!('unlockedBanners' in data) || (data.unlockedBanners is list && data.unlockedBanners.size() <= 100))
+        && data.xp is number && data.xp >= 0 && data.xp <= 10000000
+        && data.wins is number && data.wins >= 0 && data.wins <= 1000000
+        && data.losses is number && data.losses >= 0 && data.losses <= 1000000
+        && data.draws is number && data.draws >= 0 && data.draws <= 1000000
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'createdAt'])
+        && data.keys().hasOnly(['uid', 'email', 'createdAt'])
+        && data.uid is string && data.uid == userId && data.uid.size() <= 128
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.createdAt is timestamp;
+    }
+
+    function isValidMatch(data, matchId) {
+      return data.keys().hasAll(['id', 'gameType', 'mode', 'isRealtimePvp', 'status', 'players', 'turnUserId', 'scores', 'round', 'createdAt'])
+        && data.keys().hasOnly([
+          'id', 'gameType', 'mode', 'isRealtimePvp', 'difficulty', 'bestOf', 'turnTimeLimit',
+          'turnDeadline', 'status', 'players', 'turnUserId', 'scores', 'round', 'tttBoard',
+          'c4Board', 'rpsPicks', 'rpsLastRound', 'riddles', 'riddleIndex', 'roundAnswers',
+          'chat', 'winnerId', 'isDraw', 'createdAt', 'updatedAtMs', 'tournamentId',
+          'tournamentTitle', 'matchupId', 'winningCells', 'botPhase', 'botTargetCol'
+        ])
+        && data.id is string && data.id == matchId && data.id.size() <= 128
+        && data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar']
+        && data.mode is string && data.mode.size() <= 32
+        && data.isRealtimePvp is bool
+        && data.status in ['active', 'finished']
+        && data.players is list && data.players.size() == 2
+        && data.players[0].id is string && data.players[0].id.size() >= 1 && data.players[0].id.size() <= 128
+        && data.players[1].id is string && data.players[1].id.size() >= 1 && data.players[1].id.size() <= 128
+        && data.players[0].id != data.players[1].id
+        && data.turnUserId is string && data.turnUserId.size() <= 128
+        && data.scores is map
+        && data.round is number && data.round >= 1 && data.round <= 1000
+        && data.createdAt is string && data.createdAt.size() <= 40
+        && (!('difficulty' in data) || (data.difficulty is string && data.difficulty.size() <= 20))
+        && (!('bestOf' in data) || data.bestOf in [3, 5])
+        && (!('turnTimeLimit' in data) || (data.turnTimeLimit is number && data.turnTimeLimit >= 5 && data.turnTimeLimit <= 180))
+        && (!('turnDeadline' in data) || (data.turnDeadline is string && data.turnDeadline.size() <= 40))
+        && (!('tttBoard' in data) || (data.tttBoard is list && data.tttBoard.size() == 9))
+        && (!('c4Board' in data) || (data.c4Board is list && data.c4Board.size() == 6))
+        && (!('rpsPicks' in data) || data.rpsPicks is map)
+        && (!('rpsLastRound' in data) || data.rpsLastRound == null || data.rpsLastRound is map)
+        && (!('riddles' in data) || (data.riddles is list && data.riddles.size() <= 100))
+        && (!('riddleIndex' in data) || (data.riddleIndex is number && data.riddleIndex >= 0))
+        && (!('roundAnswers' in data) || data.roundAnswers is map)
+        && (!('chat' in data) || (data.chat is list && data.chat.size() <= 500))
+        && (!('winnerId' in data) || data.winnerId == null || (data.winnerId is string && data.winnerId.size() <= 128))
+        && (!('isDraw' in data) || data.isDraw is bool)
+        && (!('updatedAtMs' in data) || data.updatedAtMs is number)
+        && (!('tournamentId' in data) || (data.tournamentId is string && data.tournamentId.size() <= 128))
+        && (!('tournamentTitle' in data) || (data.tournamentTitle is string && data.tournamentTitle.size() <= 80))
+        && (!('matchupId' in data) || (data.matchupId is string && data.matchupId.size() <= 128))
+        && (!('winningCells' in data) || data.winningCells is list)
+        && (!('botPhase' in data) || (data.botPhase is string && data.botPhase.size() <= 32))
+        && (!('botTargetCol' in data) || data.botTargetCol == null || data.botTargetCol is number);
+    }
+
+    function isValidFrame(data, frameId) {
+      return data.keys().hasAll(['frameId', 'name', 'imageUrl', 'isActive', 'createdAt'])
+        && data.keys().hasOnly(['frameId', 'name', 'imageUrl', 'unlockTier', 'isActive', 'createdAt'])
+        && data.frameId is string && data.frameId == frameId && data.frameId.size() <= 64
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 64
+        && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 2048
+        && (!('unlockTier' in data) || (data.unlockTier is string && data.unlockTier.size() <= 32))
+        && data.isActive is bool
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFeatureLock(data) {
+      return data.keys().hasAll(['key', 'locked', 'updatedAt'])
+        && data.keys().hasOnly(['key', 'locked', 'updatedAt'])
+        && data.key is string && data.key.size() >= 2 && data.key.size() <= 32
+        && data.locked is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidTournament(data, tournamentId) {
+      return data.keys().hasAll(['id', 'title', 'gameType', 'status', 'bracketSize', 'participants', 'matchups', 'winners', 'createdAtMs', 'createdAt'])
+        && data.keys().hasOnly(['id', 'title', 'description', 'gameType', 'bracketSize', 'prizeXp', 'prizeLabel', 'minXpRequired', 'scheduledAt', 'featuredOnBillboard', 'status', 'participants', 'matchups', 'winners', 'createdAtMs', 'createdAt'])
+        && data.id is string && data.id == tournamentId && data.id.size() <= 128
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 80
+        && data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar']
+        && data.status in ['open', 'ongoing', 'completed']
+        && data.bracketSize is number && data.bracketSize in [8, 16, 32]
+        && data.participants is list && data.participants.size() <= data.bracketSize
+        && data.matchups is list && data.matchups.size() <= 64
+        && data.winners is list && data.winners.size() <= 64
+        && data.createdAtMs is number
+        && data.createdAt is string && data.createdAt.size() <= 40
+        && (!('description' in data) || (data.description is string && data.description.size() <= 2000))
+        && (!('prizeXp' in data) || (data.prizeXp is number && data.prizeXp >= 0 && data.prizeXp <= 10000000))
+        && (!('prizeLabel' in data) || (data.prizeLabel is string && data.prizeLabel.size() <= 120))
+        && (!('minXpRequired' in data) || (data.minXpRequired is number && data.minXpRequired >= 0))
+        && (!('scheduledAt' in data) || (data.scheduledAt is string && data.scheduledAt.size() <= 80))
+        && (!('featuredOnBillboard' in data) || data.featuredOnBillboard is bool);
+    }
+
+    // Connection health probe document (safe read-only)
+    match /test/connection {
+      allow get: if true;
+    }
+
+    // Username reservations are write-once; a signed-in user can claim only their own name.
+    match /usernames/{username} {
+      allow get, list: if isSignedIn();
+      allow create: if isSignedIn()
+        && username.matches('^[a-z0-9_]{3,24}$')
+        && request.resource.data.keys().hasOnly(['uid', 'username', 'createdAt'])
+        && request.resource.data.keys().hasAll(['uid', 'username', 'createdAt'])
+        && request.resource.data.uid == request.auth.uid
+        && request.resource.data.username == username
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    // Public Player Profiles (no PII)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isValidId(userId) && isOwner(userId)
+        && isValidUserPublic(incoming(), userId)
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId) && isValidUserPublic(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().username == existing().username
+        && incoming().gameId == existing().gameId
+        && (
+          (
+            isOwner(userId)
+            && (!('xp' in existing()) ? incoming().xp == 0 : incoming().xp == existing().xp)
+            && (!('wins' in existing()) ? incoming().wins == 0 : incoming().wins == existing().wins)
+            && (!('losses' in existing()) ? incoming().losses == 0 : incoming().losses == existing().losses)
+            && (!('draws' in existing()) ? incoming().draws == 0 : incoming().draws == existing().draws)
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'avatarUrl', 'frameId', 'bio', 'favoriteGame',
+              'bannerId', 'bannerUrl', 'city', 'showCity', 'country', 'showCountry', 'updatedAt',
+              // Permit owners to remove legacy fields from older public documents.
+              'password', 'email', 'recoveryPin', 'recoveryPinHash', 'role', 'isAdmin',
+              'status', 'friends', 'blocked', 'inventory',
+              'gender', 'ageRange', 'showGender', 'showAgeRange',
+              'online', 'currentActivity', 'lastSeenMs', 'device', 'deviceType',
+              'os', 'browser', 'screen', 'userAgent', 'lastActive',
+              'createdAt', 'createdAtMs', 'updatedAtMs'
+            ])
+          ) ||
+          (
+            isAdmin()
+            && incoming().updatedAt == request.time
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'frameId', 'bio', 'bannerId', 'rank', 'gifts',
+              'unlockedFrames', 'unlockedBanners', 'xp', 'wins', 'losses', 'draws', 'updatedAt'
+            ])
+          )
+        );
+      allow delete: if isValidId(userId) && isAdmin();
+
+      // Strictly Isolated Private PII Subcollection
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && (isOwner(userId) || isAdmin());
+        allow list: if isOwner(userId) || isAdmin();
+        allow create: if isValidId(userId) && isValidId(docId) && isVerified() && isOwner(userId)
+          && isValidUserPrivate(incoming(), userId)
+          && incoming().createdAt == request.time;
+        allow update: if isValidId(userId) && isValidId(docId) && isVerified()
+          && isValidUserPrivate(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().createdAt == existing().createdAt
+          && (isOwner(userId) || isAdmin())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email']);
+        allow delete: if isValidId(userId) && isValidId(docId) && isAdmin();
+      }
+    }
+
+    // Public, minimal player presence. Never store profile, credentials, XP, or device identifiers here.
+    match /presence/{userId} {
+      function validPresence(data) {
+        return data.keys().hasAll(['uid', 'online', 'currentActivity', 'lastSeenMs'])
+          && data.keys().hasOnly(['uid', 'online', 'currentActivity', 'lastSeenMs'])
+          && data.uid == userId
+          && data.online is bool
+          && data.currentActivity is string
+          && data.currentActivity.size() <= 80
+          && data.lastSeenMs is number;
+      }
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(userId) && isOwner(userId)
+        && validPresence(request.resource.data);
+      allow delete: if isValidId(userId) && isOwner(userId);
+    }
+
+    // Friend requests are readable only by their sender and recipient.
+    match /friendRequests/{requestId} {
+      function validFriendRequest(data) {
+        return data.keys().hasAll(['id', 'fromUserId', 'fromName', 'fromGameId', 'toUserId', 'status', 'createdAtMs'])
+          && data.keys().hasOnly(['id', 'fromUserId', 'fromName', 'fromGameId', 'fromAvatarUrl', 'fromFrameId', 'toUserId', 'toName', 'toGameId', 'status', 'createdAtMs'])
+          && data.id == requestId
+          && data.fromUserId is string && data.fromUserId.size() >= 1 && data.fromUserId.size() <= 128
+          && data.toUserId is string && data.toUserId.size() >= 1 && data.toUserId.size() <= 128
+          && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 64
+          && data.fromGameId is string && data.fromGameId.size() <= 20
+          && (!('fromAvatarUrl' in data) || (data.fromAvatarUrl is string && data.fromAvatarUrl.size() <= 2048))
+          && (!('fromFrameId' in data) || (data.fromFrameId is string && data.fromFrameId.size() <= 64))
+          && (!('toName' in data) || (data.toName is string && data.toName.size() <= 64))
+          && (!('toGameId' in data) || (data.toGameId is string && data.toGameId.size() <= 20))
+          && data.fromUserId != data.toUserId
+          && data.status in ['pending', 'accepted', 'rejected']
+          && data.createdAtMs is number;
+      }
+      allow get: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow list: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if isSignedIn() && isValidId(requestId)
+        && validFriendRequest(request.resource.data)
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
+      allow update: if isSignedIn()
+        && validFriendRequest(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.fromUserId == resource.data.fromUserId
+        && request.resource.data.toUserId == resource.data.toUserId
+        && request.resource.data.createdAtMs == resource.data.createdAtMs
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+        && resource.data.status == 'pending'
+        && (
+          (resource.data.toUserId == request.auth.uid && request.resource.data.status in ['accepted', 'rejected']) ||
+          (resource.data.fromUserId == request.auth.uid && request.resource.data.status == 'rejected')
+        );
+      allow delete: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+    }
+
+    // Direct messages are visible only to their sender and recipient.
+    match /messages/{messageId} {
+      function validMessage(data) {
+        return data.keys().hasAll(['id', 'fromUserId', 'fromName', 'toUserId', 'toName', 'text', 'createdAtMs'])
+          && data.keys().hasOnly(['id', 'fromUserId', 'fromName', 'toUserId', 'toName', 'text', 'createdAtMs'])
+          && data.id == messageId
+          && data.fromUserId is string && data.fromUserId.size() >= 1 && data.fromUserId.size() <= 128
+          && data.toUserId is string && data.toUserId.size() >= 1 && data.toUserId.size() <= 128
+          && data.fromName is string && data.fromName.size() >= 1 && data.fromName.size() <= 64
+          && data.toName is string && data.toName.size() >= 1 && data.toName.size() <= 64
+          && data.text is string && data.text.size() >= 1 && data.text.size() <= 2000
+          && data.fromUserId != data.toUserId
+          && data.createdAtMs is number;
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if isSignedIn()
+        && isValidId(messageId)
+        && validMessage(request.resource.data)
+        && request.resource.data.fromUserId == request.auth.uid
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
+      allow update, delete: if false;
+    }
+
+    // A block record is controlled by the player who created it.
+    match /userBlocks/{blockId} {
+      function validBlock(data) {
+        return data.keys().hasAll(['blockerId', 'blockedId', 'createdAtMs'])
+          && data.keys().hasOnly(['blockerId', 'blockedId', 'createdAtMs'])
+          && data.blockerId is string && data.blockerId.size() >= 1 && data.blockerId.size() <= 128
+          && data.blockedId is string && data.blockedId.size() >= 1 && data.blockedId.size() <= 128
+          && data.blockerId != data.blockedId
+          && blockId == data.blockerId + '__' + data.blockedId
+          && data.createdAtMs is number;
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.blockerId == request.auth.uid || resource.data.blockedId == request.auth.uid);
+      allow create: if isSignedIn()
+        && validBlock(request.resource.data)
+        && request.resource.data.blockerId == request.auth.uid;
+      allow update: if false;
+      allow delete: if isSignedIn() && resource.data.blockerId == request.auth.uid;
+    }
+
+    // Public matchmaking queue rooms. Only waiting matchmaking tickets are discoverable.
+    match /rooms/{roomId} {
+      function isRoomParticipant(data) {
+        return isSignedIn()
+          && data.players is list
+          && data.players.size() >= 1
+          && data.players.size() <= 2
+          && (data.players[0].id == request.auth.uid || (data.players.size() == 2 && data.players[1].id == request.auth.uid));
+      }
+      allow get: if isValidId(roomId) && (isRoomParticipant(existing()) || isAdmin());
+      allow list: if isAdmin() || (
+        isSignedIn()
+        && resource.data.status == 'waiting'
+        && resource.data.isMatchmaking == true
+      );
+      allow create: if isValidId(roomId) && isVerified()
+        && request.resource.data.keys().hasAll(['id', 'code', 'gameType', 'isMatchmaking', 'hostId', 'maxPlayers', 'players', 'status', 'activeMatchId'])
+        && request.resource.data.keys().hasOnly(['id', 'code', 'gameType', 'isMatchmaking', 'hostId', 'maxPlayers', 'players', 'status', 'activeMatchId', 'chat'])
+        && request.resource.data.id == roomId
+        && request.resource.data.code is string && request.resource.data.code.size() <= 24
+        && request.resource.data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar']
+        && request.resource.data.isMatchmaking == true
+        && request.resource.data.hostId == request.auth.uid
+        && request.resource.data.maxPlayers == 2
+        && request.resource.data.players is list
+        && request.resource.data.players.size() == 1
+        && request.resource.data.players[0].id == request.auth.uid
+        && request.resource.data.status == 'waiting'
+        && request.resource.data.activeMatchId == null;
+      allow update: if isValidId(roomId) && isVerified()
+        && request.resource.data.id == existing().id
+        && request.resource.data.hostId == existing().hostId
+        && request.resource.data.gameType == existing().gameType
+        && request.resource.data.isMatchmaking == existing().isMatchmaking
+        && request.resource.data.maxPlayers == existing().maxPlayers
+        && (
+          (
+            existing().status == 'waiting'
+            && existing().players.size() == 1
+            && existing().players[0].id == existing().hostId
+            && request.auth.uid != existing().hostId
+            && request.resource.data.status == 'playing'
+            && request.resource.data.players is list
+            && request.resource.data.players.size() == 2
+            && request.resource.data.players[0].id == existing().hostId
+            && request.resource.data.players[1].id == request.auth.uid
+            && request.resource.data.activeMatchId is string
+            && request.resource.data.diff(existing()).affectedKeys().hasOnly(['players', 'status', 'activeMatchId'])
+          ) ||
+          (
+            isRoomParticipant(existing())
+            && request.resource.data.diff(existing()).affectedKeys().hasOnly(['chat'])
+            && request.resource.data.chat is list
+            && request.resource.data.chat.size() <= 500
+          )
+        );
+      allow delete: if isValidId(roomId) && (
+        isAdmin() ||
+        (isSignedIn() && existing().hostId == request.auth.uid && existing().status == 'waiting')
+      );
+    }
+
+    // Direct player-to-player match invitations. Only the sender and recipient can read them.
+    match /matchChallenges/{challengeId} {
+      function validMatchChallenge(data) {
+        return data.keys().hasAll([
+          'id', 'fromUserId', 'fromName', 'fromGameId', 'toUserId', 'toName',
+          'gameType', 'bestOf', 'turnTimeLimit', 'status', 'createdAtMs'
+        ])
+          && data.keys().hasOnly([
+            'id', 'fromUserId', 'fromName', 'fromGameId', 'fromAvatarUrl', 'fromFrameId',
+            'toUserId', 'toName', 'toGameId', 'gameType', 'bestOf', 'turnTimeLimit',
+            'status', 'createdAtMs', 'matchId'
+          ])
+          && data.id == challengeId
+          && data.fromUserId is string && data.fromUserId.size() > 0 && data.fromUserId.size() <= 128
+          && data.toUserId is string && data.toUserId.size() > 0 && data.toUserId.size() <= 128
+          && data.fromUserId != data.toUserId
+          && data.fromName is string && data.fromName.size() > 0 && data.fromName.size() <= 64
+          && data.toName is string && data.toName.size() <= 64
+          && data.fromGameId is string && data.fromGameId.size() <= 20
+          && data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar', 'sakar_htar']
+          && data.bestOf in [1, 3, 5]
+          && data.turnTimeLimit in [10, 15, 20, 30]
+          && data.status in ['pending', 'accepted', 'rejected']
+          && data.createdAtMs is number
+          && (!('fromAvatarUrl' in data) || (data.fromAvatarUrl is string && data.fromAvatarUrl.size() <= 2048))
+          && (!('fromFrameId' in data) || (data.fromFrameId is string && data.fromFrameId.size() <= 64))
+          && (!('toGameId' in data) || (data.toGameId is string && data.toGameId.size() <= 20))
+          && (data.status != 'accepted' || ('matchId' in data && data.matchId is string && data.matchId.size() <= 128));
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if isSignedIn() && isVerified() && isValidId(challengeId)
+        && validMatchChallenge(request.resource.data)
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
+      allow update: if isSignedIn() && isVerified()
+        && validMatchChallenge(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.fromUserId == resource.data.fromUserId
+        && request.resource.data.toUserId == resource.data.toUserId
+        && request.resource.data.gameType == resource.data.gameType
+        && request.resource.data.createdAtMs == resource.data.createdAtMs
+        && resource.data.status == 'pending'
+        && resource.data.toUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'matchId'])
+        && (
+          (request.resource.data.status == 'accepted' && request.resource.data.matchId is string) ||
+          (request.resource.data.status == 'rejected' && !('matchId' in request.resource.data))
+        );
+      allow delete: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+    }
+
+    // Match History Records
+    match /matches/{matchId} {
+      function isMatchParticipant(data) {
+        return isSignedIn()
+          && data.players is list
+          && data.players.size() == 2
+          && (data.players[0].id == request.auth.uid || data.players[1].id == request.auth.uid);
+      }
+      allow get: if isValidId(matchId)
+        && (isMatchParticipant(existing()) || isAdmin());
+      allow list: if isMatchParticipant(resource.data) || isAdmin();
+      allow create: if isValidId(matchId) && isVerified()
+        && isValidMatch(incoming(), matchId)
+        && (isMatchParticipant(incoming()) || isAdmin());
+      allow update: if isValidId(matchId) && isVerified()
+        && isValidMatch(incoming(), matchId)
+        && incoming().id == existing().id
+        && incoming().createdAt == existing().createdAt
+        && incoming().players[0].id == existing().players[0].id
+        && incoming().players[1].id == existing().players[1].id
+        && (isMatchParticipant(existing()) || isAdmin())
+        && (
+          isAdmin() ||
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'tttBoard', 'c4Board', 'turnUserId', 'scores', 'rpsPicks', 'rpsLastRound',
+            'riddles', 'riddleIndex', 'roundAnswers', 'chat', 'winnerId', 'isDraw',
+            'status', 'round', 'turnDeadline', 'updatedAtMs', 'winningCells',
+            'botPhase', 'botTargetCol'
+          ])
+        );
+      allow delete: if isValidId(matchId) && isAdmin();
+    }
+
+    // Decorative Avatar Frames
+    match /frames/{frameId} {
+      allow get: if isValidId(frameId);
+      allow list: if resource.data.isActive == true || isAdmin();
+      allow create: if isValidId(frameId) && isAdmin()
+        && isValidFrame(incoming(), frameId)
+        && incoming().createdAt == request.time;
+      allow update: if isValidId(frameId) && isAdmin()
+        && isValidFrame(incoming(), frameId)
+        && incoming().frameId == existing().frameId
+        && incoming().createdAt == existing().createdAt;
+      allow delete: if isValidId(frameId) && isAdmin();
+    }
+
+    // Real-Time Feature & Game Locks
+    match /featureLocks/{lockId} {
+      allow get: if isValidId(lockId);
+      allow list: if resource.data.key is string;
+      allow create, update: if isValidId(lockId) && isAdmin()
+        && isValidFeatureLock(incoming())
+        && incoming().updatedAt == request.time;
+      allow delete: if isValidId(lockId) && isAdmin();
+    }
+
+    // Tournaments: admins manage brackets; players may only join/leave themselves.
+    match /tournaments/{tournamentId} {
+      allow get: if isValidId(tournamentId) && isSignedIn();
+      allow list: if isSignedIn() && resource.data.status is string;
+      allow create: if isValidId(tournamentId) && isAdmin()
+        && isValidTournament(incoming(), tournamentId);
+      allow update: if isValidId(tournamentId)
+        && isValidTournament(incoming(), tournamentId)
+        && incoming().id == existing().id
+        && incoming().createdAtMs == existing().createdAtMs
+        && incoming().createdAt == existing().createdAt
+        && (
+          isAdmin() ||
+          (
+            isSignedIn()
+            && existing().status == 'open'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['participants'])
+            && incoming().participants.size() <= existing().bracketSize
+            && (
+              (
+                !existing().participants.hasAny([request.auth.uid])
+                && incoming().participants.hasAll(existing().participants)
+                && incoming().participants.hasAny([request.auth.uid])
+                && incoming().participants.size() == existing().participants.size() + 1
+              ) ||
+              (
+                existing().participants.hasAny([request.auth.uid])
+                && !incoming().participants.hasAny([request.auth.uid])
+                && existing().participants.hasAll(incoming().participants)
+                && incoming().participants.size() == existing().participants.size() - 1
+              )
+            )
+          )
+        );
+      allow delete: if isValidId(tournamentId) && isAdmin();
+    }
+
+    // Notifications: only admins publish; recipients may read and mark their own as read.
+    match /notifications/{notificationId} {
+      allow get, list: if isSignedIn()
+        && (resource.data.targetUserId == request.auth.uid || resource.data.targetUserId == 'ALL');
+      allow create: if isValidId(notificationId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'targetUserId', 'title', 'message', 'type', 'senderName', 'createdAtMs', 'read'])
+        && request.resource.data.keys().hasOnly(['id', 'targetUserId', 'title', 'message', 'type', 'senderName', 'createdAtMs', 'read'])
+        && request.resource.data.id == notificationId
+        && request.resource.data.targetUserId is string
+        && request.resource.data.targetUserId.size() <= 128
+        && request.resource.data.title is string
+        && request.resource.data.title.size() >= 1
+        && request.resource.data.title.size() <= 160
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 1
+        && request.resource.data.message.size() <= 2000
+        && request.resource.data.type in ['broadcast', 'message', 'warning', 'system', 'tournament']
+        && request.resource.data.senderName is string
+        && request.resource.data.senderName.size() <= 80
+        && request.resource.data.createdAtMs is number
+        && request.resource.data.read is bool;
+      allow update: if isSignedIn()
+        && resource.data.targetUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read'])
+        && request.resource.data.read is bool;
+      allow delete: if isAdmin();
+    }
+
+    // Player reports: users may submit reports about other users; only admins review and resolve them.
+    match /reports/{reportId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(reportId) && isVerified()
+        && request.resource.data.keys().hasAll(['id', 'reporterId', 'reporterName', 'targetUserId', 'targetName', 'reason', 'status', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'reporterId', 'reporterName', 'targetUserId', 'targetName', 'reason', 'status', 'createdAtMs', 'resolvedAtMs'])
+        && request.resource.data.id == reportId
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reporterName is string
+        && request.resource.data.reporterName.size() <= 64
+        && request.resource.data.targetUserId is string
+        && request.resource.data.targetUserId != request.auth.uid
+        && request.resource.data.targetName is string
+        && request.resource.data.targetName.size() <= 64
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() >= 3
+        && request.resource.data.reason.size() <= 1000
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAtMs is number;
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'resolvedAtMs'])
+        && request.resource.data.status in ['pending', 'resolved', 'dismissed']
+        && request.resource.data.resolvedAtMs is number;
+      allow delete: if isAdmin();
+    }
+
+    // Admin-created player warnings; recipients can read and acknowledge only.
+    match /warnings/{warningId} {
+      allow get, list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isValidId(warningId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'userId', 'title', 'reason', 'acknowledged', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'userId', 'title', 'reason', 'acknowledged', 'createdAtMs'])
+        && request.resource.data.id == warningId
+        && request.resource.data.userId is string
+        && request.resource.data.title is string && request.resource.data.title.size() <= 160
+        && request.resource.data.reason is string && request.resource.data.reason.size() >= 1 && request.resource.data.reason.size() <= 2000
+        && request.resource.data.acknowledged == false
+        && request.resource.data.createdAtMs is number;
+      allow update: if isSignedIn()
+        && resource.data.userId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['acknowledged'])
+        && request.resource.data.acknowledged is bool;
+      allow delete: if isAdmin();
+    }
+
+    // Quiz content is public to signed-in players and writable only by admins.
+    match /riddles/{riddleId} {
+      allow get, list: if isSignedIn();
+      allow create, update: if isValidId(riddleId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'category', 'question', 'options', 'answerIndex', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'category', 'question', 'options', 'answerIndex', 'createdAtMs'])
+        && request.resource.data.id == riddleId
+        && request.resource.data.category is string && request.resource.data.category.size() <= 64
+        && request.resource.data.question is string && request.resource.data.question.size() >= 1 && request.resource.data.question.size() <= 1000
+        && request.resource.data.options is list && request.resource.data.options.size() == 4
+        && request.resource.data.answerIndex is int && request.resource.data.answerIndex >= 0 && request.resource.data.answerIndex <= 3
+        && request.resource.data.createdAtMs is number;
+      allow delete: if isValidId(riddleId) && isAdmin();
+    }
+
+    // Shared system settings. Client reads are required for game configuration and landing content.
+    match /system/{systemId} {
+      allow get: if isSignedIn() || systemId == 'landing';
+      allow list: if false;
+      allow create, update: if isValidId(systemId) && isAdmin()
+        && request.resource.data.size() <= 80;
+      allow delete: if isValidId(systemId) && isAdmin();
+    }
+
+    // Admin audit trail is private to administrators.
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isValidId(logId) && isAdmin()
+        && request.resource.data.keys().hasAll(['id', 'admin', 'action', 'detail', 'createdAtMs'])
+        && request.resource.data.keys().hasOnly(['id', 'admin', 'action', 'detail', 'createdAtMs'])
+        && request.resource.data.id == logId
+        && request.resource.data.admin is string && request.resource.data.admin.size() <= 64
+        && request.resource.data.action is string && request.resource.data.action.size() <= 80
+        && request.resource.data.detail is string && request.resource.data.detail.size() <= 500
+        && request.resource.data.createdAtMs is number;
+      allow update, delete: if isAdmin();
+    }
+
+    // Admin registry
+    match /admins/{adminId} {
+      allow get: if isValidId(adminId) && isOwner(adminId);
+      allow list, create, update, delete: if false;
+    }
+  }
+}
+))))
         && (!('showCity' in data) || data.showCity is bool)
         && (!('country' in data) || (data.country is string && data.country.size() <= 56))
         && (!('showCountry' in data) || data.showCountry is bool)
