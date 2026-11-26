@@ -52,6 +52,7 @@ export const MyanmarCityPicker: React.FC<MyanmarCityPickerProps> = ({ value, lan
         </button>
         {value && <button type="button" onClick={() => onChange('')} aria-label={lang === 'my' ? 'ရွေးချယ်မှုဖျက်မည်' : 'Clear selection'} className="w-10 shrink-0 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"><X className="w-3.5 h-3.5" /></button>}
       </div>
+      {value && !selectedLabel && <p className="text-[10px] text-amber-300/80">{lang === 'my' ? 'အရင်ရွေးထားသော နေရာကို စာရင်းအသစ်တွင် မတွေ့ပါ။ မြို့နယ်အသစ်တစ်ခု ပြန်ရွေးပါ။' : 'Your previous location is no longer in the verified list. Please choose a township again.'}</p>}
       {open && <div role="dialog" aria-label={lang === 'my' ? 'မြို့နယ်စာရင်း' : 'Township list'} className="absolute z-40 top-full left-0 right-0 mt-2 rounded-xl border border-amber-400/25 bg-[#080d17] shadow-2xl overflow-hidden">
         <div className="p-2.5 border-b border-white/10 bg-[#0d1422]">
           <div className="relative">
