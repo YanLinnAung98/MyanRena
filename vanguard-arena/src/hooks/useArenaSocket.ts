@@ -297,9 +297,15 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const botTimersRef = useRef<number[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const activeMatchIdRef = useRef<string | null>(null);
+  const matchChatMatchIdRef = useRef<string | null>(null);
   const handledChallengeIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    activeMatchIdRef.current = activeMatch?.id || null;
+    const nextMatchId = activeMatch?.id || null;
+    activeMatchIdRef.current = nextMatchId;
+    if (matchChatMatchIdRef.current !== nextMatchId) {
+      matchChatMatchIdRef.current = nextMatchId;
+      setMatchChat([]);
+    }
   }, [activeMatch?.id]);
 
 
@@ -586,6 +592,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             if (message.match) {
               const mapped = mapServerMatchToClient(message.match);
               activeMatchIdRef.current = mapped.id || message.match.id || null;
+              matchChatMatchIdRef.current = activeMatchIdRef.current;
               setActiveMatch(mapped);
               setCurrentRoom(null);
               setQueueStatus(null);
@@ -594,12 +601,13 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             }
             break;
           case 'match:chat':
-            if (message.message && message.matchId === activeMatchIdRef.current) {
+            if (message.message && message.matchId === activeMatchIdRef.current && message.matchId === matchChatMatchIdRef.current) {
               setMatchChat((previous) => [...previous, mapServerChatMessage(message.message)]);
             }
             break;
           case 'match:left':
             activeMatchIdRef.current = null;
+            matchChatMatchIdRef.current = null;
             setActiveMatch(null);
             setMatchChat([]);
             break;
@@ -707,6 +715,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           const match = matchSnap.data();
           if (match.status !== 'active') return;
           activeMatchIdRef.current = match.id;
+          matchChatMatchIdRef.current = match.id;
           setMatchChat(Array.isArray(match.chat) ? match.chat : []);
           setCurrentRoom(null);
           setQueueStatus(null);
@@ -913,6 +922,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           setQueueStatus(null);
           setQueuedGame(null);
           activeMatchIdRef.current = matchSnap.data().id;
+          matchChatMatchIdRef.current = matchSnap.data().id;
           setMatchChat(Array.isArray(matchSnap.data().chat) ? matchSnap.data().chat : []);
           setActiveMatch(matchSnap.data());
         }
@@ -933,7 +943,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       if (!snap.exists() || activeMatchIdRef.current !== matchId) return;
       const latest = snap.data() as any;
       setActiveMatch(latest);
-      if (Array.isArray(latest.chat)) setMatchChat(latest.chat);
+      if (Array.isArray(latest.chat)) {
+        matchChatMatchIdRef.current = matchId;
+        setMatchChat(latest.chat);
+      }
 
       if (latest.status === 'finished' && me?.id) {
         if (latest.isDraw) applyXpDelta('draw', matchId);
@@ -1012,6 +1025,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             setQueuedGame(null);
             setQueueStatus(null);
             activeMatchIdRef.current = liveMatch.id;
+            matchChatMatchIdRef.current = liveMatch.id;
             setMatchChat([]);
             setActiveMatch(liveMatch);
             pushToast('success', 'Real opponent found!');
@@ -1507,7 +1521,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       }
       const me = resolveCurrentPlayer();
       const msg = { id: Date.now(), matchId: activeMatch.id, sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
-      if (activeMatchIdRef.current === activeMatch.id) setMatchChat((prev) => [...prev, msg]);
+      if (activeMatchIdRef.current === activeMatch.id && matchChatMatchIdRef.current === activeMatch.id) setMatchChat((prev) => [...prev, msg]);
       if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
         await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
@@ -1616,6 +1630,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         await updateDoc(inviteRef, { status: 'accepted', matchId: match.id });
         handledChallengeIdsRef.current.add(challengeId);
         activeMatchIdRef.current = match.id;
+        matchChatMatchIdRef.current = match.id;
         setMatchChat([]);
         setCurrentRoom(null);
         setQueueStatus(null);
