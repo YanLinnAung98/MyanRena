@@ -40,14 +40,14 @@ export const MyanmarCityPicker: React.FC<MyanmarCityPickerProps> = ({ value, lan
   return (
     <div ref={rootRef} className="relative space-y-1.5">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] text-slate-400">{lang === 'my' ? 'မြို့ / မြို့နယ်' : 'City / Township'}</span>
+        <span className="text-[10px] text-slate-400">{lang === 'my' ? 'မြို့နယ်' : 'Township'}</span>
         <span className="text-[9px] text-slate-500">{lang === 'my' ? 'မြို့နယ် ၃၃၀ ခု • တိုင်း/ပြည်နယ် ၁၅ ခု' : '330 townships • 15 states & regions'}</span>
       </div>
       <div className="flex gap-1.5">
         <button type="button" onClick={() => { setOpen((current) => !current); setSearch(''); }} aria-expanded={open} aria-haspopup="dialog" aria-label={lang === 'my' ? 'မြို့နယ်ရွေးချယ်ရန်' : 'Choose township'}
           className="flex-1 min-w-0 min-h-10 rounded-lg bg-[#111827] border border-white/10 px-3 py-2 text-xs text-left text-white flex items-center gap-2 hover:border-amber-400/50 focus:outline-none focus:border-amber-400">
           <MapPin className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-          <span className={`flex-1 min-w-0 truncate ${selectedLabel ? 'text-white' : 'text-slate-500'}`}>{selectedLabel || (lang === 'my' ? 'မြို့ / မြို့နယ် ရွေးချယ်ပါ' : 'Choose your city / township')}</span>
+          <span className={`flex-1 min-w-0 truncate ${selectedLabel ? 'text-white' : 'text-slate-500'}`}>{selectedLabel || (lang === 'my' ? 'မြို့နယ် ရွေးချယ်ပါ' : 'Choose your township')}</span>
           <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
         </button>
         {value && <button type="button" onClick={() => onChange('')} aria-label={lang === 'my' ? 'ရွေးချယ်မှုဖျက်မည်' : 'Clear selection'} className="w-10 shrink-0 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"><X className="w-3.5 h-3.5" /></button>}
@@ -57,7 +57,7 @@ export const MyanmarCityPicker: React.FC<MyanmarCityPickerProps> = ({ value, lan
         <div className="p-2.5 border-b border-white/10 bg-[#0d1422]">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-500" />
-            <input autoFocus aria-label={lang === 'my' ? 'မြို့နယ်ရှာရန်' : 'Search townships'} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={lang === 'my' ? 'မြို့နာမည် (မြန်မာ / English) ရှာရန်...' : 'Search city or township...'} className="w-full h-9 rounded-lg bg-[#070b14] border border-white/10 pl-9 pr-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400" />
+            <input autoFocus aria-label={lang === 'my' ? 'မြို့နယ်ရှာရန်' : 'Search townships'} type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={lang === 'my' ? 'မြို့နယ်အမည် (မြန်မာ / English) ရှာရန်...' : 'Search township...'} className="w-full h-9 rounded-lg bg-[#070b14] border border-white/10 pl-9 pr-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-amber-400" />
           </div>
           <div className="mt-1.5 text-[9px] text-slate-500">{lang === 'my' ? `${resultCount} ခု တွေ့ရှိ • မြို့နယ်၊ ခရိုင်၊ တိုင်း/ပြည်နယ်အလိုက် ရှာနိုင်သည်` : `${resultCount} results • Search townships, districts or regions`}</div>
         </div>
