@@ -26,12 +26,15 @@ export const MyanmarCityPicker: React.FC<MyanmarCityPickerProps> = ({ value, lan
         <span className="text-[10px] text-slate-400">{lang === 'my' ? 'မြို့ / မြို့နယ်' : 'City / Township'}</span>
         <span className="text-[9px] text-slate-500">{lang === 'my' ? 'တိုင်း/ပြည်နယ် ၁၅ ခု' : '15 states & regions'}</span>
       </div>
-      <button type="button" onClick={() => { setOpen((current) => !current); setSearch(''); }} aria-expanded={open}
-        className="w-full min-h-10 rounded-lg bg-[#111827] border border-white/10 px-3 py-2 text-xs text-left text-white flex items-center gap-2 hover:border-amber-400/50 focus:outline-none focus:border-amber-400">
-        <MapPin className="w-3.5 h-3.5 text-amber-300 shrink-0" />
-        <span className={`flex-1 min-w-0 truncate ${selectedLabel ? 'text-white' : 'text-slate-500'}`}>{selectedLabel || (lang === 'my' ? 'မြို့ / မြို့နယ် ရွေးချယ်ပါ' : 'Choose your city / township')}</span>
-        {value ? <span onClick={(event) => { event.stopPropagation(); onChange(''); }} role="button" aria-label={lang === 'my' ? 'ရွေးချယ်မှုဖျက်မည်' : 'Clear selection'} className="p-1 text-slate-400 hover:text-white"><X className="w-3.5 h-3.5" /></span> : <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />}
-      </button>
+      <div className="flex gap-1.5">
+        <button type="button" onClick={() => { setOpen((current) => !current); setSearch(''); }} aria-expanded={open}
+          className="flex-1 min-w-0 min-h-10 rounded-lg bg-[#111827] border border-white/10 px-3 py-2 text-xs text-left text-white flex items-center gap-2 hover:border-amber-400/50 focus:outline-none focus:border-amber-400">
+          <MapPin className="w-3.5 h-3.5 text-amber-300 shrink-0" />
+          <span className={`flex-1 min-w-0 truncate ${selectedLabel ? 'text-white' : 'text-slate-500'}`}>{selectedLabel || (lang === 'my' ? 'မြို့ / မြို့နယ် ရွေးချယ်ပါ' : 'Choose your city / township')}</span>
+          <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+        </button>
+        {value && <button type="button" onClick={() => onChange('')} aria-label={lang === 'my' ? 'ရွေးချယ်မှုဖျက်မည်' : 'Clear selection'} className="w-10 shrink-0 rounded-lg bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-white/10 flex items-center justify-center"><X className="w-3.5 h-3.5" /></button>}
+      </div>
       {open && <div className="absolute z-40 top-full left-0 right-0 mt-2 rounded-xl border border-amber-400/25 bg-[#080d17] shadow-2xl overflow-hidden">
         <div className="p-2.5 border-b border-white/10 bg-[#0d1422]">
           <div className="relative">
