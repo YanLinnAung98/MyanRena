@@ -1,4 +1,3 @@
-
 import React, { useMemo } from 'react';
 import { motion } from 'motion/react';
 
@@ -12,50 +11,71 @@ export interface TicTacToeBoardProps {
   onLeaveFinished?: () => void;
 }
 
-const BASE = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
-
-const TTT_ASSETS = {
-  background: `${BASE}assets/ttt-village-bg.jpg`,
-  boy: `${BASE}assets/ttt-boy.png`,
-  girlIdle: `${BASE}assets/ttt-girl-idle.png`,
-  girlDance: `${BASE}assets/ttt-girl-dance.jpg`,
-  girlCry: `${BASE}assets/ttt-girl-cry.jpg`,
-};
-
-export const TTT_KID_BOT_AVATAR_DATA_URI = TTT_ASSETS.boy;
-
-export function getTicTacToeBotName(lang: string, difficulty?: string): string {
-  const base = lang === 'my' ? 'မပုတု' : 'Ma Pu Tu';
-  return difficulty ? `${base} (${difficulty.toUpperCase()})` : base;
-}
-
 const WIN_LINES = [
   [0, 1, 2], [3, 4, 5], [6, 7, 8],
   [0, 3, 6], [1, 4, 7], [2, 5, 8],
   [0, 4, 8], [2, 4, 6],
 ];
 
+const ArenaMascot: React.FC<{ side: 'azure' | 'coral'; mood: 'idle' | 'win' | 'lose' | 'draw'; compact?: boolean }> = ({ side, mood, compact = false }) => {
+  const azure = side === 'azure';
+  const c = azure
+    ? { main: '#36d8ee', deep: '#126b9a', light: '#b8f7ff', skin: '#e7ad83', hair: '#17283b', eye: '#173047' }
+    : { main: '#ff718d', deep: '#9c315d', light: '#ffd2df', skin: '#f0bd98', hair: '#30213b', eye: '#38243b' };
+  return (
+    <motion.div
+      className={'ttt-mascot ttt-mascot-' + side + (compact ? ' ttt-mascot-compact' : '')}
+      animate={mood === 'win' ? { y: [0, -13, 0], rotate: [0, -4, 4, 0] } : mood === 'lose' ? { y: [0, 3, 0], rotate: [0, 2, -2, 0] } : { y: [0, -5, 0] }}
+      transition={{ duration: mood === 'win' ? .72 : 3.4, repeat: mood === 'idle' ? Infinity : 0, ease: 'easeInOut' }}
+      aria-hidden="true"
+    >
+      <svg viewBox="0 0 180 220" className="ttt-mascot-art" role="presentation">
+        <defs>
+          <linearGradient id={'mascotSuit-' + side} x1="0" y1="0" x2="1" y2="1"><stop stopColor={c.light}/><stop offset=".48" stopColor={c.main}/><stop offset="1" stopColor={c.deep}/></linearGradient>
+          <linearGradient id={'mascotSkin-' + side} x1="0" y1="0" x2="0" y2="1"><stop stopColor="#ffe0bd"/><stop offset="1" stopColor={c.skin}/></linearGradient>
+          <filter id={'mascotGlow-' + side}><feGaussianBlur stdDeviation="4" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+        </defs>
+        <ellipse cx="90" cy="207" rx="53" ry="8" fill={c.main} opacity=".22"/>
+        <path d="M42 203 Q42 155 61 143 L119 143 Q139 159 140 203Z" fill={'url(#mascotSuit-' + side + ')'} stroke={c.light} strokeOpacity=".75" strokeWidth="2"/>
+        <path d="M61 151 L90 177 L119 151 L110 142 L70 142Z" fill="#f8fbff" opacity=".92"/>
+        <path d="M82 169 L90 180 L98 169 L94 202 L86 202Z" fill={c.deep}/>
+        <path d="M42 163 Q26 174 30 192 Q33 201 46 194 L61 177Z" fill={c.main} stroke={c.light} strokeWidth="2"/>
+        <path d="M138 163 Q154 174 150 192 Q147 201 134 194 L119 177Z" fill={c.main} stroke={c.light} strokeWidth="2"/>
+        <circle cx="31" cy="192" r="9" fill={'url(#mascotSkin-' + side + ')'} />
+        <circle cx="149" cy="192" r="9" fill={'url(#mascotSkin-' + side + ')'} />
+        <path d="M58 76 Q48 32 89 27 Q133 26 124 80 L117 112 L62 111Z" fill={c.hair}/>
+        <path d="M53 84 Q43 48 66 34 Q80 16 111 29 Q137 42 128 81 Q117 64 107 54 Q91 69 61 67Z" fill={c.hair}/>
+        <path d="M57 78 Q55 53 72 43 Q83 35 99 41 Q119 37 126 61 L123 100 Q118 132 90 135 Q63 132 57 101Z" fill={'url(#mascotSkin-' + side + ')'} stroke="#8d5b4b" strokeOpacity=".24" strokeWidth="1.5"/>
+        <path d="M55 79 Q48 54 69 35 Q85 17 111 30 Q131 41 129 72 Q115 57 106 49 Q87 65 58 65Z" fill={c.hair}/>
+        <path d="M70 86 Q78 80 84 86" fill="none" stroke={c.eye} strokeWidth="3" strokeLinecap="round"/>
+        <path d="M98 86 Q106 80 112 86" fill="none" stroke={c.eye} strokeWidth="3" strokeLinecap="round"/>
+        <ellipse cx="77" cy="96" rx="4" ry="5" fill={c.eye}/><ellipse cx="105" cy="96" rx="4" ry="5" fill={c.eye}/>
+        <circle cx="78" cy="94" r="1.3" fill="white"/><circle cx="106" cy="94" r="1.3" fill="white"/>
+        <path d="M84 111 Q91 118 99 110" fill="none" stroke="#a64d58" strokeWidth="2.6" strokeLinecap="round"/>
+        <ellipse cx="67" cy="105" rx="8" ry="4" fill="#f28e91" opacity=".38"/><ellipse cx="114" cy="105" rx="8" ry="4" fill="#f28e91" opacity=".38"/>
+        {azure ? <path d="M54 59 L44 32 L70 43 L87 20 L104 42 L133 29 L124 66 Q92 57 54 66Z" fill={c.hair}/> : <g><path d="M53 64 Q40 29 75 21 Q111 7 130 40 Q143 67 124 104 Q130 53 98 42 Q80 64 53 64Z" fill={c.hair}/><path d="M49 54 Q29 37 45 21 Q59 29 59 45Z M131 57 Q151 39 137 20 Q123 28 123 46Z" fill={c.main} stroke={c.light} strokeWidth="2"/><path d="M128 36 L142 27 L139 45 L125 50Z" fill={c.light}/></g>}
+        <path d="M72 151 L90 164 L108 151" fill="none" stroke="white" strokeOpacity=".7" strokeWidth="2"/>
+        <circle cx="90" cy="155" r="8" fill={c.deep} stroke={c.light} strokeWidth="2"/>
+        <path d="M86 155 H94 M90 151 V159" stroke="white" strokeWidth="1.5" strokeLinecap="round"/>
+        {mood === 'win' && <g filter={'url(#mascotGlow-' + side + ')'}><path d="M30 35 L34 24 L38 35 L49 39 L38 43 L34 54 L30 43 L19 39Z" fill="#ffe58b"/><path d="M143 76 L146 68 L149 76 L157 79 L149 82 L146 90 L143 82 L135 79Z" fill="#ffe58b"/></g>}
+      </svg>
+      <span className="ttt-mascot-label">{azure ? 'NOVA' : 'PU TU'} <i>{azure ? 'X' : 'O'}</i></span>
+    </motion.div>
+  );
+};
+
 export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
-  lang = 'my',
-  match,
-  currentUserId,
-  onSelectCell,
-  onCellClick,
-  onMove,
-  onLeaveFinished,
+  lang = 'my', match, currentUserId, onSelectCell, onCellClick, onMove, onLeaveFinished,
 }) => {
   const board: Array<string | null> = useMemo(() =>
-    Array.isArray(match?.tttBoard) && match.tttBoard.length === 9
-      ? match.tttBoard
-      : Array(9).fill(null),
+    Array.isArray(match?.tttBoard) && match.tttBoard.length === 9 ? match.tttBoard : Array(9).fill(null),
   [match?.tttBoard]);
 
   const players = Array.isArray(match?.players) ? match.players : [];
   const opponent = players.find((player: any) => player?.id !== currentUserId);
-  const opponentName = opponent?.displayName || getTicTacToeBotName(lang, match?.difficulty);
+  const opponentName = opponent?.displayName || (lang === 'my' ? 'မပုတု' : 'Ma Pu Tu');
   const currentPlayer = players.find((player: any) => player?.id === currentUserId);
   const currentPlayerName = currentPlayer?.displayName || (lang === 'my' ? 'သင်' : 'You');
-
   const isFinished = match?.status === 'finished';
   const isPvp = Boolean(match?.isRealtimePvp && players.length >= 2);
   const isMyTurn = !isFinished && (!isPvp || match?.turnUserId === currentUserId);
@@ -64,22 +84,17 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
 
   const winningIndices = useMemo(() => {
     for (const [a, b, c] of WIN_LINES) {
-      if (board[a] && board[a] === board[b] && board[a] === board[c]) {
-        return new Set([a, b, c]);
-      }
+      if (board[a] && board[a] === board[b] && board[a] === board[c]) return new Set([a, b, c]);
     }
     return new Set<number>();
   }, [board]);
 
   const statusText = isFinished
-    ? isDraw
-      ? (lang === 'my' ? 'သရေကျသွားပါပြီ!' : "It's a Draw!")
-      : didWin
-        ? (lang === 'my' ? 'သင် အနိုင်ရရှိပါပြီ!' : 'You Won!')
-        : (lang === 'my' ? 'ပြိုင်ဘက် အနိုင်ရသွားပါပြီ!' : 'Opponent Won!')
-    : isMyTurn
-      ? (lang === 'my' ? 'သင့်အလှည့် — အကွက်တစ်ခု ရွေးပါ' : 'Your Turn — Pick a cell')
-      : (lang === 'my' ? 'ပြိုင်ဘက် အလှည့်...' : "Opponent's Turn...");
+    ? isDraw ? (lang === 'my' ? 'သရေကျသွားပါပြီ!' : "It's a Draw!")
+      : didWin ? (lang === 'my' ? 'သင် အနိုင်ရရှိပါပြီ!' : 'You Won!')
+      : (lang === 'my' ? 'ပြိုင်ဘက် အနိုင်ရသွားပါပြီ!' : 'Opponent Won!')
+    : isMyTurn ? (lang === 'my' ? 'သင့်အလှည့် — အကွက်တစ်ခု ရွေးပါ' : 'Your Turn — Pick a cell')
+    : (lang === 'my' ? 'ပြိုင်ဘက် အလှည့်...' : "Opponent's Turn...");
 
   const handlePress = (index: number) => {
     if (!isMyTurn || board[index] !== null) return;
@@ -88,109 +103,75 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({
     else onMove?.({ index });
   };
 
-  const girlImage = isFinished && !isDraw
-    ? (didWin ? TTT_ASSETS.girlDance : TTT_ASSETS.girlCry)
-    : TTT_ASSETS.girlIdle;
+  const mascotMood = isFinished ? isDraw ? 'draw' : didWin ? 'win' : 'lose' : 'idle';
+  const turnLabel = isFinished ? (isDraw ? 'DRAW' : didWin ? 'VICTORY' : 'DEFEAT') : isMyTurn ? 'YOUR MOVE' : 'RIVAL MOVE';
 
   return (
-    <div
-      className="relative w-full h-full min-h-0 flex flex-col items-center justify-between overflow-y-auto px-3 pt-3 pb-4 sm:px-5 select-none"
-      style={{
-        backgroundImage: `linear-gradient(180deg, rgba(8,12,20,.34), rgba(8,12,20,.58)), url("${TTT_ASSETS.background}")`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-      }}
-    >
-      <div className="absolute inset-0 bg-gradient-to-b from-black/15 via-transparent to-black/35 pointer-events-none" />
+    <section className="ttt-arena relative w-full h-full min-h-0 flex flex-col overflow-hidden select-none" aria-label="Tic-Tac-Toe arena">
+      <div className="ttt-arena-grid" aria-hidden="true" />
+      <div className="ttt-ambient ttt-ambient-a" aria-hidden="true" />
+      <div className="ttt-ambient ttt-ambient-b" aria-hidden="true" />
+      <div className="ttt-scanline" aria-hidden="true" />
 
-      <div className="relative z-10 w-full max-w-[520px] flex items-center justify-between gap-2 rounded-2xl border border-amber-200/40 bg-black/65 backdrop-blur-md px-3 py-2 shadow-xl">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className="text-lg">🌿</span>
-          <span className="text-xs sm:text-sm font-bold text-white truncate">{opponentName}</span>
+      <header className="ttt-arena-top relative z-10 flex items-center justify-between gap-3">
+        <div className="ttt-brand-lockup"><span className="ttt-brand-mark">✦</span><span><b>TACTICAL GRID</b><small>MYANRENA · DUEL PROTOCOL</small></span></div>
+        <div className={'ttt-turn-pill ' + (isFinished ? 'is-finished' : isMyTurn ? 'is-live' : 'is-rival')}>
+          <span className="ttt-live-dot" />{turnLabel}
         </div>
-        <span className="text-[10px] sm:text-xs font-black tracking-wider text-amber-200">TIC-TAC-TOE</span>
-        <span className="text-xs sm:text-sm font-bold text-white truncate">{currentPlayerName}</span>
+      </header>
+
+      <div className="ttt-matchup relative z-10">
+        <div className={'ttt-player-chip ttt-player-x ' + (isMyTurn && !isFinished ? 'is-active' : '')}>
+          <span className="ttt-player-symbol">X</span><span className="ttt-player-copy"><b>{opponentName}</b><small>{lang === 'my' ? 'အပြာရောင် ကစားသမား' : 'CYAN PLAYER'}</small></span>
+        </div>
+        <div className="ttt-score-divider"><span>VS</span><i /></div>
+        <div className={'ttt-player-chip ttt-player-o ' + (!isMyTurn && !isFinished ? 'is-active' : '')}>
+          <span className="ttt-player-symbol">O</span><span className="ttt-player-copy"><b>{currentPlayerName}</b><small>{lang === 'my' ? 'ပန်းရောင် ကစားသမား' : 'CORAL PLAYER'}</small></span>
+        </div>
       </div>
 
-      <div className="relative z-10 w-full max-w-[520px] flex-1 min-h-0 flex flex-col items-center justify-center gap-1">
-        <motion.img
-          src={TTT_ASSETS.boy}
-          alt="Ma Pu Tu game character"
-          draggable={false}
-          className="w-[clamp(76px,18vh,142px)] h-[clamp(76px,18vh,142px)] object-contain drop-shadow-[0_8px_12px_rgba(0,0,0,.65)]"
-          initial={{ y: -8, opacity: 0 }}
-          animate={{ y: 0, opacity: 1 }}
-          transition={{ duration: 0.35 }}
-        />
-
-        <div className="w-full max-w-[min(78vw,390px)] aspect-square p-2 sm:p-3 rounded-[26px] border-[5px] border-amber-800/90 bg-gradient-to-br from-amber-200 via-amber-500 to-amber-900 shadow-[0_18px_45px_rgba(0,0,0,.75)]">
-          <div className="grid grid-cols-3 gap-2 w-full h-full rounded-2xl p-2 bg-[#3b281b]/95 border border-amber-100/25">
-            {board.map((cell, idx) => {
-              const isWin = winningIndices.has(idx);
-              return (
-                <button
-                  key={idx}
-                  type="button"
-                  disabled={!isMyTurn || cell !== null}
-                  onClick={() => handlePress(idx)}
-                  aria-label={`Tic tac toe cell ${idx + 1}${cell ? `: ${cell}` : ''}`}
-                  className={`aspect-square min-w-0 rounded-xl flex items-center justify-center border transition-all ${
-                    isWin
-                      ? 'bg-amber-300/30 border-yellow-200 shadow-[0_0_18px_rgba(253,224,71,.65)]'
-                      : 'bg-[#634329]/85 border-amber-100/25 hover:bg-[#805a35]/90 hover:border-amber-200/70'
-                  } ${!isMyTurn || cell !== null ? 'cursor-default' : 'cursor-pointer active:scale-95'}`}
-                >
-                  {cell === 'X' && (
-                    <motion.span
-                      initial={{ scale: 0.35, opacity: 0, rotate: -25 }}
-                      animate={{ scale: 1, opacity: 1, rotate: 0 }}
-                      className="text-4xl sm:text-6xl font-black text-amber-200 drop-shadow-[0_0_12px_rgba(254,240,138,.9)]"
-                    >X</motion.span>
-                  )}
-                  {cell === 'O' && (
-                    <motion.span
-                      initial={{ scale: 0.35, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className="text-4xl sm:text-6xl font-black text-sky-300 drop-shadow-[0_0_12px_rgba(125,211,252,.9)]"
-                    >O</motion.span>
-                  )}
-                </button>
-              );
-            })}
+      <main className="ttt-stage-layout relative z-10 flex-1 min-h-0">
+        <div className="ttt-character-side ttt-character-left"><ArenaMascot side="azure" mood={mascotMood} /></div>
+        <div className="ttt-board-column">
+          <div className="ttt-board-heading"><span>NEON ARENA</span><span>ROUND 01 <i>•</i> 3 × 3</span></div>
+          <div className="ttt-board-shell">
+            <div className="ttt-board-bezel">
+              <div className="ttt-board-grid">
+                {board.map((cell, idx) => {
+                  const isWin = winningIndices.has(idx);
+                  return (
+                    <motion.button
+                      key={idx} type="button" disabled={!isMyTurn || cell !== null}
+                      onClick={() => handlePress(idx)}
+                      aria-label={'Tic tac toe cell ' + (idx + 1) + (cell ? ': ' + cell : '')}
+                      whileTap={isMyTurn && cell === null ? { scale: .92 } : undefined}
+                      className={'ttt-cell ' + (isWin ? 'is-winning' : '') + (cell ? ' is-filled' : '') + (!isMyTurn || cell !== null ? ' is-disabled' : '')}
+                    >
+                      <span className="ttt-cell-index">{String(idx + 1).padStart(2, '0')}</span>
+                      {cell === 'X' && <motion.svg viewBox="0 0 64 64" className="ttt-mark ttt-mark-x" initial={{ scale: .25, opacity: 0, rotate: -35 }} animate={{ scale: 1, opacity: 1, rotate: 0 }} transition={{ type: 'spring', stiffness: 360, damping: 19 }}><path d="M15 15 L49 49 M49 15 L15 49" fill="none" stroke="currentColor" strokeWidth="9" strokeLinecap="round" /></motion.svg>}
+                      {cell === 'O' && <motion.svg viewBox="0 0 64 64" className="ttt-mark ttt-mark-o" initial={{ scale: .25, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ type: 'spring', stiffness: 330, damping: 18 }}><circle cx="32" cy="32" r="20" fill="none" stroke="currentColor" strokeWidth="8" /></motion.svg>}
+                      {!cell && <span className="ttt-cell-crosshair" aria-hidden="true">＋</span>}
+                      {isWin && <motion.span className="ttt-win-spark" initial={{ scale: 0 }} animate={{ scale: [0, 1.4, 1] }}>✦</motion.span>}
+                    </motion.button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="ttt-board-base"><span /><span /><span /></div>
+          </div>
+          <div className={'ttt-status-bar ' + (isFinished ? 'is-finished' : isMyTurn ? 'is-your-turn' : 'is-rival-turn')}>
+            <span className="ttt-status-icon">{isFinished ? (isDraw ? '＝' : didWin ? '✦' : '◇') : '◈'}</span>
+            <span>{statusText}</span><i />
           </div>
         </div>
+        <div className="ttt-character-side ttt-character-right"><ArenaMascot side="coral" mood={mascotMood} /></div>
+      </main>
 
-        <motion.img
-          key={girlImage}
-          src={girlImage}
-          alt="Myanmar village girl game character"
-          draggable={false}
-          className="w-[clamp(90px,20vh,158px)] h-[clamp(90px,20vh,158px)] object-contain drop-shadow-[0_8px_12px_rgba(0,0,0,.7)]"
-          initial={{ y: 10, opacity: 0, scale: 0.96 }}
-          animate={{ y: 0, opacity: 1, scale: 1 }}
-          transition={{ duration: 0.35 }}
-        />
-      </div>
-
-      <div className="relative z-10 w-full max-w-[520px] flex flex-col items-center gap-3">
-        <div className="px-5 py-2 rounded-2xl bg-black/75 border border-amber-300/55 shadow-lg text-center">
-          <span className="text-sm font-bold text-amber-100">{statusText}</span>
-        </div>
-
-        {isFinished && onLeaveFinished && (
-          <motion.button
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            type="button"
-            onClick={onLeaveFinished}
-            className="px-7 py-2.5 rounded-full font-bold text-sm text-slate-950 bg-gradient-to-r from-amber-300 via-yellow-400 to-amber-500 hover:brightness-110 shadow-[0_8px_24px_rgba(251,191,36,.4)] transition"
-          >
-            {lang === 'my' ? 'Lobby သို့ ပြန်သွားမည်' : 'Back to Lobby'}
-          </motion.button>
-        )}
-      </div>
-    </div>
+      <footer className="ttt-arena-footer relative z-10">
+        <span><i /> {lang === 'my' ? 'ကစားကွက်ကို ဗျူဟာကျကျ ရွေးချယ်ပါ' : 'THINK AHEAD. OWN THE GRID.'}</span>
+        {isFinished && onLeaveFinished && <motion.button initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} type="button" onClick={onLeaveFinished} className="ttt-rematch-button">{lang === 'my' ? 'Lobby သို့ ပြန်သွားမည်' : 'BACK TO LOBBY'} <b>↗</b></motion.button>}
+      </footer>
+    </section>
   );
 };
 
