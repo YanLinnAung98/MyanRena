@@ -33,6 +33,7 @@ import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { ShareProfileModal } from './ShareProfileModal.tsx';
 import { MyanmarCityPicker } from './MyanmarCityPicker.tsx';
+import { isMyanmarTownshipId } from '../data/myanmarTownships.ts';
 
 const MAX_PROFILE_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_PROFILE_IMAGE_DATA_URL_LENGTH = 260_000;
@@ -63,7 +64,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   const [favoriteGame, setFavoriteGame] = React.useState<GameType>(user.favoriteGame || 'connect4');
   const [gender, setGender] = React.useState<UserProfile['gender']>(user.gender || 'prefer-not-to-say');
   const [ageRange, setAgeRange] = React.useState<UserProfile['ageRange']>(user.ageRange || undefined);
-  const [city, setCity] = React.useState(user.city || '');
+  const [city, setCity] = React.useState(user.city && isMyanmarTownshipId(user.city) ? user.city : '');
   const [showGender, setShowGender] = React.useState(user.showGender === true);
   const [showAgeRange, setShowAgeRange] = React.useState(user.showAgeRange === true);
   const [showCity, setShowCity] = React.useState(user.showCity === true || user.showCountry === true);
@@ -83,7 +84,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       setFavoriteGame(user.favoriteGame || 'connect4');
       setGender(user.gender || 'prefer-not-to-say');
       setAgeRange(user.ageRange || undefined);
-      setCity(user.city || '');
+      setCity(user.city && isMyanmarTownshipId(user.city) ? user.city : '');
       setShowGender(user.showGender === true);
       setShowAgeRange(user.showAgeRange === true);
       setShowCity(user.showCity === true || user.showCountry === true);
@@ -368,7 +369,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         favoriteGame,
         gender,
         ageRange: ageRange || '',
-        city,
+        city: city && isMyanmarTownshipId(city) ? city : '',
         showGender,
         showAgeRange,
         showCity,
@@ -398,7 +399,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     Boolean(user.bio?.trim()),
     Boolean(user.favoriteGame),
     Boolean(user.bannerUrl || user.bannerId),
-    Boolean(user.city || user.country?.trim()),
+    Boolean((user.city && isMyanmarTownshipId(user.city)) || user.country?.trim()),
   ];
   const profileCompletion = Math.round((profileChecks.filter(Boolean).length / profileChecks.length) * 100);
 
