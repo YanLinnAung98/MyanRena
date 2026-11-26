@@ -502,7 +502,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const intervalId = window.setInterval(() => {
       setPingMs(Math.floor(15 + Math.random() * 14));
       pushHeartbeat(true);
-    }, 15000);
+    // Keep Firestore presence writes within the Spark free-tier budget.
+    // One continuously active client now writes at most about 1,440 heartbeats/day.
+    }, 60000);
 
     const handleBeforeUnload = () => {
       pushHeartbeat(false);
