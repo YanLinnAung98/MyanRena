@@ -24,6 +24,7 @@ import { soundEngine } from '../utils/sound.ts';
 import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { ShareProfileModal } from './ShareProfileModal.tsx';
+import { getMyanmarTownshipLabel } from '../data/myanmarTownships.ts';
 
 interface PlayerProfileModalProps {
   lang: Language;
@@ -422,11 +423,12 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
               </p>
             </div>
 
-            {(targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say") || (targetUser.showAgeRange && targetUser.ageRange) || (targetUser.showCountry && targetUser.country) ? (
+            {(targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say") || (targetUser.showAgeRange && targetUser.ageRange) || (targetUser.showCity && targetUser.city) || (targetUser.showCountry && targetUser.country) ? (
               <div className="flex flex-wrap gap-2">
                 {targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say" && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.gender === "woman" ? "Woman" : targetUser.gender === "man" ? "Man" : targetUser.gender === "non-binary" ? "Non-binary" : "Self-described"}</span>}
                 {targetUser.showAgeRange && targetUser.ageRange && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.ageRange === "under-16" ? "Under 16" : targetUser.ageRange === "35-plus" ? "35+" : targetUser.ageRange}</span>}
-                {targetUser.showCountry && targetUser.country && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.country}</span>}
+                {targetUser.showCity && targetUser.city && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{getMyanmarTownshipLabel(targetUser.city, lang)}</span>}
+                {!targetUser.showCity && targetUser.showCountry && targetUser.country && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.country}</span>}
               </div>
             ) : null}
             {/* Stats */}
