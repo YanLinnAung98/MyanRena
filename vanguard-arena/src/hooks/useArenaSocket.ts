@@ -298,6 +298,10 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const wsRef = useRef<WebSocket | null>(null);
   const activeMatchIdRef = useRef<string | null>(null);
   const handledChallengeIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    activeMatchIdRef.current = activeMatch?.id || null;
+  }, [activeMatch?.id]);
+
 
   const clearBotTimers = useCallback(() => {
     botTimersRef.current.forEach((id) => window.clearTimeout(id));
