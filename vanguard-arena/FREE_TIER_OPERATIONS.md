@@ -44,6 +44,7 @@ Sources:
 ## Free-tier optimizations already in the code
 
 - Firestore presence heartbeat is 60 seconds instead of 15 seconds. A continuously active device now writes about 1,440 presence updates per day instead of about 5,760.
+- The live profile and presence listeners are capped at the 100 highest-XP profiles and 100 most recently active presence records, preventing every client from downloading the entire collection as the player base grows.
 - Social presence considers a player online for up to 150 seconds after their last heartbeat, allowing missed mobile background heartbeats without immediately showing the player offline.
 - Firestore presence documents contain only UID, online status, activity, and last-seen timestamp; they do not copy full profiles or personal information.
 - Dependency audit, TypeScript validation, production build, game regression tests, backend smoke tests, and CodeQL analysis run through GitHub Actions.
