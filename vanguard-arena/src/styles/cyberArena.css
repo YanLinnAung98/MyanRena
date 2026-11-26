@@ -862,3 +862,25 @@ html, body {
   .mr-profile-frame-card:hover,
   .mr-profile-frame-card:hover > div:nth-child(2) { transform: none; }
 }
+
+/* Mythic Legend frame — animated crown, celestial orbit and ember particles */
+.mr-legend-frame { isolation: isolate; overflow: visible; filter: drop-shadow(0 0 5px rgba(255,190,76,.35)); }
+.mr-legend-aura { overflow: visible; animation: mrLegendAura 3.8s ease-in-out infinite; }
+.mr-legend-orbit-one { transform-origin: 60px 60px; animation: mrLegendOrbit 7s linear infinite; }
+.mr-legend-orbit-two { transform-origin: 60px 60px; animation: mrLegendOrbitReverse 10s linear infinite; }
+.mr-legend-ray { transform-origin: 60px 60px; animation: mrLegendRay 2.8s ease-in-out infinite; }
+.mr-legend-ring { filter: drop-shadow(0 0 3px rgba(255,198,84,.9)) drop-shadow(0 0 9px rgba(236,65,91,.48)); }
+.mr-legend-inner-track { animation: mrLegendDash 9s linear infinite; }
+.mr-legend-avatar { box-shadow: 0 0 0 1px rgba(255,232,169,.55), inset 0 0 12px rgba(255,191,76,.16); }
+.mr-legend-badge { display:grid; place-items:center; width:1.15rem; height:1.15rem; border:1px solid rgba(255,235,175,.9); border-radius:50%; color:#fff3c1; background:radial-gradient(circle at 35% 25%,#ffdf87,#a51e42 78%); box-shadow:0 0 10px rgba(255,185,70,.8),0 0 20px rgba(244,63,94,.3); animation:mrLegendBadge 2.2s ease-in-out infinite; }
+.mr-legend-star { transform-box:fill-box; transform-origin:center; animation:mrLegendTwinkle 2.4s ease-in-out infinite; }
+.mr-legend-star-b { animation-delay:-.7s; } .mr-legend-star-c { animation-delay:-1.3s; } .mr-legend-star-d { animation-delay:-.35s; }
+@keyframes mrLegendOrbit { to { transform:rotate(360deg); } }
+@keyframes mrLegendOrbitReverse { to { transform:rotate(-360deg); } }
+@keyframes mrLegendDash { to { stroke-dashoffset:-100; } }
+@keyframes mrLegendAura { 0%,100% { opacity:.72; transform:scale(.97); } 50% { opacity:1; transform:scale(1.04); } }
+@keyframes mrLegendRay { 0%,100% { opacity:.55; } 50% { opacity:1; } }
+@keyframes mrLegendTwinkle { 0%,100% { opacity:.35; transform:scale(.65); } 50% { opacity:1; transform:scale(1.5); } }
+@keyframes mrLegendBadge { 0%,100% { filter:brightness(.95); } 50% { filter:brightness(1.28); } }
+html[data-graphics='low'] .mr-legend-aura, html[data-graphics='low'] .mr-legend-orbit-one, html[data-graphics='low'] .mr-legend-orbit-two, html[data-graphics='low'] .mr-legend-ray, html[data-graphics='low'] .mr-legend-inner-track, html[data-graphics='low'] .mr-legend-star, html[data-graphics='low'] .mr-legend-badge { animation:none !important; }
+@media (prefers-reduced-motion: reduce) { .mr-legend-aura, .mr-legend-orbit-one, .mr-legend-orbit-two, .mr-legend-ray, .mr-legend-inner-track, .mr-legend-star, .mr-legend-badge { animation:none !important; } }
