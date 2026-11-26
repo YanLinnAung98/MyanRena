@@ -676,7 +676,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const stopIncoming = onSnapshot(incomingQuery, (snapshot) => {
       const invite = snapshot.docs
         .map((item) => ({ ...item.data(), id: item.id }))
-        .filter((item: any) => item.status === 'pending')
+        .filter((item: any) => item.status === 'pending' && Date.now() - Number(item.createdAtMs || 0) <= 120000)
         .sort((a: any, b: any) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))[0] as any;
       if (invite) {
         setPendingChallenge({
@@ -705,6 +705,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         void getDoc(doc(db, 'matches', invite.matchId)).then((matchSnap) => {
           if (!matchSnap.exists()) { handledChallengeIdsRef.current.delete(item.id); return; }
           const match = matchSnap.data();
+          if (match.status !== 'active') return;
           activeMatchIdRef.current = match.id;
           setMatchChat(Array.isArray(match.chat) ? match.chat : []);
           setCurrentRoom(null);
