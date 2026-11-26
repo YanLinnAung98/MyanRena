@@ -19,8 +19,10 @@ import {
 import {
   collection,
   deleteDoc,
+  limit,
   doc,
   onSnapshot,
+  orderBy,
   query,
   setDoc,
   updateDoc,
@@ -158,13 +160,13 @@ export const SocialHub: React.FC<SocialHubProps> = ({
       setBlockedByOtherIds(Array.from(new Set(inboundBlocks.map((block) => block.blockerId))));
     };
 
-    const unsubPresence = onSnapshot(collection(db, 'presence'), (snap) => {
+    const unsubPresence = onSnapshot(query(collection(db, 'presence'), orderBy('lastSeenMs', 'desc'), limit(100)), (snap) => {
       const next: Record<string, any> = {};
       snap.docs.forEach((d) => { next[d.id] = d.data(); });
       setCloudPresence(next);
     }, (error) => console.warn('Player presence unavailable:', error));
 
-    const unsubUsers = onSnapshot(collection(db, 'users'), (snap) => {
+    const unsubUsers = onSnapshot(query(collection(db, 'users'), orderBy('xp', 'desc'), limit(100)), (snap) => {
       const profiles = snap.docs.map((d) => {
         const data = d.data();
         return {
@@ -274,7 +276,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
         if (USE_SERVER_API) return player;
         const presence = cloudPresence[player.id];
         const lastSeenMs = Number(presence?.lastSeenMs || 0);
-        const isOnline = Boolean(presence?.online && lastSeenMs > 0 && Date.now() - lastSeenMs < 90000);
+        const isOnline = Boolean(presence?.online && lastSeenMs > 0 && Date.now() - lastSeenMs < 150000);
         return {
           ...player,
           online: isOnline,
