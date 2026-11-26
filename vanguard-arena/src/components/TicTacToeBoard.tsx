@@ -11,6 +11,15 @@ export interface TicTacToeBoardProps {
   onLeaveFinished?: () => void;
 }
 
+
+// Keep the legacy exports used by MatchArena's opponent profile and bot label.
+const BASE = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
+export const TTT_KID_BOT_AVATAR_DATA_URI = `${BASE}assets/ttt-boy.png`;
+export function getTicTacToeBotName(lang: string, difficulty?: string): string {
+  const base = lang === 'my' ? 'မပုတု' : 'Ma Pu Tu';
+  return difficulty ? `${base} (${difficulty.toUpperCase()})` : base;
+}
+
 const WIN_LINES = [
   [0, 1, 2], [3, 4, 5], [6, 7, 8],
   [0, 3, 6], [1, 4, 7], [2, 5, 8],
