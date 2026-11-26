@@ -33,6 +33,7 @@ import type { LandingContent, Language, UserProfile } from '../types.ts';
 import { detectClientDevice } from '../utils/deviceDetector.ts';
 import { createAvatarSvg, GAME_ARTWORKS } from '../utils/gameArtworks.ts';
 import { soundEngine } from '../utils/sound.ts';
+import { MyanRenaCrestIcon } from './PremiumIcons.tsx';
 
 interface LandingViewProps {
   lang: Language;
@@ -507,11 +508,12 @@ export const LandingView: React.FC<LandingViewProps> = ({
 
   return (
     <div className="min-h-dvh overflow-x-hidden cyber-bg text-slate-100 flex flex-col">
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
+      <header className="mr-app-header sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-7xl mx-auto px-3 sm:px-6 h-14 sm:h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
-            <span className="vanguard-brand-box px-3 py-1.5 rounded-xl text-sm sm:text-base font-display font-extrabold text-amber-200 tracking-wide">
-              MYANRENA
+            <span className="vanguard-brand-box inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm sm:text-base font-display font-extrabold text-amber-100 tracking-wide">
+              <MyanRenaCrestIcon className="w-7 h-7 shrink-0" />
+              <span>MYANRENA</span>
             </span>
             <span className="text-[11px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 font-semibold shrink-0">
               ● {onlineCount}

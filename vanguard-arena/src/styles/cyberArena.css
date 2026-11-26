@@ -602,3 +602,148 @@ html, body {
 .nav-icon-rose { color: #fda4af; background: linear-gradient(145deg,rgba(225,29,72,.18),rgba(76,5,25,.3)); border-color: rgba(253,164,175,.2); }
 .nav-icon-active .nav-icon { transform: translateY(-2px); border-color: rgba(255,225,160,.48); box-shadow: 0 0 0 1px rgba(233,189,104,.15), 0 6px 18px rgba(233,189,104,.12); }
 @media (min-width: 1024px) { .nav-icon { width: 29px; height: 27px; border-radius: 9px; } }
+
+
+/* Responsive product polish: predictable desktop navigation, thumb-friendly
+   mobile navigation, calmer card motion and consistent game-hall rhythm. */
+.mr-app-header {
+  min-height: 4rem;
+  border-bottom-color: rgba(164, 184, 211, .12);
+  background: rgba(7, 12, 22, .88);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .16);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  backdrop-filter: blur(18px) saturate(145%);
+}
+
+.mr-desktop-nav {
+  padding: .3rem;
+  border: 1px solid rgba(164, 184, 211, .1);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, .025);
+}
+
+.mr-desktop-nav > button {
+  min-height: 2.65rem;
+  border: 1px solid transparent;
+  transition: color .18s ease, background .18s ease, border-color .18s ease, transform .18s ease;
+}
+
+.mr-desktop-nav > button:hover {
+  background: rgba(255, 255, 255, .055);
+  transform: translateY(-1px);
+}
+
+.mr-mobile-nav {
+  padding: .35rem .35rem calc(.35rem + env(safe-area-inset-bottom, 0px));
+  border-top: 1px solid rgba(164, 184, 211, .14);
+  background: rgba(7, 12, 22, .94);
+  box-shadow: 0 -12px 38px rgba(0, 0, 0, .3);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+}
+
+.mr-mobile-nav-inner {
+  width: min(100%, 34rem);
+  height: 3.85rem;
+  margin-inline: auto;
+}
+
+.mr-mobile-nav button {
+  position: relative;
+  min-width: 0;
+  min-height: 3.25rem;
+  border-radius: .95rem;
+  transition: color .18s ease, background .18s ease, transform .18s ease;
+}
+
+.mr-mobile-nav button:active {
+  transform: scale(.96);
+}
+
+.mr-mobile-nav button[aria-current="page"] {
+  color: #ffe1a0;
+  background: linear-gradient(180deg, rgba(233, 189, 104, .13), rgba(233, 189, 104, .035));
+}
+
+.mr-mobile-nav button[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  top: -.35rem;
+  left: 50%;
+  width: 1.25rem;
+  height: 2px;
+  border-radius: 999px;
+  background: #f2c878;
+  box-shadow: 0 0 12px rgba(242, 200, 120, .45);
+  transform: translateX(-50%);
+}
+
+.mr-game-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .8rem;
+}
+
+.mr-game-card {
+  min-width: 0;
+  contain: layout paint;
+  transform: translateZ(0);
+  transition: transform .24s var(--mr-ease-standard), border-color .24s ease, box-shadow .24s ease;
+}
+
+.mr-game-card:focus-visible {
+  outline: none;
+  box-shadow: var(--mr-focus-ring);
+}
+
+.mr-game-card:active {
+  transform: scale(.985);
+}
+
+.mr-game-card-media {
+  aspect-ratio: 1.42 / 1;
+}
+
+.mr-game-card-title {
+  overflow-wrap: anywhere;
+  text-wrap: balance;
+}
+
+@media (min-width: 768px) {
+  .mr-game-grid { gap: 1rem; }
+  .mr-game-card-media { aspect-ratio: 1.58 / 1; }
+}
+
+@media (min-width: 1280px) {
+  .mr-game-grid { gap: 1.15rem; }
+}
+
+@media (max-width: 640px) {
+  .mr-app-header { min-height: 3.5rem; }
+  .mr-mobile-nav-inner { height: 3.55rem; }
+  .mr-game-grid { gap: .65rem; }
+  .mr-game-card-media { aspect-ratio: 1.18 / 1; }
+  .mr-arena-banner { border-radius: 1.05rem; }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .mr-game-card:hover {
+    transform: translateY(-4px);
+    border-color: rgba(233, 189, 104, .48);
+    box-shadow: 0 22px 48px rgba(0, 0, 0, .34), 0 0 0 1px rgba(233, 189, 104, .08);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mr-desktop-nav > button,
+  .mr-mobile-nav button,
+  .mr-game-card {
+    transition: none !important;
+  }
+  .mr-desktop-nav > button:hover,
+  .mr-game-card:hover,
+  .mr-game-card:active,
+  .mr-mobile-nav button:active {
+    transform: none;
+  }
+}
