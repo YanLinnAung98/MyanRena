@@ -36,6 +36,10 @@ export interface UserProfile {
   favoriteGame?: GameType;
   gender?: 'woman' | 'man' | 'non-binary' | 'self-describe' | 'prefer-not-to-say';
   ageRange?: 'under-16' | '16-17' | '18-24' | '25-34' | '35-plus' | '';
+  /** Stable township ID from the Myanmar administrative directory. */
+  city?: string;
+  showCity?: boolean;
+  /** Legacy profile fields retained for reading older player documents. */
   country?: string;
   showGender?: boolean;
   showAgeRange?: boolean;
