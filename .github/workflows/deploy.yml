@@ -60,6 +60,7 @@ jobs:
             console.log(`${item.severity.toUpperCase()} ${name}: direct=${item.isDirect}, range=${item.range}, fix=${JSON.stringify(item.fixAvailable)}, advisories=${advisories.join('; ')}`);
           }
           NODE
+          npm audit --audit-level=moderate
 
       - name: Build production bundle
         run: npm run build
