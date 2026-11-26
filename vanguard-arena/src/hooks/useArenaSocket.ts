@@ -6,7 +6,9 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
   onSnapshot,
+  orderBy,
   query,
   setDoc,
   updateDoc,
@@ -834,7 +836,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     }
 
     const unsubUsers = onSnapshot(
-      collection(db, 'users'),
+      query(collection(db, 'users'), orderBy('xp', 'desc'), limit(100)),
       (snap) => {
         setCloudError(null);
         setConnectionState('connected');
