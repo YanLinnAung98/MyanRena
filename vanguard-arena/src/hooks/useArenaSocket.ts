@@ -292,7 +292,7 @@ function pickSmartConnect4Col(grid: Array<Array<string | null>>, difficulty: str
   return validCols[Math.floor(Math.random() * validCols.length)];
 }
 
-export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocketOptions) {
+export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArenaSocketOptions) {
   const [connectionState, setConnectionState] = useState<'connected' | 'connecting' | 'disconnected'>(
     USE_SERVER_API ? 'connecting' : 'connected'
   );
@@ -1639,26 +1639,40 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
 
   const respondChallenge = useCallback(
     async (challengeId: string, accept: boolean) => {
-      setPendingChallenge(null);
       if (USE_SERVER_API) {
-        sendServerMessage({ type: 'challenge:respond', inviteId: challengeId, accept });
+        if (sendServerMessage({ type: 'challenge:respond', inviteId: challengeId, accept })) {
+          setPendingChallenge(null);
+        }
         return;
       }
       if (!isFirebaseConfigured || !db) return;
       try {
         const inviteRef = doc(db, 'matchChallenges', challengeId);
         const inviteSnap = await getDoc(inviteRef);
-        if (!inviteSnap.exists()) return;
+        if (!inviteSnap.exists()) {
+          setPendingChallenge(null);
+          return;
+        }
         const invite = inviteSnap.data() as any;
         const me = resolveCurrentPlayer();
-        if (!me?.id || invite.toUserId !== me.id || invite.status !== 'pending') return;
+        if (!me?.id || invite.toUserId !== me.id || invite.status !== 'pending') {
+          setPendingChallenge(null);
+          return;
+        }
         const verificationState = await refreshFirebaseVerification(me.id);
         if (verificationState !== 'verified') {
           pushToast('error', challengeVerificationError(verificationState, lang));
           return;
         }
+        if (Date.now() - Number(invite.createdAtMs || 0) > 120000) {
+          await updateDoc(inviteRef, { status: 'rejected' }).catch(() => {});
+          setPendingChallenge(null);
+          pushToast('info', lang === 'my' ? 'စိန်ခေါ်မှု သက်တမ်းကုန်သွားပါပြီ။' : 'This challenge has expired.');
+          return;
+        }
         if (!accept) {
           await updateDoc(inviteRef, { status: 'rejected' });
+          setPendingChallenge(null);
           return;
         }
         const challengerSnap = await getDoc(doc(db, 'users', invite.fromUserId));
@@ -1674,6 +1688,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         });
         await setDoc(doc(db, 'matches', match.id), stripUndefined(match));
         await updateDoc(inviteRef, { status: 'accepted', matchId: match.id });
+        setPendingChallenge(null);
         handledChallengeIdsRef.current.add(challengeId);
         activeMatchIdRef.current = match.id;
         matchChatMatchIdRef.current = match.id;
