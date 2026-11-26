@@ -677,10 +677,11 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   // 2b. FIREBASE DIRECT-CHALLENGE DELIVERY (when the WebSocket backend is disabled)
   useEffect(() => {
     if (!token || USE_SERVER_API || !isFirebaseConfigured || !db) return;
+    const firestore = db;
     const me = resolveCurrentPlayer();
     if (!me?.id) return;
-    const incomingQuery = query(collection(db, 'matchChallenges'), where('toUserId', '==', me.id));
-    const outgoingQuery = query(collection(db, 'matchChallenges'), where('fromUserId', '==', me.id));
+    const incomingQuery = query(collection(firestore, 'matchChallenges'), where('toUserId', '==', me.id));
+    const outgoingQuery = query(collection(firestore, 'matchChallenges'), where('fromUserId', '==', me.id));
     const stopIncoming = onSnapshot(incomingQuery, (snapshot) => {
       const invite = snapshot.docs
         .map((item) => ({ ...item.data(), id: item.id }))
@@ -710,7 +711,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         }
         if (invite.status !== 'accepted' || !invite.matchId || handledChallengeIdsRef.current.has(item.id)) return;
         handledChallengeIdsRef.current.add(item.id);
-        void getDoc(doc(db, 'matches', invite.matchId)).then((matchSnap) => {
+        void getDoc(doc(firestore, 'matches', invite.matchId)).then((matchSnap) => {
           if (!matchSnap.exists()) { handledChallengeIdsRef.current.delete(item.id); return; }
           const match = matchSnap.data();
           if (match.status !== 'active') return;
