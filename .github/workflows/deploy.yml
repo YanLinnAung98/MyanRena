@@ -67,6 +67,9 @@ jobs:
       - name: TypeScript validation
         run: npm run lint
 
+      - name: Game engine regression tests
+        run: npm test
+
       - name: Backend startup and authentication smoke test
         env:
           NODE_ENV: production
