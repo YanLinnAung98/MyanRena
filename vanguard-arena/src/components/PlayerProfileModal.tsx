@@ -25,6 +25,7 @@ import { AvatarWithFrame } from './AvatarWithFrame.tsx';
 import { GameBadgeIcon, GiftTrophyIcon, RankTierIcon } from './PremiumIcons.tsx';
 import { ShareProfileModal } from './ShareProfileModal.tsx';
 import { getMyanmarTownshipLabel } from '../data/myanmarTownships.ts';
+import { getMyanmarTownLabel } from '../data/myanmarTowns.ts';
 
 interface PlayerProfileModalProps {
   lang: Language;
@@ -158,7 +159,7 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const targetDisplayName = String(targetUser.displayName || targetUser.username || (lang === 'my' ? 'ကစားသမား' : 'Player'));
   const targetBio = typeof targetUser.bio === 'string' ? targetUser.bio.trim() : '';
   const targetCityLabel = targetUser.showCity && typeof targetUser.city === 'string'
-    ? getMyanmarTownshipLabel(targetUser.city, lang)
+    ? (getMyanmarTownLabel(targetUser.city, lang) || getMyanmarTownshipLabel(targetUser.city, lang))
     : '';
   const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
   const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts.filter(Boolean) : [];
