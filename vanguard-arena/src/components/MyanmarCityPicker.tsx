@@ -62,7 +62,7 @@ export const MyanmarCityPicker: React.FC<MyanmarCityPickerProps> = ({ value, lan
     <div ref={rootRef} className="relative space-y-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[10px] text-slate-400">{lang === 'my' ? 'မြို့' : 'Town'}</span>
-        <span className="text-[9px] text-slate-500">{lang === 'my' ? 'မြို့ ၄၇၁ မြို့ • တိုင်း/ပြည်နယ် ၁၅ ခု' : '471 GAD-sourced towns • 15 states & regions'}</span>
+        <span className="text-[9px] text-slate-500">{lang === 'my' ? 'ရင်းမြစ်အတည်ပြု မြို့ ၄၇၁ မြို့ • တိုင်း/ပြည်နယ် ၁၅ ခု' : '471 reference towns • 15 states & regions'}</span>
       </div>
       <div className="flex gap-1.5">
         <button type="button" onClick={() => { setOpen((current) => !current); setSearch(''); }} aria-expanded={open} aria-haspopup="dialog" aria-label={lang === 'my' ? 'မြို့ရွေးချယ်ရန်' : 'Choose town'}
