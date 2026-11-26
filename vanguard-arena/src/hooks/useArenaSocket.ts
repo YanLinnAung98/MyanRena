@@ -13,7 +13,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { QUIZ_BANK_100 } from '../data/quizBank100.ts';
-import { db, firebaseInitError, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
+import { auth, db, firebaseInitError, isFirebaseConfigured, stripUndefined } from '../lib/firebase.ts';
 import {
   broadcastLocalSync,
   buildPlayableMatch,
@@ -56,6 +56,37 @@ interface UseArenaSocketOptions {
 
 const DISMISSED_NOTIS_KEY = 'vanguard_dismissed_notis_v1';
 const USE_SERVER_API = import.meta.env.VITE_USE_SERVER_API === 'true';
+
+type FirebaseVerificationState = 'verified' | 'unverified' | 'not-signed-in' | 'wrong-account';
+
+/**
+ * Refresh the Firebase ID token before Firestore operations protected by email_verified.
+ * Firebase keeps the old ID token after the user clicks the verification link until it is refreshed.
+ */
+async function refreshFirebaseVerification(expectedUserId: string): Promise<FirebaseVerificationState> {
+  const currentAuth = auth;
+  const currentUser = currentAuth?.currentUser;
+  if (!currentUser) return 'not-signed-in';
+  if (currentUser.uid !== expectedUserId) return 'wrong-account';
+
+  await currentUser.reload();
+  await currentUser.getIdToken(true);
+
+  const refreshedUser = currentAuth.currentUser;
+  if (!refreshedUser || refreshedUser.uid !== expectedUserId) return 'wrong-account';
+  return refreshedUser.emailVerified ? 'verified' : 'unverified';
+}
+
+function challengeVerificationError(state: Exclude<FirebaseVerificationState, 'verified'>, lang: Language): string {
+  if (state === 'unverified') {
+    return lang === 'my'
+      ? 'Email အတည်ပြုချက် မပြီးသေးပါ။ Email ထဲက အတည်ပြု link ကိုဖွင့်ပြီး ထပ်ကြိုးစားပါ။'
+      : 'Verify your email address, then try the challenge again.';
+  }
+  return lang === 'my'
+    ? 'ဒီကစားသမားအကောင့်နဲ့ Firebase အကောင့် မကိုက်ညီပါ။ Firebase Email အကောင့်နဲ့ ပြန်ဝင်ပါ။'
+    : 'Your Firebase session does not match this player. Sign in with the linked Firebase email account.';
+}
 
 function mapServerMatchToClient(serverMatch: any): any {
   if (!serverMatch?.state) return serverMatch;
@@ -1565,6 +1596,11 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
       try {
+        const verificationState = await refreshFirebaseVerification(player.id);
+        if (verificationState !== 'verified') {
+          pushToast('error', challengeVerificationError(verificationState, lang));
+          return;
+        }
         const targetSnap = await getDoc(doc(db, 'users', targetUserId));
         const target = targetSnap.exists() ? targetSnap.data() : onlinePlayers.find((p) => p.id === targetUserId);
         if (!target) {
@@ -1594,7 +1630,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         pushToast('error', error?.message || 'Could not send the challenge. Please try again.');
       }
     },
-    [resolveCurrentPlayer, sendServerMessage, onlinePlayers, pushToast]
+    [resolveCurrentPlayer, sendServerMessage, onlinePlayers, pushToast, lang]
   );
 
   const respondChallenge = useCallback(
@@ -1612,6 +1648,11 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         const invite = inviteSnap.data() as any;
         const me = resolveCurrentPlayer();
         if (!me?.id || invite.toUserId !== me.id || invite.status !== 'pending') return;
+        const verificationState = await refreshFirebaseVerification(me.id);
+        if (verificationState !== 'verified') {
+          pushToast('error', challengeVerificationError(verificationState, lang));
+          return;
+        }
         if (!accept) {
           await updateDoc(inviteRef, { status: 'rejected' });
           return;
@@ -1643,7 +1684,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         pushToast('error', error?.message || 'Could not respond to the challenge.');
       }
     },
-    [resolveCurrentPlayer, sendServerMessage, pushToast]
+    [resolveCurrentPlayer, sendServerMessage, pushToast, lang]
   );
 
   const unreadNotiCount = notifications.filter((n) => !n.read).length;
