@@ -60,12 +60,16 @@ jobs:
             console.log(`${item.severity.toUpperCase()} ${name}: direct=${item.isDirect}, range=${item.range}, fix=${JSON.stringify(item.fixAvailable)}, advisories=${advisories.join('; ')}`);
           }
           NODE
+          npm audit --audit-level=moderate
 
       - name: Build production bundle
         run: npm run build
 
       - name: TypeScript validation
         run: npm run lint
+
+      - name: Game engine regression tests
+        run: npm test
 
       - name: Backend startup and authentication smoke test
         env:
