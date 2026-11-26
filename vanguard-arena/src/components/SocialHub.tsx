@@ -274,7 +274,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
         if (USE_SERVER_API) return player;
         const presence = cloudPresence[player.id];
         const lastSeenMs = Number(presence?.lastSeenMs || 0);
-        const isOnline = Boolean(presence?.online && lastSeenMs > 0 && Date.now() - lastSeenMs < 90000);
+        const isOnline = Boolean(presence?.online && lastSeenMs > 0 && Date.now() - lastSeenMs < 150000);
         return {
           ...player,
           online: isOnline,
