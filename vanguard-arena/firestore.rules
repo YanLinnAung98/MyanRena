@@ -52,7 +52,7 @@ service cloud.firestore {
         && (!('favoriteGame' in data) || data.favoriteGame in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar', 'sakar_htar'])
         && (!('bannerId' in data) || (data.bannerId is string && data.bannerId.size() <= 80))
         && (!('bannerUrl' in data) || (data.bannerUrl is string && data.bannerUrl.size() <= 2048))
-        && (!('city' in data) || (data.city is string && data.city.size() <= 20 && (data.city == '' || data.city.matches('^MMR[A-Z0-9]{4,17}
+        && (!('city' in data) || (data.city is string && data.city.size() <= 20 && (data.city == '' || data.city.matches('^MMR[A-Z0-9]{4,17}$'))))
         && (!('showCity' in data) || data.showCity is bool)
         && (!('country' in data) || (data.country is string && data.country.size() <= 56))
         && (!('showCountry' in data) || data.showCountry is bool)
