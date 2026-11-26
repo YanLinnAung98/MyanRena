@@ -705,7 +705,7 @@ function VanguardAppCore() {
       } ${rootClass}`}
     >
 
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
+      <header className="mr-app-header sticky top-0 z-30 border-b border-white/10 bg-[#080c15]/90 backdrop-blur-md shrink-0">
         <div className="max-w-[1440px] mx-auto px-3 sm:px-6 h-16 flex items-center justify-between gap-2">
           <div className="flex items-center gap-4 min-w-0">
             <button
@@ -717,7 +717,7 @@ function VanguardAppCore() {
               <span>MYANRENA</span>
             </button>
 
-            <nav className="hidden lg:flex items-center gap-1.5 text-xs font-semibold">
+            <nav className="mr-desktop-nav hidden lg:flex items-center gap-1.5 text-xs font-semibold">
               {navItems.map((item) => {
                 const active = activeTab === item.id;
                 return (
@@ -1010,8 +1010,8 @@ function VanguardAppCore() {
 
       {/* Mobile Bottom Navigation with Incoming Friend Request Badge */}
       {!socket.activeMatch && (
-        <nav className="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-[#080d18]/95 backdrop-blur-xl border-t border-white/10 shadow-[0_-12px_36px_rgba(0,0,0,.4)] safe-bottom-bar">
-          <div className="grid grid-cols-5 h-[72px] items-center px-1">
+        <nav className="mr-mobile-nav lg:hidden fixed bottom-0 left-0 right-0 z-40 safe-bottom-bar">
+          <div className="mr-mobile-nav-inner grid grid-cols-5 items-center px-1">
             {navItems.map((item) => {
               const active = activeTab === item.id;
               return (
@@ -1019,6 +1019,7 @@ function VanguardAppCore() {
                   key={item.id}
                   type="button"
                   onClick={() => setActiveTab(item.id)}
+                  aria-current={active ? 'page' : undefined}
                   className={`relative min-h-[56px] flex flex-col items-center justify-center gap-1 cursor-pointer transition-colors ${
                     active ? 'text-amber-400' : 'text-slate-400'
                   }`}
