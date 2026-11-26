@@ -23,6 +23,7 @@ test('all township entries have bilingual names, valid IDs and known regions', (
     assert.match(township.id, /^MMR[A-Z0-9]{4,17}$/);
     assert.ok(township.en.trim().length > 0, `missing English name for ${township.id}`);
     assert.ok(township.local.trim().length > 0, `missing Myanmar name for ${township.id}`);
+    assert.match(township.local, /[က-႟]/u, `Myanmar-script name missing for ${township.id}`);
     assert.ok(regionNames.has(township.regionEn), `unknown region for ${township.id}`);
   }
 });
