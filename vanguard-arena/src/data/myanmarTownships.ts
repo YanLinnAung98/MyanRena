@@ -26,6 +26,10 @@ export const MYANMAR_TOWNSHIPS: MyanmarTownship[] = MYANMAR_REGIONS.flatMap((reg
 
 const townshipById = new Map(MYANMAR_TOWNSHIPS.map((township) => [township.id, township]));
 
+export function isMyanmarTownshipId(cityId: string): boolean {
+  return townshipById.has(cityId);
+}
+
 export function getMyanmarTownshipLabel(cityId: string, lang: 'my' | 'en' = 'my'): string {
   const township = townshipById.get(cityId);
   if (!township) return '';
