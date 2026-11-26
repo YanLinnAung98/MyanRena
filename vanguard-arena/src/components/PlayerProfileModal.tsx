@@ -157,6 +157,9 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
   const isOnline = Boolean(targetUser.online && Date.now() - Number(targetUser.lastSeenMs || 0) < 90000);
   const targetDisplayName = String(targetUser.displayName || targetUser.username || (lang === 'my' ? 'ကစားသမား' : 'Player'));
   const targetBio = typeof targetUser.bio === 'string' ? targetUser.bio.trim() : '';
+  const targetCityLabel = targetUser.showCity && typeof targetUser.city === 'string'
+    ? getMyanmarTownshipLabel(targetUser.city, lang)
+    : '';
   const bannerSrc = resolveBannerImage(targetUser.bannerUrl, targetUser.bannerId);
   const gifts: PlayerGift[] = Array.isArray(targetUser.gifts) ? targetUser.gifts.filter(Boolean) : [];
 
@@ -423,11 +426,11 @@ export const PlayerProfileModal: React.FC<PlayerProfileModalProps> = ({
               </p>
             </div>
 
-            {(targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say") || (targetUser.showAgeRange && targetUser.ageRange) || (targetUser.showCity && targetUser.city) || (targetUser.showCountry && targetUser.country) ? (
+            {(targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say") || (targetUser.showAgeRange && targetUser.ageRange) || targetCityLabel || (targetUser.showCountry && targetUser.country) ? (
               <div className="flex flex-wrap gap-2">
                 {targetUser.showGender && targetUser.gender && targetUser.gender !== "prefer-not-to-say" && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.gender === "woman" ? "Woman" : targetUser.gender === "man" ? "Man" : targetUser.gender === "non-binary" ? "Non-binary" : "Self-described"}</span>}
                 {targetUser.showAgeRange && targetUser.ageRange && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.ageRange === "under-16" ? "Under 16" : targetUser.ageRange === "35-plus" ? "35+" : targetUser.ageRange}</span>}
-                {targetUser.showCity && targetUser.city && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{getMyanmarTownshipLabel(targetUser.city, lang)}</span>}
+                {targetCityLabel && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetCityLabel}</span>}
                 {!targetUser.showCity && targetUser.showCountry && targetUser.country && <span className="px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-[10px] text-slate-300">{targetUser.country}</span>}
               </div>
             ) : null}
