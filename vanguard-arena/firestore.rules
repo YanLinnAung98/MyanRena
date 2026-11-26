@@ -403,6 +403,61 @@ service cloud.firestore {
       );
     }
 
+    // Direct player-to-player match invitations. Only the sender and recipient can read them.
+    match /matchChallenges/{challengeId} {
+      function validMatchChallenge(data) {
+        return data.keys().hasAll([
+          'id', 'fromUserId', 'fromName', 'fromGameId', 'toUserId', 'toName',
+          'gameType', 'bestOf', 'turnTimeLimit', 'status', 'createdAtMs'
+        ])
+          && data.keys().hasOnly([
+            'id', 'fromUserId', 'fromName', 'fromGameId', 'fromAvatarUrl', 'fromFrameId',
+            'toUserId', 'toName', 'toGameId', 'gameType', 'bestOf', 'turnTimeLimit',
+            'status', 'createdAtMs', 'matchId'
+          ])
+          && data.id == challengeId
+          && data.fromUserId is string && data.fromUserId.size() > 0 && data.fromUserId.size() <= 128
+          && data.toUserId is string && data.toUserId.size() > 0 && data.toUserId.size() <= 128
+          && data.fromUserId != data.toUserId
+          && data.fromName is string && data.fromName.size() > 0 && data.fromName.size() <= 64
+          && data.toName is string && data.toName.size() <= 64
+          && data.fromGameId is string && data.fromGameId.size() <= 20
+          && data.gameType in ['connect4', 'tictactoe', 'ttt', 'rps', 'sakarhtar', 'sakar_htar']
+          && data.bestOf in [1, 3, 5]
+          && data.turnTimeLimit in [10, 15, 20, 30]
+          && data.status in ['pending', 'accepted', 'rejected']
+          && data.createdAtMs is number
+          && (!('fromAvatarUrl' in data) || (data.fromAvatarUrl is string && data.fromAvatarUrl.size() <= 2048))
+          && (!('fromFrameId' in data) || (data.fromFrameId is string && data.fromFrameId.size() <= 64))
+          && (!('toGameId' in data) || (data.toGameId is string && data.toGameId.size() <= 20))
+          && (data.status != 'accepted' || ('matchId' in data && data.matchId is string && data.matchId.size() <= 128));
+      }
+      allow get, list: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+      allow create: if isSignedIn() && isVerified() && isValidId(challengeId)
+        && validMatchChallenge(request.resource.data)
+        && request.resource.data.fromUserId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.auth.uid + '__' + request.resource.data.toUserId))
+        && !exists(/databases/$(database)/documents/userBlocks/$(request.resource.data.toUserId + '__' + request.auth.uid));
+      allow update: if isSignedIn() && isVerified()
+        && validMatchChallenge(request.resource.data)
+        && request.resource.data.id == resource.data.id
+        && request.resource.data.fromUserId == resource.data.fromUserId
+        && request.resource.data.toUserId == resource.data.toUserId
+        && request.resource.data.gameType == resource.data.gameType
+        && request.resource.data.createdAtMs == resource.data.createdAtMs
+        && resource.data.status == 'pending'
+        && resource.data.toUserId == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'matchId'])
+        && (
+          (request.resource.data.status == 'accepted' && request.resource.data.matchId is string) ||
+          (request.resource.data.status == 'rejected' && !('matchId' in request.resource.data))
+        );
+      allow delete: if isSignedIn()
+        && (resource.data.fromUserId == request.auth.uid || resource.data.toUserId == request.auth.uid);
+    }
+
     // Match History Records
     match /matches/{matchId} {
       function isMatchParticipant(data) {

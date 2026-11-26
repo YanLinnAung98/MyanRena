@@ -846,6 +846,7 @@ function VanguardAppCore() {
       <main className="flex-1 min-h-0 overflow-y-auto lg:overflow-visible">
         {socket.activeMatch ? (
           <MatchArena
+            key={socket.activeMatch.id}
             lang={lang}
             token={token}
             match={socket.activeMatch}
