@@ -88,12 +88,12 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ lang='my', match
       <div className="ttt-contestants">
         <div className="ttt-contestant contestant-rival">
           <div className="ttt-avatar-frame"><CharacterMedia asset={kid} fallback={opponent?.avatarUrl || TTT_KID_BOT_AVATAR_DATA_URI} mood={mood as any} /></div>
-          <div className="ttt-contestant-info"><b>{opponentName}</b><span><i className="ttt-token token-o">O</i>{lang === 'my' ? 'မပုတု' : 'PLAYER O'}</span></div>
+          <div className="ttt-contestant-info"><b>{opponentName}</b><span><i className="ttt-token token-x">X</i>{lang === 'my' ? 'မပုတု' : 'PLAYER X'}</span></div>
         </div>
         <div className="ttt-versus">VS</div>
         <div className="ttt-contestant contestant-user">
           <div className="ttt-avatar-frame">{currentPlayer?.avatarUrl ? <img className="ttt-user-avatar" src={currentPlayer.avatarUrl} alt="" /> : <div className="ttt-user-fallback">YOU</div>}</div>
-          <div className="ttt-contestant-info"><b>{currentName}</b><span><i className="ttt-token token-x">X</i>{lang === 'my' ? 'သင်' : 'PLAYER X'}</span></div>
+          <div className="ttt-contestant-info"><b>{currentName}</b><span><i className="ttt-token token-o">O</i>{lang === 'my' ? 'သင်' : 'PLAYER O'}</span></div>
         </div>
       </div>
 
