@@ -126,7 +126,7 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk ../Vanguard-Arena-Game.apk
 
       - name: Upload Vanguard Arena Game APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Vanguard-Arena-Game-APK
           path: game-apk-build/Vanguard-Arena-Game.apk
