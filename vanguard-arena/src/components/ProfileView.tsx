@@ -692,8 +692,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       </div>
 
       {/* Frame Selector */}
-      <div className="cyber-panel rounded-2xl p-4 sm:p-5 space-y-3 border border-white/10">
-        <div className="flex items-center justify-between">
+      <div className="cyber-panel mr-profile-frame-panel rounded-[1.6rem] p-4 sm:p-6 space-y-4 border border-white/10">
+        <div className="mr-profile-frame-heading flex items-center justify-between gap-3">
           <h3 className="text-sm font-bold text-white flex items-center gap-1.5">
             <Sparkles className="w-4 h-4 text-amber-400" />
             <span>{lang === 'my' ? 'Profile Frame ဘောင်များ' : 'Profile Frames'}</span>
@@ -701,7 +701,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           <span className="text-[11px] font-mono text-slate-400">XP: {user.xp || 0}</span>
         </div>
 
-        <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+        <div className="mr-profile-frame-grid grid grid-cols-3 sm:grid-cols-4 gap-2.5 sm:gap-3">
           {SVG_FRAME_TEMPLATES.map((tpl) => {
             const unlocked = user.role === 'admin' || (user.xp || 0) >= tpl.minXp || unlockedFrames.includes(tpl.id);
             const equipped = selectedFrame === tpl.id;
@@ -711,7 +711,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 whileTap={{ scale: 0.96 }}
                 type="button"
                 onClick={() => handleEquipFrame(tpl.id, unlocked)}
-                className={`p-2.5 rounded-2xl border flex flex-col items-center gap-1.5 transition-all cursor-pointer relative ${
+                className={`mr-profile-frame-card p-3 sm:p-4 rounded-2xl border flex flex-col items-center gap-2.5 transition-all cursor-pointer relative ${
                   equipped
                     ? 'cyber-gold-active'
                     : unlocked
@@ -722,7 +722,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 <div className="absolute top-2 right-2">
                   <RankTierIcon tier={tpl.id} className="w-4 h-4" />
                 </div>
-                <AvatarWithFrame avatarUrl={user.avatarUrl} frameId={tpl.id} displayName={user.displayName} size="md" />
+                <AvatarWithFrame avatarUrl={user.avatarUrl} frameId={tpl.id} displayName={user.displayName} size="lg" />
                 <div className="text-[11px] font-bold text-white truncate max-w-full">
                   {lang === 'my' ? tpl.nameMy : tpl.name}
                 </div>
