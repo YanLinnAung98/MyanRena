@@ -296,6 +296,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   const alertedNotiIdsRef = useRef<Set<string>>(new Set());
   const botTimersRef = useRef<number[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const activeMatchIdRef = useRef<string | null>(null);
+  const handledChallengeIdsRef = useRef<Set<string>>(new Set());
 
   const clearBotTimers = useCallback(() => {
     botTimersRef.current.forEach((id) => window.clearTimeout(id));
@@ -579,18 +581,21 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           case 'match:state':
             if (message.match) {
               const mapped = mapServerMatchToClient(message.match);
+              activeMatchIdRef.current = mapped.id || message.match.id || null;
               setActiveMatch(mapped);
               setCurrentRoom(null);
               setQueueStatus(null);
               setQueuedGame(null);
-              setMatchChat([]);
               setMatchChat((message.match.chat || []).map(mapServerChatMessage));
             }
             break;
           case 'match:chat':
-            if (message.message) setMatchChat((previous) => [...previous, mapServerChatMessage(message.message)]);
+            if (message.message && message.matchId === activeMatchIdRef.current) {
+              setMatchChat((previous) => [...previous, mapServerChatMessage(message.message)]);
+            }
             break;
           case 'match:left':
+            activeMatchIdRef.current = null;
             setActiveMatch(null);
             setMatchChat([]);
             break;
@@ -656,6 +661,61 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
       if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
     };
   }, [token, onUserUpdate, onKicked, pushToast, clearBotTimers]);
+
+  // 2b. FIREBASE DIRECT-CHALLENGE DELIVERY (when the WebSocket backend is disabled)
+  useEffect(() => {
+    if (!token || USE_SERVER_API || !isFirebaseConfigured || !db) return;
+    const me = resolveCurrentPlayer();
+    if (!me?.id) return;
+    const incomingQuery = query(collection(db, 'matchChallenges'), where('toUserId', '==', me.id));
+    const outgoingQuery = query(collection(db, 'matchChallenges'), where('fromUserId', '==', me.id));
+    const stopIncoming = onSnapshot(incomingQuery, (snapshot) => {
+      const invite = snapshot.docs
+        .map((item) => ({ ...item.data(), id: item.id }))
+        .filter((item: any) => item.status === 'pending')
+        .sort((a: any, b: any) => Number(b.createdAtMs || 0) - Number(a.createdAtMs || 0))[0] as any;
+      if (invite) {
+        setPendingChallenge({
+          id: invite.id,
+          from: { id: invite.fromUserId, displayName: invite.fromName || 'Player', gameId: invite.fromGameId || '', avatarUrl: invite.fromAvatarUrl || '', frameId: invite.fromFrameId || 'frame_gold' },
+          gameType: invite.gameType,
+          bestOf: invite.bestOf || 3,
+          turnTimeLimit: invite.turnTimeLimit || 20,
+          createdAt: invite.createdAtMs,
+        });
+      } else setPendingChallenge(null);
+    }, (error) => console.error('Incoming challenge listener:', error));
+
+    const stopOutgoing = onSnapshot(outgoingQuery, (snapshot) => {
+      snapshot.docs.forEach((item) => {
+        const invite = item.data() as any;
+        if (invite.status === 'rejected') {
+          if (!handledChallengeIdsRef.current.has(item.id)) {
+            handledChallengeIdsRef.current.add(item.id);
+            pushToast('info', 'Your challenge was declined.');
+          }
+          return;
+        }
+        if (invite.status !== 'accepted' || !invite.matchId || handledChallengeIdsRef.current.has(item.id)) return;
+        handledChallengeIdsRef.current.add(item.id);
+        void getDoc(doc(db, 'matches', invite.matchId)).then((matchSnap) => {
+          if (!matchSnap.exists()) { handledChallengeIdsRef.current.delete(item.id); return; }
+          const match = matchSnap.data();
+          activeMatchIdRef.current = match.id;
+          setMatchChat(Array.isArray(match.chat) ? match.chat : []);
+          setCurrentRoom(null);
+          setQueueStatus(null);
+          setQueuedGame(null);
+          setActiveMatch(match);
+          setSocialRefreshTick((n) => n + 1);
+        }).catch((error) => {
+          handledChallengeIdsRef.current.delete(item.id);
+          console.error('Accepted challenge match load:', error);
+        });
+      });
+    }, (error) => console.error('Outgoing challenge listener:', error));
+    return () => { stopIncoming(); stopOutgoing(); };
+  }, [token, resolveCurrentPlayer, pushToast]);
 
   // 3. REAL-TIME USERS, RANKING & ADMIN NOTIFICATIONS LISTENER
   useEffect(() => {
@@ -847,7 +907,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
           setCurrentRoom(null);
           setQueueStatus(null);
           setQueuedGame(null);
-          setMatchChat([]);
+          activeMatchIdRef.current = matchSnap.data().id;
+          setMatchChat(Array.isArray(matchSnap.data().chat) ? matchSnap.data().chat : []);
           setActiveMatch(matchSnap.data());
         }
       }
@@ -862,8 +923,9 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
     const matchId = activeMatch.id;
     const me = resolveCurrentPlayer();
 
+    activeMatchIdRef.current = matchId;
     const unsubMatch = onSnapshot(doc(db, 'matches', matchId), (snap) => {
-      if (!snap.exists()) return;
+      if (!snap.exists() || activeMatchIdRef.current !== matchId) return;
       const latest = snap.data() as any;
       setActiveMatch(latest);
       if (Array.isArray(latest.chat)) setMatchChat(latest.chat);
@@ -944,6 +1006,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
             });
             setQueuedGame(null);
             setQueueStatus(null);
+            activeMatchIdRef.current = liveMatch.id;
             setMatchChat([]);
             setActiveMatch(liveMatch);
             pushToast('success', 'Real opponent found!');
@@ -1005,6 +1068,7 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         setCurrentRoom(null);
         setQueuedGame(null);
         setQueueStatus(null);
+        activeMatchIdRef.current = null;
         setMatchChat([]);
         setActiveMatch(
           buildPlayableMatch([player], {
@@ -1437,8 +1501,8 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
         return;
       }
       const me = resolveCurrentPlayer();
-      const msg = { id: Date.now(), sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
-      setMatchChat((prev) => [...prev, msg]);
+      const msg = { id: Date.now(), matchId: activeMatch.id, sender: me?.displayName || 'Player', text: text.trim(), time: Date.now() };
+      if (activeMatchIdRef.current === activeMatch.id) setMatchChat((prev) => [...prev, msg]);
       if (activeMatch.isRealtimePvp && isFirebaseConfigured && db) {
         await updateDoc(doc(db, 'matches', activeMatch.id), { chat: arrayUnion(msg) }).catch(() => {});
       }
@@ -1464,35 +1528,101 @@ export function useArenaSocket({ token, onUserUpdate, onKicked }: UseArenaSocket
   );
 
   const sendChallenge = useCallback(
-    (targetUserId: string, gameType: GameType) => {
+    async (targetUserId: string, gameType: GameType) => {
+      const normalized = normalizeGameId(gameType);
+      const wireGameType = normalized === 'tictactoe' ? 'ttt' : normalized === 'sakarhtar' ? 'sakar_htar' : normalized;
       if (USE_SERVER_API) {
-        const normalized = normalizeGameId(gameType);
-        sendServerMessage({
-          type: 'challenge:send',
-          targetUserId,
-          gameType: normalized === 'tictactoe' ? 'ttt' : normalized === 'sakarhtar' ? 'sakar_htar' : normalized,
-          bestOf: 3,
-        });
+        sendServerMessage({ type: 'challenge:send', targetUserId, gameType: wireGameType, bestOf: 3 });
+        return;
+      }
+      if (!isFirebaseConfigured || !db) {
+        pushToast('error', 'Real-player challenges need Firebase or the realtime game server. A bot will not replace the challenged player.');
         return;
       }
       const player = resolveCurrentPlayer();
-      clearBotTimers();
-      setActiveMatch(buildPlayableMatch([player], { gameType, mode: 'bot', difficulty: 'hard' }));
-      setSocialRefreshTick((n) => n + 1);
+      if (!player?.id || player.id === targetUserId) {
+        pushToast('error', 'Choose another online player to challenge.');
+        return;
+      }
+      try {
+        const targetSnap = await getDoc(doc(db, 'users', targetUserId));
+        const target = targetSnap.exists() ? targetSnap.data() : onlinePlayers.find((p) => p.id === targetUserId);
+        if (!target) {
+          pushToast('error', 'Player profile could not be loaded. Refresh the player list and try again.');
+          return;
+        }
+        const inviteId = `challenge_${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+        await setDoc(doc(db, 'matchChallenges', inviteId), stripUndefined({
+          id: inviteId,
+          fromUserId: player.id,
+          fromName: player.displayName || player.username || 'Player',
+          fromGameId: player.gameId || '',
+          fromAvatarUrl: player.avatarUrl || '',
+          fromFrameId: player.frameId || 'frame_gold',
+          toUserId: targetUserId,
+          toName: target.displayName || target.username || 'Player',
+          toGameId: target.gameId || '',
+          gameType: wireGameType,
+          bestOf: 3,
+          turnTimeLimit: 20,
+          status: 'pending',
+          createdAtMs: Date.now(),
+        }));
+        pushToast('success', `Challenge sent to ${target.displayName || target.username || 'player'}.`);
+      } catch (error: any) {
+        console.error('Send challenge failed:', error);
+        pushToast('error', error?.message || 'Could not send the challenge. Please try again.');
+      }
     },
-    [resolveCurrentPlayer, clearBotTimers, sendServerMessage]
+    [resolveCurrentPlayer, sendServerMessage, onlinePlayers, pushToast]
   );
 
   const respondChallenge = useCallback(
-    (challengeId: string, accept: boolean) => {
+    async (challengeId: string, accept: boolean) => {
       setPendingChallenge(null);
       if (USE_SERVER_API) {
         sendServerMessage({ type: 'challenge:respond', inviteId: challengeId, accept });
-      } else if (accept) {
-        pushToast('success', 'Challenge accepted!');
+        return;
+      }
+      if (!isFirebaseConfigured || !db) return;
+      try {
+        const inviteRef = doc(db, 'matchChallenges', challengeId);
+        const inviteSnap = await getDoc(inviteRef);
+        if (!inviteSnap.exists()) return;
+        const invite = inviteSnap.data() as any;
+        const me = resolveCurrentPlayer();
+        if (!me?.id || invite.toUserId !== me.id || invite.status !== 'pending') return;
+        if (!accept) {
+          await updateDoc(inviteRef, { status: 'rejected' });
+          return;
+        }
+        const challengerSnap = await getDoc(doc(db, 'users', invite.fromUserId));
+        const challenger = challengerSnap.exists()
+          ? { ...challengerSnap.data(), id: invite.fromUserId }
+          : { id: invite.fromUserId, displayName: invite.fromName || 'Player', gameId: invite.fromGameId || '', avatarUrl: invite.fromAvatarUrl || '', frameId: invite.fromFrameId || 'frame_gold' };
+        const match = buildPlayableMatch([challenger, me], {
+          gameType: invite.gameType,
+          mode: 'matchmaking',
+          bestOf: invite.bestOf === 5 ? 5 : 3,
+          turnTimeLimit: invite.turnTimeLimit || 20,
+          isRealtimePvp: true,
+        });
+        await setDoc(doc(db, 'matches', match.id), stripUndefined(match));
+        await updateDoc(inviteRef, { status: 'accepted', matchId: match.id });
+        handledChallengeIdsRef.current.add(challengeId);
+        activeMatchIdRef.current = match.id;
+        setMatchChat([]);
+        setCurrentRoom(null);
+        setQueueStatus(null);
+        setQueuedGame(null);
+        setActiveMatch(match);
+        pushToast('success', 'Challenge accepted. Starting a real-player match.');
+      } catch (error: any) {
+        console.error('Respond challenge failed:', error);
+        pushToast('error', error?.message || 'Could not respond to the challenge.');
       }
     },
-    [pushToast, sendServerMessage]
+    [resolveCurrentPlayer, sendServerMessage, pushToast]
   );
 
   const unreadNotiCount = notifications.filter((n) => !n.read).length;
