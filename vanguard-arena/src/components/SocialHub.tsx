@@ -71,6 +71,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
   const [incomingRequests, setIncomingRequests] = React.useState<any[]>([]);
   const [outgoingRequests, setOutgoingRequests] = React.useState<any[]>([]);
   const [chatInput, setChatInput] = React.useState('');
+  const [sendingDm, setSendingDm] = React.useState(false);
   const [copiedMyId, setCopiedMyId] = React.useState(false);
   const [serverSearchResults, setServerSearchResults] = React.useState<UserProfile[]>([]);
   const [serverRelatedUsers, setServerRelatedUsers] = React.useState<UserProfile[]>([]);
@@ -481,7 +482,12 @@ export const SocialHub: React.FC<SocialHubProps> = ({
 
   const handleSendDm = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!activeChatUserId || !chatInput.trim()) return;
+    const messageText = chatInput.trim();
+    if (!activeChatUserId || !messageText || sendingDm) return;
+    if (messageText.length > 2000) {
+      onNotify('error', lang === 'my' ? 'စာတိုကို စာလုံး ၂၀၀၀ ထက် မကျော်စေရပါ။' : 'Messages must be 2,000 characters or fewer.');
+      return;
+    }
     const target = otherUsers.find((u) => u.id === activeChatUserId);
     const targetBlockedMe = blockedByOtherIds.includes(activeChatUserId);
 
@@ -490,12 +496,13 @@ export const SocialHub: React.FC<SocialHubProps> = ({
       return;
     }
 
+    setSendingDm(true);
     if (USE_SERVER_API) {
       try {
         const response = await fetch('/api/social/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ targetUserId: activeChatUserId, content: chatInput.trim() }),
+          body: JSON.stringify({ targetUserId: activeChatUserId, content: messageText }),
         });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(data.error || 'Unable to send message.');
@@ -504,6 +511,8 @@ export const SocialHub: React.FC<SocialHubProps> = ({
         soundEngine.playClick();
       } catch (error: any) {
         onNotify('error', error?.message || 'Unable to send message.');
+      } finally {
+        setSendingDm(false);
       }
       return;
     }
@@ -515,15 +524,22 @@ export const SocialHub: React.FC<SocialHubProps> = ({
       fromName: currentUser.displayName,
       toUserId: activeChatUserId,
       toName: target?.displayName || 'Player',
-      text: chatInput.trim(),
+      text: messageText,
       createdAtMs: Date.now(),
     });
+    if (isFirebaseConfigured && db) {
+      try {
+        await setDoc(doc(db, 'messages', id), msg);
+      } catch (error: any) {
+        onNotify('error', error?.message || (lang === 'my' ? 'စာတို ပို့မရပါ။ အင်တာနက်နှင့် အကောင့်ခွင့်ပြုချက်ကို စစ်ဆေးပါ။' : 'Message was not sent. Check your connection and account permissions.'));
+        setSendingDm(false);
+        return;
+      }
+    }
     setMessages((prev) => [...prev, msg]);
     setChatInput('');
-    if (isFirebaseConfigured && db) {
-      await setDoc(doc(db, 'messages', id), msg).catch(() => {});
-    }
     soundEngine.playClick();
+    setSendingDm(false);
   };
 
   const activeChatPartner = otherUsers.find((u) => u.id === activeChatUserId);
@@ -870,12 +886,15 @@ export const SocialHub: React.FC<SocialHubProps> = ({
                     type="text"
                     value={chatInput}
                     onChange={(e) => setChatInput(e.target.value)}
+                    maxLength={2000}
+                    disabled={sendingDm}
                     placeholder={lang === 'my' ? 'စာတို ရိုက်ထည့်ပါ...' : 'Type a message...'}
                     className="flex-1 h-10 px-3 rounded-xl bg-[#070b13] border border-white/15 text-xs text-white focus:outline-none focus:border-amber-400"
                   />
                   <button
                     type="submit"
-                    className="px-4 h-10 rounded-xl cyber-cta-gold text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
+                    disabled={sendingDm || !chatInput.trim()}
+                    className="px-4 h-10 rounded-xl cyber-cta-gold disabled:opacity-50 text-slate-950 font-bold text-xs flex items-center gap-1 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
                   </button>
