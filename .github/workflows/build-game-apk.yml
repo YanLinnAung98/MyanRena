@@ -1,132 +1,155 @@
-name: Build Vanguard Arena Game APK
+name: Build MyanRena Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      version_name:
+        description: Android versionName (for example 1.0.0)
+        required: true
+        default: "1.0.0"
+        type: string
+      version_code:
+        description: Android versionCode (must increase for every APK release)
+        required: true
+        default: "1"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: myanrena-android-apk
+  cancel-in-progress: false
 
 jobs:
-  build-game-apk:
+  build-android:
+    name: Build MyanRena Android APK
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vanguard-arena
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
 
-      - name: Setup Node.js
+      - name: Set up Node.js
         uses: actions/setup-node@v7
         with:
           node-version: 24.22.1
 
-      - name: Setup Java 17 (for Android Gradle)
+      - name: Set up Java
         uses: actions/setup-java@v6
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          distribution: temurin
+          java-version: "17"
 
-      - name: Prepare Offline Fallback Page
-        run: |
-          mkdir -p game-apk-build/www
-          cat << 'EOF' > game-apk-build/www/index.html
-          <!DOCTYPE html>
-          <html lang="my">
-          <head>
-            <meta charset="UTF-8" />
-            <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-            <title>Vanguard Arena</title>
-            <style>
-              body { margin:0; min-height:100vh; background:#070b14; color:#f8fafc; font-family:system-ui,sans-serif; display:flex; align-items:center; justify-content:center; text-align:center; padding:24px; }
-              .box { max-width:320px; background:#0d1322; border:1px solid rgba(245,158,11,0.35); border-radius:20px; padding:24px; }
-              h2 { margin:0 0 8px; color:#fbbf24; font-size:18px; }
-              p { margin:0 0 18px; color:#94a3b8; font-size:13px; line-height:1.5; }
-              button { width:100%; height:44px; border:none; border-radius:12px; background:linear-gradient(135deg,#f59e0b,#d97706); color:#090d16; font-weight:800; font-size:14px; }
-            </style>
-          </head>
-          <body>
-            <div class="box">
-              <h2>အင်တာနက် ချိတ်ဆက်မှု မရှိပါ</h2>
-              <p>Vanguard Arena သို့ ဝင်ရောက်ရန်နှင့် နောက်ဆုံး Update ဒေတာများ ရယူရန် Wi-Fi သို့မဟုတ် Mobile Data ဖွင့်ပေးပါ။</p>
-              <button onclick="location.reload()">ပြန်လည်ချိတ်ဆက်မည် (Retry)</button>
-            </div>
-          </body>
-          </html>
-          EOF
+      - name: Install web app dependencies
+        run: npm install --legacy-peer-deps
 
-      - name: Initialize Capacitor Live-Update Shell (com.vanguard.arena)
-        working-directory: game-apk-build
+      - name: TypeScript validation
+        run: npm run lint
+
+      - name: Run regression tests
+        run: npm test
+
+      - name: Build web assets
+        run: npm run build
+
+      - name: Install pinned Capacitor 6 toolchain
+        run: npm install --no-save --legacy-peer-deps @capacitor/core@6.2.1 @capacitor/cli@6.2.1 @capacitor/android@6.2.1
+
+      - name: Generate Android project from committed Capacitor configuration
         run: |
-          npm init -y
-          npm install @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6
-          npx cap init "Vanguard Arena" "com.vanguard.arena" --web-dir www
-          cat << 'EOF' > capacitor.config.json
-          {
-            "appId": "com.vanguard.arena",
-            "appName": "Vanguard Arena",
-            "webDir": "www",
-            "backgroundColor": "#070b14",
-            "server": {
-              "url": "https://yanlinnaung98.github.io/MyanRena/",
-              "androidScheme": "https",
-              "errorPath": "index.html"
-            },
-            "android": {
-              "backgroundColor": "#070b14",
-              "allowMixedContent": true
-            }
-          }
-          EOF
           npx cap add android
           npx cap sync android
 
-      - name: Inject MLBB-Style True Immersive Full-Screen Mode
-        working-directory: game-apk-build
+      - name: Apply Android app version
+        env:
+          APP_VERSION_NAME: ${{ inputs.version_name }}
+          APP_VERSION_CODE: ${{ inputs.version_code }}
         run: |
-          cat << 'EOF' > android/app/src/main/java/com/vanguard/arena/MainActivity.java
-          package com.vanguard.arena;
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
 
-          import android.os.Bundle;
-          import androidx.core.view.WindowCompat;
-          import androidx.core.view.WindowInsetsCompat;
-          import androidx.core.view.WindowInsetsControllerCompat;
-          import com.getcapacitor.BridgeActivity;
+          gradle_file = Path("android/app/build.gradle")
+          text = gradle_file.read_text()
+          version_name = os.environ["APP_VERSION_NAME"].strip()
+          version_code = os.environ["APP_VERSION_CODE"].strip()
+          if not re.fullmatch(r"[0-9]+", version_code) or int(version_code) < 1:
+              raise SystemExit("version_code must be a positive integer")
+          if not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?", version_name):
+              raise SystemExit("version_name must be a valid numeric Android version string")
+          text, code_count = re.subn(r"versionCode\\s+\\d+", f"versionCode {version_code}", text, count=1)
+          text, name_count = re.subn(r"versionName\\s+['\"][^'\"]+['\"]", f"versionName '{version_name}'", text, count=1)
+          if code_count != 1 or name_count != 1:
+              raise SystemExit("Could not safely locate versionCode/versionName in generated Gradle file")
+          gradle_file.write_text(text)
+          PY
 
-          public class MainActivity extends BridgeActivity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  enableImmersiveMode();
-              }
+      - name: Build Debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew --no-daemon assembleDebug
+          mkdir -p ../apk-output
+          cp app/build/outputs/apk/debug/app-debug.apk ../apk-output/MyanRena-debug.apk
 
-              @Override
-              public void onWindowFocusChanged(boolean hasFocus) {
-                  super.onWindowFocusChanged(hasFocus);
-                  if (hasFocus) {
-                      enableImmersiveMode();
+      - name: Build signed Release APK when signing secrets are configured
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ] || [ -z "$ANDROID_KEYSTORE_PASSWORD" ] || [ -z "$ANDROID_KEY_ALIAS" ] || [ -z "$ANDROID_KEY_PASSWORD" ]; then
+            echo "Release signing secrets are not configured; skipping signed release APK."
+            exit 0
+          fi
+
+          export ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/myanrena-release.jks"
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$ANDROID_KEYSTORE_PATH"
+          test -s "$ANDROID_KEYSTORE_PATH"
+
+          cat >> android/app/build.gradle <<'GRADLE'
+
+          // CI-only signing configuration. The keystore and credentials are supplied by GitHub Secrets.
+          android {
+              signingConfigs {
+                  release {
+                      storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                      storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                      keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                      keyPassword System.getenv("ANDROID_KEY_PASSWORD")
                   }
               }
-
-              private void enableImmersiveMode() {
-                  WindowCompat.setDecorFitsSystemWindows(getWindow(), false);
-                  WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(
-                      getWindow(),
-                      getWindow().getDecorView()
-                  );
-                  if (controller != null) {
-                      controller.hide(WindowInsetsCompat.Type.systemBars());
-                      controller.setSystemBarsBehavior(
-                          WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-                      );
+              buildTypes {
+                  release {
+                      signingConfig signingConfigs.release
                   }
               }
           }
-          EOF
+          GRADLE
 
-      - name: Compile Standalone Live-Update Game APK
-        working-directory: game-apk-build/android
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../Vanguard-Arena-Game.apk
+          cd android
+          ./gradlew --no-daemon assembleRelease
+          mkdir -p ../apk-output
+          cp app/build/outputs/apk/release/app-release.apk ../apk-output/MyanRena-release.apk
 
-      - name: Upload Vanguard Arena Game APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v7
         with:
-          name: Vanguard-Arena-Game-APK
-          path: game-apk-build/Vanguard-Arena-Game.apk
+          name: MyanRena-Android-Debug
+          path: vanguard-arena/apk-output/MyanRena-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload signed Release APK
+        if: ${{ hashFiles('vanguard-arena/apk-output/MyanRena-release.apk') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: MyanRena-Android-Release
+          path: vanguard-arena/apk-output/MyanRena-release.apk
+          if-no-files-found: error
+          retention-days: 30

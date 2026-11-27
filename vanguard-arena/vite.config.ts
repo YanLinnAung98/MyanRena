@@ -15,7 +15,7 @@ function emitPwaManifestPlugin(): Plugin {
         fileName: 'manifest.json',
         source: JSON.stringify(
           {
-            name: 'Vanguard Arena — MyanRena',
+            name: 'MyanRena',
             short_name: 'MyanRena',
             description: 'Real-Time Multiplayer Tabletop & Wise Owl Quiz Cyber Arena',
             start_url: './',
