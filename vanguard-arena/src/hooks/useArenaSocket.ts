@@ -813,7 +813,10 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
       const store = readServerlessStore();
       const allUsers = Object.values(store.users).sort((a: any, b: any) => (b.xp || 0) - (a.xp || 0));
       setLeaderboard(allUsers as UserProfile[]);
-      setOnlinePlayers(allUsers as UserProfile[]);
+      if (!isFirebaseConfigured || !db) {
+        const now = Date.now();
+        setOnlinePlayers(allUsers.filter((user: any) => user.online === true && Number(user.lastSeenMs || 0) > 0 && now - Number(user.lastSeenMs) < 150000) as UserProfile[]);
+      }
       processNotifications(store.notifications || []);
     };
 
@@ -834,6 +837,29 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
         channel?.close();
       };
     }
+
+    let cloudProfiles: UserProfile[] = [];
+    let cloudPresenceById = new Map<string, { online: boolean; lastSeenMs: number }>();
+    const syncCloudOnlinePlayers = () => {
+      const now = Date.now();
+      setOnlinePlayers(cloudProfiles.flatMap((profile) => {
+        const presence = cloudPresenceById.get(profile.id);
+        if (!presence?.online || presence.lastSeenMs <= 0 || now - presence.lastSeenMs >= 150000) return [];
+        return [{ ...profile, online: true, lastSeenMs: presence.lastSeenMs } as UserProfile];
+      }));
+    };
+
+    const unsubPresence = onSnapshot(
+      query(collection(db, 'presence'), orderBy('lastSeenMs', 'desc'), limit(100)),
+      (snap) => {
+        cloudPresenceById = new Map(snap.docs.map((item) => {
+          const data = item.data() as any;
+          return [item.id, { online: data.online === true, lastSeenMs: Number(data.lastSeenMs || 0) }];
+        }));
+        syncCloudOnlinePlayers();
+      },
+      (err) => console.error('Firestore presence listener error:', err)
+    );
 
     const unsubUsers = onSnapshot(
       query(collection(db, 'users'), orderBy('xp', 'desc'), limit(100)),
@@ -857,7 +883,8 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
         writeServerlessStore(store);
 
         setLeaderboard(list);
-        setOnlinePlayers(list);
+        cloudProfiles = list;
+        syncCloudOnlinePlayers();
 
         if (token !== 'admin-token') {
           const me = list.find((u) => u.id === myId) as any;
@@ -922,6 +949,7 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
       window.removeEventListener('storage', syncLocalFallback);
       channel?.close();
       unsubUsers();
+      unsubPresence();
       unsubNotis();
       unsubConfig();
       unsubTourneys();
