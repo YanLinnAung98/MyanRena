@@ -79,10 +79,10 @@ jobs:
           version_code = os.environ["APP_VERSION_CODE"].strip()
           if not re.fullmatch(r"[0-9]+", version_code) or int(version_code) < 1:
               raise SystemExit("version_code must be a positive integer")
-          if not re.fullmatch(r"[0-9]+(?:\\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?", version_name):
+          if not re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,3}(?:[-+][A-Za-z0-9.-]+)?", version_name):
               raise SystemExit("version_name must be a valid numeric Android version string")
-          text, code_count = re.subn(r"versionCode\\s+\\d+", f"versionCode {version_code}", text, count=1)
-          text, name_count = re.subn(r"versionName\\s+['\"][^'\"]+['\"]", f"versionName '{version_name}'", text, count=1)
+          text, code_count = re.subn(r"versionCode\s+\d+", f"versionCode {version_code}", text, count=1)
+          text, name_count = re.subn(r"versionName\s+['\"][^'\"]+['\"]", f"versionName '{version_name}'", text, count=1)
           if code_count != 1 or name_count != 1:
               raise SystemExit("Could not safely locate versionCode/versionName in generated Gradle file")
           gradle_file.write_text(text)
