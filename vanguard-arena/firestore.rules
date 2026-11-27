@@ -94,6 +94,8 @@ service cloud.firestore {
         && data.players[1].id is string && data.players[1].id.size() >= 1 && data.players[1].id.size() <= 128
         && data.players[0].id != data.players[1].id
         && data.turnUserId is string && data.turnUserId.size() <= 128
+        && (data.turnUserId == '' || data.turnUserId == data.players[0].id || data.turnUserId == data.players[1].id)
+        && (!('winnerId' in data) || data.winnerId == null || data.winnerId == data.players[0].id || data.winnerId == data.players[1].id)
         && data.scores is map
         && data.round is number && data.round >= 1 && data.round <= 1000
         && data.createdAt is string && data.createdAt.size() <= 40
@@ -483,12 +485,25 @@ service cloud.firestore {
         && (isMatchParticipant(existing()) || isAdmin())
         && (
           isAdmin() ||
-          incoming().diff(existing()).affectedKeys().hasOnly([
-            'tttBoard', 'c4Board', 'turnUserId', 'scores', 'rpsPicks', 'rpsLastRound',
-            'riddles', 'riddleIndex', 'roundAnswers', 'chat', 'winnerId', 'isDraw',
-            'status', 'round', 'turnDeadline', 'updatedAtMs', 'winningCells',
-            'botPhase', 'botTargetCol'
-          ])
+          (
+            isMatchParticipant(existing())
+            && (
+              (
+                existing().status == 'active'
+                && incoming().diff(existing()).affectedKeys().hasOnly([
+                  'tttBoard', 'c4Board', 'turnUserId', 'scores', 'rpsPicks', 'rpsLastRound',
+                  'riddles', 'riddleIndex', 'roundAnswers', 'winnerId', 'isDraw',
+                  'status', 'round', 'turnDeadline', 'updatedAtMs', 'winningCells',
+                  'botPhase', 'botTargetCol'
+                ])
+              ) ||
+              (
+                incoming().diff(existing()).affectedKeys().hasOnly(['chat'])
+                && incoming().chat is list
+                && incoming().chat.size() <= 500
+              )
+            )
+          )
         );
       allow delete: if isValidId(matchId) && isAdmin();
     }
