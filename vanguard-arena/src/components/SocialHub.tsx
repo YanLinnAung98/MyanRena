@@ -173,7 +173,7 @@ export const SocialHub: React.FC<SocialHubProps> = ({
           ...data,
           id: String(data.uid || d.id),
           username: String(data.username || ''),
-          rank: 'Silver',
+          rank: String(data.rank || 'Silver'),
           role: 'player',
           isAdmin: false,
           status: 'active',
