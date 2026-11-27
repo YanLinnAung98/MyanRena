@@ -878,7 +878,7 @@ function VanguardAppCore() {
             lang={lang}
             landingContent={socket.landingContent}
             currentUser={user}
-            onlinePlayers={mergedLeaderboard}
+            onlinePlayers={socket.onlinePlayers}
             frames={socket.frames}
             featureLocks={socket.featureLocks}
             matchmakingSettings={socket.matchmakingSettings}
