@@ -844,9 +844,13 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
         const store = readServerlessStore();
         snap.forEach((d) => {
           const u = d.data() as any;
-          if (u?.id) {
-            list.push(u as UserProfile);
-            store.users[u.id] = u;
+          // Signup stores the Firebase UID as "uid"; use the document ID as
+          // the canonical player ID when older profiles do not contain "id".
+          const playerId = String(u?.id || u?.uid || d.id || '');
+          if (playerId) {
+            const profile = { ...u, id: playerId } as UserProfile;
+            list.push(profile);
+            store.users[playerId] = profile;
           }
         });
         list.sort((a, b) => (b.xp || 0) - (a.xp || 0));
