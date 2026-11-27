@@ -484,6 +484,8 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
 
       if (isFirebaseConfigured && db) {
         try {
+          // Measure the Firestore write round-trip instead of showing a fabricated ping.
+          const requestStartedAt = Date.now();
           // Presence is isolated from public profile data and never writes the full user object.
           await setDoc(doc(db, 'presence', me.id), {
             uid: me.id,
@@ -491,6 +493,7 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
             currentActivity: String(activity).slice(0, 80),
             lastSeenMs: Date.now(),
           });
+          setPingMs(Math.max(0, Date.now() - requestStartedAt));
           setCloudError(null);
           setConnectionState('connected');
         } catch (err: any) {
@@ -502,7 +505,6 @@ export function useArenaSocket({ token, lang, onUserUpdate, onKicked }: UseArena
 
     pushHeartbeat(true);
     const intervalId = window.setInterval(() => {
-      setPingMs(Math.floor(15 + Math.random() * 14));
       pushHeartbeat(true);
     // Keep Firestore presence writes within the Spark free-tier budget.
     // One continuously active client now writes at most about 1,440 heartbeats/day.
