@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   sendEmailVerification,
+  reload,
   sendPasswordResetEmail,
   setPersistence,
   browserLocalPersistence,
@@ -110,6 +111,9 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const [rememberMe, setRememberMe] = React.useState(true);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
+  const [verificationPending, setVerificationPending] = React.useState(false);
+  const [verificationMessage, setVerificationMessage] = React.useState('');
+  const [verificationLoading, setVerificationLoading] = React.useState(false);
   const [muted, setMuted] = React.useState(soundEngine.isMuted());
 
   const [signupPinModal, setSignupPinModal] = React.useState<{
@@ -164,6 +168,8 @@ export const LandingView: React.FC<LandingViewProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setVerificationMessage('');
+    setVerificationPending(false);
     setLoading(true);
 
     const cleanUser = username.trim().toLowerCase();
@@ -265,9 +271,16 @@ export const LandingView: React.FC<LandingViewProps> = ({
           await updateProfile(credential.user, { displayName: newUser.displayName }).catch((profileError) => {
             console.warn('Firebase Auth display name could not be updated:', profileError);
           });
-          await sendEmailVerification(credential.user).catch((verificationError) => {
+          try {
+            await sendEmailVerification(credential.user);
+          } catch (verificationError: any) {
             console.warn('Firebase verification email could not be sent:', verificationError);
-          });
+            setVerificationPending(true);
+            setVerificationMessage(lang === 'my'
+              ? 'အကောင့်ဖွင့်ပြီးပါပြီ၊ သို့သော် အတည်ပြု Email မပို့နိုင်ခဲ့ပါ။ အောက်ပါခလုတ်ဖြင့် ပြန်ပို့ပါ။'
+              : 'Your account was created, but the verification email could not be sent. Use the button below to retry.');
+            return;
+          }
           saveActiveSessionUser(newUser);
           soundEngine.playNotify();
           onAuthenticated(`token_${uid}`, newUser, rememberMe);
@@ -281,6 +294,14 @@ export const LandingView: React.FC<LandingViewProps> = ({
       if (!USE_SERVER_API && isFirebaseConfigured && auth && db && authMode === 'signin' && cleanUser.includes('@')) {
         await setPersistence(auth, rememberMe ? browserLocalPersistence : browserSessionPersistence);
         const credential = await signInWithEmailAndPassword(auth, cleanUser, cleanPass);
+        await reload(credential.user);
+        if (!credential.user.emailVerified) {
+          setVerificationPending(true);
+          setVerificationMessage(lang === 'my'
+            ? 'Email အတည်မပြုရသေးပါ။ အတည်ပြု Link ပြန်ပို့ပြီး Email ထဲမှ အတည်ပြုပါ။'
+            : 'Your email is not verified yet. Resend the verification link and verify your email before signing in.');
+          return;
+        }
         const uid = credential.user.uid;
         const profileSnap = await getDoc(doc(db, 'users', uid));
         if (!profileSnap.exists()) {
@@ -439,6 +460,23 @@ export const LandingView: React.FC<LandingViewProps> = ({
       setError(err?.message || (lang === 'my' ? 'အကောင့်ဝင်ရောက်မှု မအောင်မြင်ပါ။' : 'Authentication failed.'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    setVerificationLoading(true);
+    setVerificationMessage('');
+    try {
+      const currentUser = auth?.currentUser;
+      if (!currentUser) throw new Error(lang === 'my' ? 'အကောင့် Session မတွေ့ပါ။ Email နှင့် Password ဖြင့် ပြန်ဝင်ပါ။' : 'No active account session. Sign in again with your email and password.');
+      await sendEmailVerification(currentUser);
+      setVerificationMessage(lang === 'my'
+        ? 'အတည်ပြု Email ပြန်ပို့ပြီးပါပြီ။ Inbox/Spam ကိုစစ်ပြီး အတည်ပြုပြီးမှ ပြန်ဝင်ပါ။'
+        : 'Verification email sent. Check your inbox/spam, verify, then sign in again.');
+    } catch (err: any) {
+      setVerificationMessage(err?.message || (lang === 'my' ? 'အတည်ပြု Email ပို့မရပါ။ ခဏနေ ပြန်ကြိုးစားပါ။' : 'Could not send the verification email. Please try again later.'));
+    } finally {
+      setVerificationLoading(false);
     }
   };
 
@@ -711,6 +749,23 @@ export const LandingView: React.FC<LandingViewProps> = ({
                   </div>
                 )}
 
+                {verificationMessage && (
+                  <div className="p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/35 text-xs text-amber-100 leading-relaxed">
+                    {verificationMessage}
+                  </div>
+                )}
+                {verificationPending && (
+                  <button
+                    type="button"
+                    onClick={handleResendVerification}
+                    disabled={verificationLoading}
+                    className="w-full min-h-10 rounded-xl border border-amber-400/40 bg-amber-400/10 text-amber-200 text-xs font-bold disabled:opacity-60"
+                  >
+                    {verificationLoading
+                      ? (lang === 'my' ? 'ပို့နေသည်…' : 'Sending…')
+                      : (lang === 'my' ? 'အတည်ပြု Email ပြန်ပို့ရန်' : 'Resend verification email')}
+                  </button>
+                )}
                 {error && (
                   <div className="p-2.5 rounded-xl bg-rose-500/15 border border-rose-500/35 text-xs text-rose-200 leading-relaxed">
                     {error}
