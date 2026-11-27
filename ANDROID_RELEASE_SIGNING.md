@@ -32,7 +32,7 @@ Create the Base64 value locally:
 base64 -w 0 myanrena-release.jks
 ```
 
-On macOS, use `base64 < myanrena-release.jks | tr -d '\\n'`.
+On macOS, use `base64 < myanrena-release.jks | tr -d '\n'`.
 
 Never paste the keystore or passwords into chat, commit them, or put them in workflow source.
 
