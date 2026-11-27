@@ -2071,7 +2071,7 @@ app.post('/api/auth/login', authRateLimit('login', 10, 15 * 60 * 1000), (req, re
   }
 
   const token = crypto.randomBytes(32).toString('hex');
-  db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run({}, token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString());
+  db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run(token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString());
   res.json({ token, user });
 });
 
@@ -2111,7 +2111,7 @@ app.post('/api/auth/google', async (req, res) => {
       return res.status(403).json({ error: 'This account has been suspended by an administrator.' });
     }
     const token = crypto.randomBytes(32).toString('hex');
-    db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run({}, token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString());
+    db.prepare('INSERT INTO sessions (token, user_id, role, created_at) VALUES (?, ?, ?, ?)').run(token, user.id, user.role === 'admin' ? 'admin' : 'user', new Date().toISOString());
     res.json({ token, user });
   } catch (err) {
     console.error('Google auth verification failed:', err);
