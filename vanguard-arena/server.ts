@@ -2081,6 +2081,9 @@ app.post('/api/auth/google', async (req, res) => {
 
   try {
     const decoded = await adminAuth.verifyIdToken(idToken);
+    if (decoded.email_verified !== true) {
+      return res.status(403).json({ error: 'Google account email must be verified before signing in.' });
+    }
     const uid = decoded.uid;
     let row = db.prepare('SELECT * FROM users WHERE firebase_uid = ?').get(uid) as Record<string, unknown> | undefined;
 
@@ -2388,14 +2391,20 @@ app.delete('/api/social/blocks/:id', requireAuth, (req: AuthReq, res) => {
 app.post('/api/social/messages', requireAuth, (req: AuthReq, res) => {
   const user = req.authUser!;
   const targetId = sanitizeText(req.body?.targetUserId, 64);
-  const content = sanitizeText(req.body?.content, 240);
+  const content = sanitizeText(req.body?.content, 2000);
   if (!targetId || targetId === user.id || !content) return res.status(400).json({ error: 'Enter a message for another player.' });
+  const locks = getFeatureLocks();
+  if (locks.chat) return res.status(423).json({ error: 'Chat is currently locked by an administrator.' });
   const target = getUserById(targetId);
   if (!target || target.role === 'admin' || target.isBanned) return res.status(404).json({ error: 'Player not found.' });
   const blocked = db.prepare(
     'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
   ).get(user.id, targetId, targetId, user.id);
   if (blocked) return res.status(403).json({ error: 'Cannot message a blocked player.' });
+  const friendship = db.prepare(
+    "SELECT 1 FROM friendships WHERE ((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)) AND status = 'accepted'"
+  ).get(user.id, targetId, targetId, user.id);
+  if (!friendship) return res.status(403).json({ error: 'You must be friends to send direct messages.' });
 
   const id = `dm_${crypto.randomUUID().slice(0, 12)}`;
   const createdAt = new Date().toISOString();
@@ -2561,6 +2570,15 @@ app.post('/api/social/respond', requireAuth, (req: AuthReq, res) => {
 app.get('/api/social/messages/:friendId', requireAuth, (req: AuthReq, res) => {
   const uid = req.authUser!.id;
   const friendId = String(req.params.friendId);
+  if (!friendId || friendId === uid) return res.status(400).json({ error: 'Invalid conversation.' });
+  const friendship = db.prepare(
+    "SELECT 1 FROM friendships WHERE ((requester_id = ? AND addressee_id = ?) OR (requester_id = ? AND addressee_id = ?)) AND status = 'accepted'"
+  ).get(uid, friendId, friendId, uid);
+  if (!friendship) return res.status(403).json({ error: 'You must be friends to view this conversation.' });
+  const blocked = db.prepare(
+    'SELECT 1 FROM user_blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)'
+  ).get(uid, friendId, friendId, uid);
+  if (blocked) return res.status(403).json({ error: 'This conversation is unavailable.' });
 
   db.prepare('UPDATE direct_messages SET read = 1 WHERE sender_id = ? AND receiver_id = ? AND read = 0').run(friendId, uid);
 
