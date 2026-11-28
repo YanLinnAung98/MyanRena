@@ -51,7 +51,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const [chatText, setChatText] = React.useState('');
 
   const gType = normalizeGameId(match.gameType);
-  const isFullBleed = gType === 'tictactoe' || gType === 'rps';
+  const isFullBleed = gType === 'tictactoe' || gType === 'rps' || gType === 'sakarhtar';
   const players: any[] = match.players || [currentUser];
   const p1 = players[0] || currentUser;
   const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
