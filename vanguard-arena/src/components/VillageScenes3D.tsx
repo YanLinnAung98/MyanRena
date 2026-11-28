@@ -492,7 +492,7 @@ export const WiseOwlTreeQuizScene: React.FC<{
       </AnimatePresence>
 
       <section className="quiz-answer-section">
-        <div className="quiz-answer-heading"><span>{lang === 'my' ? 'အဖြေမှန်ကို ရွေးချယ်ပါ' : 'CHOOSE YOUR ANSWER'}</span><small>{lang === 'my' ? 'တစ်ခုသာ ရွေးပါ' : 'SELECT ONE OPTION'}</small></div>
+        <div className="quiz-answer-heading"><span>{isFinished ? (lang === 'my' ? 'ပွဲရလဒ်' : 'MATCH RESULT') : lang === 'my' ? 'အဖြေမှန်ကို ရွေးချယ်ပါ' : 'CHOOSE YOUR ANSWER'}</span><small>{isFinished ? (lang === 'my' ? 'အောင်မြင်မှု' : 'FINAL STANDING') : lang === 'my' ? 'တစ်ခုသာ ရွေးပါ' : 'SELECT ONE OPTION'}</small></div>
         {isFinished ? (
           <motion.div initial={{ opacity: 0, y: 12, scale: .98 }} animate={{ opacity: 1, y: 0, scale: 1 }} className="quiz-finish-panel">
             <div className="quiz-finish-medal"><span>♛</span></div>
