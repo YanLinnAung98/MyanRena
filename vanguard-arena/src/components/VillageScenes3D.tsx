@@ -563,148 +563,153 @@ export const VillageRpsScene: React.FC<{
 }> = ({ lang, match, currentUser, isPvp, onPick }) => {
   const players = match.players || [currentUser];
   const p1 = players[0] || currentUser;
-  const p2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot' };
+  const p2 = players[1] || { id: 'aegis_bot', displayName: 'မပုတု' };
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
-
+  const isMyTurn = !isFinished && !myPicked;
   const [shaking, setShaking] = React.useState(false);
   const [bonkAnim, setBonkAnim] = React.useState<'p1_bonks_p2' | 'p2_bonks_p1' | null>(null);
   const lastRoundSeenRef = React.useRef<number>(match.round || 1);
 
-  // Trigger head-bonk animation whenever a new round winner is determined
   React.useEffect(() => {
     const r = match.round || 1;
     if (r > lastRoundSeenRef.current && match.rpsLastRound) {
       lastRoundSeenRef.current = r;
-      const w = match.rpsLastRound.winnerId;
-      if (w === p1.id) {
-        setBonkAnim('p1_bonks_p2');
-      } else if (w === p2.id) {
-        setBonkAnim('p2_bonks_p1');
-      }
-      const t = window.setTimeout(() => setBonkAnim(null), 950);
-      return () => window.clearTimeout(t);
+      const winner = match.rpsLastRound.winnerId;
+      if (winner === p1.id) setBonkAnim('p1_bonks_p2');
+      else if (winner === p2.id) setBonkAnim('p2_bonks_p1');
+      const timer = window.setTimeout(() => setBonkAnim(null), 950);
+      return () => window.clearTimeout(timer);
     }
   }, [match.round, match.rpsLastRound, p1.id, p2.id]);
 
   const handleChoose = (choice: string) => {
     if (shaking || isFinished || myPicked) return;
     setShaking(true);
-    setTimeout(() => {
+    window.setTimeout(() => {
       setShaking(false);
       onPick(choice);
     }, 450);
   };
 
-  const p1State = isFinished
-    ? match.winnerId === p1.id
-      ? 'dancing'
-      : 'crying'
-    : bonkAnim === 'p1_bonks_p2'
-    ? 'bonking'
-    : bonkAnim === 'p2_bonks_p1'
-    ? 'bonked'
-    : 'idle';
+  const iconOf = (choice?: string) =>
+    choice === 'rock' ? '✊' : choice === 'paper' ? '✋' : choice === 'scissors' ? '✌️' : '？';
+  const labelOf = (choice: string) =>
+    choice === 'rock' ? (lang === 'my' ? 'ကျောက်တုံး' : 'Rock')
+      : choice === 'paper' ? (lang === 'my' ? 'စက္ကူ' : 'Paper')
+      : (lang === 'my' ? 'ကတ်ကြေး' : 'Scissors');
+  const p1Wins = match.rpsLastRound?.winnerId === p1.id;
+  const p2Wins = match.rpsLastRound?.winnerId === p2.id;
+  const round = match.round || 1;
+  const bestOf = match.bestOf || 3;
+  const p1Avatar = p1.avatarUrl || currentUser.avatarUrl || '';
+  const p2Avatar = isPvp ? (p2.avatarUrl || '') : '/assets/ttt-girl-idle.png';
+  const p1Initial = (p1.displayName || 'P').slice(0, 1).toUpperCase();
 
-  const p2State = isFinished
-    ? match.winnerId === p2.id
-      ? 'dancing'
-      : 'crying'
-    : bonkAnim === 'p2_bonks_p1'
-    ? 'bonking'
-    : bonkAnim === 'p1_bonks_p2'
-    ? 'bonked'
-    : 'idle';
-
-  const iconOf = (c?: string) => (c === 'rock' ? '✊' : c === 'paper' ? '✋' : c === 'scissors' ? '✌️' : '❔');
+  const PlayerCard = ({ player, avatar, side, winner, loser }: {
+    player: any; avatar: string; side: 'blue' | 'pink'; winner: boolean; loser: boolean;
+  }) => (
+    <motion.div
+      className={`rps-competitor rps-competitor-${side} ${winner ? 'is-winner' : ''} ${loser ? 'is-loser' : ''}`}
+      animate={winner ? { y: [0, -7, 0] } : loser ? { x: [0, -3, 3, 0] } : { y: [0, -3, 0] }}
+      transition={{ duration: winner ? .65 : 3, repeat: winner ? 1 : Infinity }}
+    >
+      <div className="rps-competitor-art">
+        {avatar ? <img src={avatar} alt="" /> : <span>{(player.displayName || 'P').slice(0,1).toUpperCase()}</span>}
+        {winner && <i>♛</i>}
+      </div>
+      <div className="rps-competitor-meta">
+        <b>{player.displayName || (side === 'pink' ? 'မပုတု' : 'Player')}</b>
+        <small>{side === 'pink' && !isPvp ? 'BOT • MEDIUM' : side === 'blue' ? 'CHALLENGER' : 'PLAYER 02'}</small>
+        {winner && <em>{lang === 'my' ? 'အနိုင်ရသူ' : 'ROUND WINNER'}</em>}
+      </div>
+    </motion.div>
+  );
 
   return (
-    <div className="w-full max-w-md space-y-3">
-      {/* Scenic Myanmar Village Backdrop with Two Animated Kids */}
-      <div className="relative rounded-3xl overflow-hidden border border-amber-500/35 p-4 bg-gradient-to-b from-[#1a183b] via-[#3c2432] to-[#2e3a20] shadow-2xl">
-        {/* Sunset Moon, Pagoda Silhouette & Toddy Palms */}
-        <svg viewBox="0 0 400 180" className="absolute inset-0 w-full h-full pointer-events-none opacity-65">
-          <circle cx="200" cy="48" r="28" fill="#fbbf24" fillOpacity="0.45" />
-          {/* Distant Village Pagoda */}
-          <path d="M196 35 L204 35 L202 52 L212 70 L218 110 L182 110 L188 70 L198 52 Z" fill="#1e1b2e" />
-          {/* Village Bamboo Fence */}
-          <rect x="0" y="128" width="400" height="52" fill="#2c3e1e" />
-          <line x1="0" y1="128" x2="400" y2="128" stroke="#92400e" strokeWidth="4" />
-        </svg>
-
-        <div className="relative z-10 text-center mb-2">
-          <span className="px-3 py-0.5 rounded-full bg-black/55 border border-amber-400/40 text-[11px] font-bold text-amber-300">
-            Round {match.round || 1} · Best of {match.bestOf || 3}
-          </span>
-        </div>
-
-        {/* Two Kids Facing Each Other + Clash Display */}
-        <div className="relative z-10 flex items-end justify-between px-2 sm:px-4 pt-3">
-          <VillageKidSprite
-            name={p1.displayName}
-            shirtColor="#f59e0b"
-            longyiColor="#991b1b"
-            state={p1State}
-          />
-
-          <div className="pb-6 text-center">
-            {shaking ? (
-              <motion.div
-                animate={{ y: [0, -18, 0, -18, 0] }}
-                transition={{ duration: 0.45 }}
-                className="flex items-center gap-4 text-4xl"
-              >
-                <span>✊</span>
-                <span className="scale-x-[-1]">✊</span>
-              </motion.div>
-            ) : match.rpsLastRound ? (
-              <motion.div
-                key={match.round}
-                initial={{ scale: 0.5, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                className="flex items-center gap-3"
-              >
-                <span className="text-3xl sm:text-4xl drop-shadow">{iconOf(match.rpsLastRound.p1Choice)}</span>
-                <span className="text-xs font-extrabold text-amber-300">VS</span>
-                <span className="text-3xl sm:text-4xl drop-shadow">{iconOf(match.rpsLastRound.p2Choice)}</span>
-              </motion.div>
-            ) : (
-              <span className="text-xs font-bold text-amber-200">
-                {myPicked ? '⏳ Waiting...' : 'VS'}
-              </span>
-            )}
-          </div>
-
-          <VillageKidSprite
-            name={p2.displayName}
-            shirtColor="#38bdf8"
-            longyiColor="#1e3a8a"
-            state={p2State}
-            flip
-          />
+    <div className="rps-arena w-full" aria-label="Rock Paper Scissors arena">
+      <div className="rps-roundbar">
+        <span className="rps-round-kicker">MATCH PROGRESS</span>
+        <strong>{lang === 'my' ? `အချီ ${round}` : `ROUND ${round}`} <i>·</i> BEST OF {bestOf}</strong>
+        <div className="rps-round-dots">
+          {Array.from({ length: bestOf }, (_, index) => (
+            <span key={index} className={index < (match.round || 1) - 1 ? 'complete' : index === (match.round || 1) - 1 ? 'current' : ''} />
+          ))}
         </div>
       </div>
 
-      {/* Choice Controls */}
-      <div className="grid grid-cols-3 gap-2.5">
-        {[
-          { id: 'rock', icon: '✊', label: lang === 'my' ? 'ကျောက်တုံး' : 'Rock' },
-          { id: 'paper', icon: '✋', label: lang === 'my' ? 'စက္ကူ' : 'Paper' },
-          { id: 'scissors', icon: '✌️', label: lang === 'my' ? 'ကတ်ကြေး' : 'Scissors' },
-        ].map((item) => (
-          <motion.button
-            key={item.id}
-            whileHover={{ y: -3, scale: 1.03 }}
-            whileTap={{ scale: 0.9 }}
-            type="button"
-            disabled={isFinished || myPicked || shaking}
-            onClick={() => handleChoose(item.id)}
-            className="p-3.5 rounded-2xl cyber-panel hover:border-amber-400 disabled:opacity-45 flex flex-col items-center gap-1.5 cursor-pointer"
-          >
-            <span className="text-3xl">{item.icon}</span>
-            <span className="text-xs font-bold text-white">{item.label}</span>
-          </motion.button>
-        ))}
+      <section className="rps-battle-stage">
+        <div className="rps-stage-grid" aria-hidden="true">
+          <span /><span /><span /><span /><span /><span />
+        </div>
+        <div className="rps-competitors">
+          <PlayerCard player={p1} avatar={p1Avatar} side="blue" winner={Boolean(p1Wins)} loser={Boolean(p2Wins)} />
+          <div className={`rps-versus ${shaking ? 'is-shaking' : ''}`}>
+            <span>VS</span>
+            <i />
+          </div>
+          <PlayerCard player={p2} avatar={p2Avatar} side="pink" winner={Boolean(p2Wins)} loser={Boolean(p1Wins)} />
+        </div>
+        <div className="rps-result-panel" aria-live="polite">
+          {shaking ? (
+            <motion.div animate={{ scale: [1, 1.12, 1], rotate: [0, -4, 4, 0] }} transition={{ duration: .45 }}>
+              <span className="rps-result-icon">✊</span><b>READY…</b><span className="rps-result-icon">✊</span>
+            </motion.div>
+          ) : match.rpsLastRound ? (
+            <>
+              <span className="rps-result-icon">{iconOf(match.rpsLastRound.p1Choice)}</span>
+              <div>
+                <b>{match.rpsLastRound.winnerId === 'draw' || match.rpsLastRound.isDraw
+                  ? (lang === 'my' ? 'သရေကျသည်' : 'DRAW ROUND')
+                  : (lang === 'my' ? 'အချီရလဒ်' : 'ROUND RESULT')}</b>
+                <small>{labelOf(match.rpsLastRound.p1Choice)} <i>VS</i> {labelOf(match.rpsLastRound.p2Choice)}</small>
+              </div>
+              <span className="rps-result-icon">{iconOf(match.rpsLastRound.p2Choice)}</span>
+            </>
+          ) : (
+            <div className="rps-prompt">
+              <span>✦</span>
+              <b>{myPicked ? (lang === 'my' ? 'ပြိုင်ဘက်ကို စောင့်နေသည်…' : 'WAITING FOR OPPONENT…') : (lang === 'my' ? 'သင့်လှည့် — တစ်ခုရွေးပါ' : 'YOUR TURN — MAKE YOUR MOVE')}</b>
+              <span>✦</span>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="rps-choice-section">
+        <div className="rps-choice-heading">
+          <span>{lang === 'my' ? 'သင်၏ လက်နက်ကို ရွေးချယ်ပါ' : 'CHOOSE YOUR WEAPON'}</span>
+          <small>{myPicked ? (lang === 'my' ? 'ရွေးချယ်ပြီးပါပြီ' : 'CHOICE LOCKED') : 'SELECT ONE'}</small>
+        </div>
+        <div className="rps-choice-grid">
+          {[
+            { id: 'rock', icon: '✊', label: lang === 'my' ? 'ကျောက်တုံး' : 'ROCK', sub: lang === 'my' ? 'ခိုင်မာသောအား' : 'POWER' },
+            { id: 'paper', icon: '✋', label: lang === 'my' ? 'စက္ကူ' : 'PAPER', sub: lang === 'my' ? 'ကာကွယ်မှု' : 'DEFENSE' },
+            { id: 'scissors', icon: '✌️', label: lang === 'my' ? 'ကတ်ကြေး' : 'SCISSORS', sub: lang === 'my' ? 'တိကျသောဖြတ်ချက်' : 'PRECISION' },
+          ].map((item) => (
+            <motion.button
+              key={item.id}
+              whileHover={!isFinished && !myPicked ? { y: -5, scale: 1.025 } : undefined}
+              whileTap={!isFinished && !myPicked ? { scale: .96 } : undefined}
+              type="button"
+              disabled={isFinished || myPicked || shaking}
+              onClick={() => handleChoose(item.id)}
+              className={`rps-choice-card rps-choice-${item.id}`}
+              aria-label={item.label}
+            >
+              <span className="rps-choice-number">{item.id === 'rock' ? '01' : item.id === 'paper' ? '02' : '03'}</span>
+              <span className="rps-choice-symbol">{item.icon}</span>
+              <b>{item.label}</b>
+              <small>{item.sub}</small>
+              <i className="rps-choice-glint" />
+            </motion.button>
+          ))}
+        </div>
+      </section>
+      <div className="rps-arena-footnote">
+        <span>✦</span>
+        {lang === 'my' ? 'အနိုင်ရရန် အချီ ၂ ချီ အရင်ရယူပါ' : 'WIN 2 ROUNDS TO CLAIM THE MATCH'}
+        <span>✦</span>
       </div>
     </div>
   );
