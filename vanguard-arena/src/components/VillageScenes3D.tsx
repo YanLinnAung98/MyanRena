@@ -568,7 +568,6 @@ export const VillageRpsScene: React.FC<{
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
   const [shaking, setShaking] = React.useState(false);
-  const [shaking, setShaking] = React.useState(false);
 
   const handleChoose = (choice: string) => {
     if (shaking || isFinished || myPicked) return;
