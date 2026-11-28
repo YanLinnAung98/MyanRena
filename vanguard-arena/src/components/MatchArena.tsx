@@ -97,7 +97,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       <div
         className={
           isFullBleed
-            ? 'absolute top-2 inset-x-3 z-40 max-w-3xl mx-auto cyber-panel mr-match-scoreboard bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl'
+            ? 'relative z-10 w-full max-w-3xl mx-auto cyber-panel mr-match-scoreboard bg-slate-950/75 backdrop-blur-md flex items-center justify-between gap-2 px-3 py-1.5 rounded-2xl border border-amber-500/35 shadow-xl shrink-0'
             : 'cyber-panel mr-match-scoreboard flex items-center justify-between gap-3 px-3 sm:px-5 py-3 rounded-2xl border border-amber-300/20 shrink-0 shadow-[0_12px_36px_rgba(0,0,0,.24)]'
         }
       >
@@ -162,7 +162,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       <div
         className={
           isFullBleed
-            ? 'flex-1 min-h-0 w-full h-full'
+            ? 'relative flex-1 min-h-0 w-full'
             : 'relative flex-1 min-h-0 flex items-center justify-center py-2 sm:py-3 overflow-hidden rounded-[1.5rem] border border-white/[0.08] bg-[radial-gradient(ellipse_at_50%_15%,rgba(232,185,92,.08),transparent_52%),linear-gradient(145deg,rgba(18,30,49,.72),rgba(7,12,21,.92))] shadow-[inset_0_1px_0_rgba(255,255,255,.04),0_18px_45px_rgba(0,0,0,.2)]'
         }
       >
@@ -218,7 +218,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       <div
         className={
           isFullBleed
-            ? 'absolute bottom-2 inset-x-3 z-40 max-w-3xl mx-auto flex items-center justify-between gap-2'
+            ? 'relative z-10 w-full max-w-3xl mx-auto flex items-center justify-between gap-2 shrink-0 pb-[max(8px,env(safe-area-inset-bottom))]'
             : 'flex items-center justify-between gap-3 shrink-0 rounded-2xl border border-white/[0.08] bg-[#111b2b]/90 p-2 shadow-[0_12px_30px_rgba(0,0,0,.22)]'
         }
       >
