@@ -1,6 +1,5 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Sparkles } from 'lucide-react';
 import type { Language, UserProfile } from '../types.ts';
 import { WiseOwl3D } from './WiseOwl3D.tsx';
 
@@ -374,10 +373,9 @@ export const WiseOwlTreeQuizScene: React.FC<{
   const riddles = match.riddles || [];
   const idx = Math.min(match.riddleIndex || 0, Math.max(0, riddles.length - 1));
   const current = riddles[idx];
-
   const [bonkingKidId, setBonkingKidId] = React.useState<string | null>(null);
   const [cheeringKidId, setCheeringKidId] = React.useState<string | null>(null);
-  const [owlDiving, setOwlDiving] = React.useState<boolean>(false);
+  const [owlDiving, setOwlDiving] = React.useState(false);
   const [flashedOpt, setFlashedOpt] = React.useState<{ idx: number; correct: boolean | null } | null>(null);
 
   if (!current) return null;
@@ -385,168 +383,102 @@ export const WiseOwlTreeQuizScene: React.FC<{
   const opts: string[] = lang === 'my' ? current.optionsMy || current.options : current.optionsEn || current.options;
   const alreadyAnswered = Boolean(isPvp && typeof match.roundAnswers?.[currentUser.id] === 'number');
   const isFinished = match.status === 'finished';
+  const score = match.scores?.[currentUser.id] ?? 0;
 
   const handleSelectOption = (oIdx: number) => {
     if (flashedOpt || isFinished || alreadyAnswered) return;
-    // The authoritative server deliberately hides the answer key until reveal.
-    // In that mode, show a neutral selection animation and let the server score it.
     if (typeof current.answerIndex !== 'number') {
       setFlashedOpt({ idx: oIdx, correct: null });
-      setTimeout(() => {
-        setFlashedOpt(null);
-        onAnswer(oIdx);
-      }, 450);
+      window.setTimeout(() => { setFlashedOpt(null); onAnswer(oIdx); }, 450);
       return;
     }
-
     const isCorrect = oIdx === current.answerIndex;
     setFlashedOpt({ idx: oIdx, correct: isCorrect });
-
     if (isCorrect) {
       setCheeringKidId(currentUser.id);
-      setTimeout(() => {
-        setCheeringKidId(null);
-        setFlashedOpt(null);
-        onAnswer(oIdx);
-      }, 650);
+      window.setTimeout(() => { setCheeringKidId(null); setFlashedOpt(null); onAnswer(oIdx); }, 650);
     } else {
-      // Wise Owl dives down from the tree branch to BONK the wrong kid's head!
       setOwlDiving(true);
-      setTimeout(() => setBonkingKidId(currentUser.id), 220);
-      setTimeout(() => {
-        setOwlDiving(false);
-        setBonkingKidId(null);
-        setFlashedOpt(null);
-        onAnswer(oIdx);
+      window.setTimeout(() => setBonkingKidId(currentUser.id), 220);
+      window.setTimeout(() => {
+        setOwlDiving(false); setBonkingKidId(null); setFlashedOpt(null); onAnswer(oIdx);
       }, 1050);
     }
   };
 
   const kidColors = [
-    ['#f59e0b', '#991b1b'],
-    ['#38bdf8', '#1e3a8a'],
-    ['#10b981', '#065f46'],
-    ['#c084fc', '#581c87'],
-    ['#fb7185', '#881337'],
-    ['#fb923c', '#7c2d12'],
-    ['#2dd4bf', '#115e59'],
-    ['#a3e635', '#3f6212'],
+    ['#f59e0b', '#991b1b'], ['#38bdf8', '#1e3a8a'], ['#10b981', '#065f46'],
+    ['#c084fc', '#581c87'], ['#fb7185', '#881337'], ['#fb923c', '#7c2d12'],
+    ['#2dd4bf', '#115e59'], ['#a3e635', '#3f6212'],
   ];
-
-  // Calculate horizontal target offset for Owl diving down toward the wrong kid
   const mySeatIdx = Math.max(0, players.findIndex((p) => p.id === currentUser.id));
   const seatCount = Math.max(1, players.length);
   const diveOffsetX = seatCount > 1 ? ((mySeatIdx / (seatCount - 1)) - 0.5) * 160 : 0;
 
   return (
-    <div className="w-full max-w-lg flex flex-col justify-between gap-2 h-full max-h-[540px]">
-      {/* 3D Village Banyan Tree Stage with Perched Owl & Seated Kids */}
-      <div className="relative rounded-3xl overflow-hidden border border-amber-500/30 bg-gradient-to-b from-[#0b1528] via-[#102033] to-[#1a2e1a] p-2.5 shrink-0">
-        {/* Stylized Tree Canopy & Branch */}
-        <svg viewBox="0 0 400 130" className="absolute inset-x-0 top-0 w-full h-28 pointer-events-none opacity-85">
-          <circle cx="65" cy="18" r="55" fill="#14532d" />
-          <circle cx="200" cy="8" r="68" fill="#166534" />
-          <circle cx="335" cy="20" r="55" fill="#14532d" />
-          {/* Sturdy Tree Branch Where Owl Perches */}
-          <path d="M0 95 Q130 78, 220 88 T400 72" fill="none" stroke="#5c3a21" strokeWidth="14" strokeLinecap="round" />
-          <path d="M0 95 Q130 78, 220 88 T400 72" fill="none" stroke="#7c4d2b" strokeWidth="5" strokeLinecap="round" />
-        </svg>
-
-        {/* Wise Owl Perched on Branch — Swoops Down to Bonk Wrong Kid! */}
-        <motion.div
-          animate={
-            owlDiving
-              ? { y: 78, x: diveOffsetX, scale: 1.08, rotate: [0, -14, 14, 0] }
-              : { y: 0, x: 0, scale: 0.85, rotate: 0 }
-          }
-          transition={{ type: 'spring', stiffness: 260, damping: 18 }}
-          className="relative z-30 -my-3"
-        >
-          <WiseOwl3D
-            mood={cheeringKidId ? 'happy' : owlDiving ? 'thinking' : 'asking'}
-            questionNumber={idx + 1}
-          />
-        </motion.div>
-
-        {/* Seated Village Children Facing the Owl (1 to 8 Players) */}
-        <div className="relative z-20 flex items-end justify-center gap-2 sm:gap-3 pt-2 overflow-x-auto no-scrollbar">
-          {players.slice(0, 8).map((pl, sIdx) => {
-            const [shirt, longyi] = kidColors[sIdx % kidColors.length];
-            const kState =
-              bonkingKidId === pl.id
-                ? 'bonked'
-                : cheeringKidId === pl.id
-                ? 'dancing'
-                : 'idle';
-            return (
-              <div key={pl.id} className="flex flex-col items-center shrink-0">
-                <VillageKidSprite
-                  name={`${pl.displayName} (${match.scores?.[pl.id] || 0})`}
-                  shirtColor={shirt}
-                  longyiColor={longyi}
-                  state={kState}
-                  compact
-                />
-              </div>
-            );
-          })}
-        </div>
+    <div className="quiz-arena">
+      <div className="quiz-topline">
+        <div className="quiz-brandmark"><span>✦</span><div><small>{lang === 'my' ? 'MYANRENA • KNOWLEDGE ARENA' : 'MYANRENA • KNOWLEDGE ARENA'}</small><strong>{lang === 'my' ? 'ပညာရှိ ဇီးကွက် ဉာဏ်စမ်း' : 'WISE OWL CHALLENGE'}</strong></div></div>
+        <div className="quiz-round-chip"><span>{lang === 'my' ? 'အဆင့်' : 'QUESTION'}</span><b>{idx + 1}<i>/{riddles.length}</i></b></div>
       </div>
 
-      {/* Question Scroll Card */}
-      <AnimatePresence mode="wait">
+      <section className="quiz-forest-stage" aria-label={lang === 'my' ? 'ကစားသမားများနှင့် ဇီးကွက်' : 'Players and wise owl'}>
+        <div className="quiz-forest-stars" aria-hidden="true"><i>✦</i><i>✧</i><i>·</i><i>✦</i><i>·</i><i>✧</i></div>
+        <div className="quiz-canopy" aria-hidden="true"><span /><span /><span /><span /></div>
+        <svg viewBox="0 0 900 190" preserveAspectRatio="none" className="quiz-branch-art" aria-hidden="true">
+          <path d="M-20 130 C180 95 270 125 440 112 S720 120 930 65" fill="none" stroke="#392b38" strokeWidth="34" strokeLinecap="round"/>
+          <path d="M-20 122 C180 87 270 117 440 104 S720 112 930 57" fill="none" stroke="#9a663e" strokeWidth="19" strokeLinecap="round"/>
+          <path d="M-20 118 C180 83 270 113 440 100 S720 108 930 53" fill="none" stroke="#d29a5c" strokeOpacity=".35" strokeWidth="4" strokeLinecap="round"/>
+        </svg>
+        <div className="quiz-owl-halo" aria-hidden="true" />
         <motion.div
-          key={idx}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -8 }}
-          className="p-3 rounded-2xl cyber-gold-active shrink-0"
+          animate={owlDiving ? { y: 74, x: diveOffsetX, scale: 1.08, rotate: [0, -14, 14, 0] } : { y: 0, x: 0, scale: 1, rotate: 0 }}
+          transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+          className="quiz-owl-character"
         >
-          <div className="flex items-center justify-between text-[11px] text-amber-300 font-bold mb-1">
-            <span className="flex items-center gap-1">
-              <Sparkles className="w-3.5 h-3.5" />
-              {lang === 'my'
-                ? `ပညာရှိ ဇီးကွက် မေးခွန်း (${idx + 1}/${riddles.length})`
-                : `Wise Owl Quiz (${idx + 1}/${riddles.length})`}
-            </span>
-            <span>{match.scores?.[currentUser.id] ?? 0} PTS</span>
-          </div>
-          <p className="text-xs sm:text-sm font-bold text-white leading-relaxed">{questionText}</p>
+          <WiseOwl3D mood={cheeringKidId ? 'happy' : owlDiving ? 'thinking' : 'asking'} questionNumber={idx + 1} />
         </motion.div>
-      </AnimatePresence>
-
-      {/* Answer Buttons */}
-      {alreadyAnswered ? (
-        <div className="p-3 rounded-2xl cyber-panel text-center text-xs text-amber-300 font-semibold">
-          {lang === 'my' ? 'အခြားကစားသမားများ ဖြေဆိုသည်ကို စောင့်နေပါသည်...' : 'Waiting for other players...'}
-        </div>
-      ) : (
-        <div className="grid grid-cols-2 gap-2 shrink-0">
-          {opts.map((opt, oIdx) => {
-            const flash = flashedOpt?.idx === oIdx;
-            const cls = flash
-              ? flashedOpt.correct === true
-                ? '!bg-emerald-500/35 !border-emerald-400'
-                : flashedOpt.correct === false
-                ? '!bg-rose-500/35 !border-rose-400'
-                : '!bg-amber-500/30 !border-amber-300'
-              : '';
-            return (
-              <motion.button
-                key={`${idx}_${oIdx}`}
-                whileTap={{ scale: 0.94 }}
-                type="button"
-                disabled={isFinished || Boolean(flashedOpt)}
-                onClick={() => handleSelectOption(oIdx)}
-                className={`p-2.5 sm:p-3 rounded-xl cyber-panel hover:border-amber-400 text-left text-xs font-bold text-white cursor-pointer ${cls}`}
-              >
-                <span className="text-amber-400 font-mono mr-1.5">{oIdx + 1}.</span>
-                {opt}
-              </motion.button>
-            );
+        <div className="quiz-player-row">
+          {players.slice(0, 8).map((pl, sIdx) => {
+            const [shirt, longyi] = kidColors[sIdx % kidColors.length];
+            const kState = bonkingKidId === pl.id ? 'bonked' : cheeringKidId === pl.id ? 'dancing' : 'idle';
+            return <div key={pl.id} className={`quiz-player-seat ${pl.id === currentUser.id ? 'is-you' : ''}`}>
+              <VillageKidSprite name={`${pl.displayName} · ${match.scores?.[pl.id] || 0}`} shirtColor={shirt} longyiColor={longyi} state={kState} compact />
+              {pl.id === currentUser.id && <span className="quiz-you-tag">{lang === 'my' ? 'သင်' : 'YOU'}</span>}
+            </div>;
           })}
         </div>
-      )}
+        <div className="quiz-stage-caption"><span>✧</span>{lang === 'my' ? 'ပညာရှိ ဇီးကွက်၏ စိန်ခေါ်မှု' : 'THE WISE OWL’S CHALLENGE'}<span>✧</span></div>
+      </section>
+
+      <AnimatePresence mode="wait">
+        <motion.section key={idx} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }} className="quiz-question-panel">
+          <div className="quiz-question-top">
+            <span className="quiz-question-label"><span>✦</span>{lang === 'my' ? 'ဉာဏ်စမ်းမေးခွန်း' : 'BRAIN TEASER'}</span>
+            <span className="quiz-score-pill">{score.toLocaleString()} <i>PTS</i></span>
+          </div>
+          <p>{questionText}</p>
+          <div className="quiz-progress-track"><span style={{ width: `${riddles.length ? ((idx + 1) / riddles.length) * 100 : 0}%` }} /></div>
+        </motion.section>
+      </AnimatePresence>
+
+      <section className="quiz-answer-section">
+        <div className="quiz-answer-heading"><span>{lang === 'my' ? 'အဖြေမှန်ကို ရွေးချယ်ပါ' : 'CHOOSE YOUR ANSWER'}</span><small>{lang === 'my' ? 'တစ်ခုသာ ရွေးပါ' : 'SELECT ONE OPTION'}</small></div>
+        {alreadyAnswered ? (
+          <div className="quiz-waiting-card"><span className="quiz-waiting-pulse" />{lang === 'my' ? 'အခြားကစားသမားများ ဖြေဆိုသည်ကို စောင့်နေပါသည်...' : 'Waiting for other players...'}</div>
+        ) : (
+          <div className="quiz-answer-grid">
+            {opts.map((opt, oIdx) => {
+              const flash = flashedOpt?.idx === oIdx;
+              const cls = flash ? flashedOpt.correct === true ? 'is-correct' : flashedOpt.correct === false ? 'is-wrong' : 'is-selected' : '';
+              return <motion.button key={`${idx}_${oIdx}`} whileTap={{ scale: 0.975 }} type="button" disabled={isFinished || Boolean(flashedOpt)} onClick={() => handleSelectOption(oIdx)} className={`quiz-answer-card ${cls}`}>
+                <span className="quiz-answer-index">{String(oIdx + 1).padStart(2, '0')}</span><span className="quiz-answer-text">{opt}</span><span className="quiz-answer-arrow">↗</span>
+              </motion.button>;
+            })}
+          </div>
+        )}
+      </section>
+      <div className="quiz-arena-footer"><span>✦</span>{lang === 'my' ? 'ဗဟုသုတက သင့်ရဲ့ အင်အားပါ' : 'KNOWLEDGE IS YOUR POWER'}<span>✦</span></div>
     </div>
   );
 };
