@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CONNECT4_SLOT_NAMES, resolveMediaSlot, type ResolvedAsset } from '../config/connect4Assets.ts';
+import { getPrimaryAssetBase, type ResolvedAsset } from '../config/connect4Assets.ts';
 
 export interface TicTacToeBoardProps {
   lang?: 'my' | 'en' | string;
@@ -12,8 +12,8 @@ export interface TicTacToeBoardProps {
   onLeaveFinished?: () => void;
 }
 
-const BASE = (import.meta.env.BASE_URL || './').replace(/\/?$/, '/');
-export const TTT_KID_BOT_AVATAR_DATA_URI = `${BASE}assets/ttt-boy.png`;
+const TTT_ASSET_BASE = getPrimaryAssetBase();
+export const TTT_KID_BOT_AVATAR_DATA_URI = `${TTT_ASSET_BASE}ttt-girl-idle.png`;
 export function getTicTacToeBotName(lang: string, difficulty?: string): string {
   const base = lang === 'my' ? 'မပုတု' : 'Ma Pu Tu';
   return difficulty ? `${base} (${difficulty.toUpperCase()})` : base;
@@ -35,16 +35,9 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ lang='my', match
   const [kid, setKid] = useState<ResolvedAsset>(EMPTY);
 
   useEffect(() => {
-    let alive = true;
-    Promise.all([
-      resolveMediaSlot(CONNECT4_SLOT_NAMES.roomBg, 'image'),
-      resolveMediaSlot(CONNECT4_SLOT_NAMES.kid.idle, 'video'),
-    ]).then(([bg, character]) => {
-      if (!alive) return;
-      setScene(bg);
-      setKid(character);
-    });
-    return () => { alive = false; };
+    // Tic-Tac-Toe owns its own art direction and never borrows Connect 4 media.
+    setScene({ kind: 'image', url: `${TTT_ASSET_BASE}ttt-village-bg.jpg` });
+    setKid({ kind: 'image', url: TTT_KID_BOT_AVATAR_DATA_URI });
   }, []);
 
   const board: Array<string|null> = useMemo(() => Array.isArray(match?.tttBoard) && match.tttBoard.length === 9 ? match.tttBoard : Array(9).fill(null), [match?.tttBoard]);
@@ -85,18 +78,7 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ lang='my', match
         <div className={`ttt-turn-tag ${isFinished?'finished':isMyTurn?'active':'waiting'}`}><i />{isFinished ? (isDraw?'DRAW':didWin?'VICTORY':'FINISHED') : isMyTurn?'YOUR TURN':'RIVAL TURN'}</div>
       </header>
 
-      <div className="ttt-contestants">
-        <div className="ttt-contestant contestant-rival">
-          <div className="ttt-avatar-frame"><CharacterMedia asset={kid} fallback={opponent?.avatarUrl || TTT_KID_BOT_AVATAR_DATA_URI} mood={mood as any} /></div>
-          <div className="ttt-contestant-info"><b>{opponentName}</b><span><i className="ttt-token token-x">X</i>{lang === 'my' ? 'မပုတု' : 'PLAYER X'}</span></div>
-        </div>
-        <div className="ttt-versus">VS</div>
-        <div className="ttt-contestant contestant-user">
-          <div className="ttt-avatar-frame">{currentPlayer?.avatarUrl ? <img className="ttt-user-avatar" src={currentPlayer.avatarUrl} alt="" /> : <div className="ttt-user-fallback">YOU</div>}</div>
-          <div className="ttt-contestant-info"><b>{currentName}</b><span><i className="ttt-token token-o">O</i>{lang === 'my' ? 'သင်' : 'PLAYER O'}</span></div>
-        </div>
-      </div>
-
+      {/* Player identities are shown once in the persistent match scoreboard. */}
       <main className="ttt-play-area">
         <div className="ttt-game-pedestal">
           <div className="ttt-game-title"><span>{lang === 'my' ? 'ကစားကွက်' : 'GAME BOARD'}</span><small>3 × 3</small></div>
