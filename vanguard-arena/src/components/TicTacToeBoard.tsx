@@ -24,7 +24,8 @@ const EMPTY: ResolvedAsset = { kind: 'none', url: null };
 
 const CharacterMedia: React.FC<{ asset: ResolvedAsset; fallback?: string; mood: 'idle'|'win'|'lose' }> = ({ asset, fallback, mood }) => (
   <motion.div className={`ttt-character-art mood-${mood}`} animate={mood === 'win' ? { y:[0,-10,0], rotate:[0,-2,2,0] } : mood === 'lose' ? { y:[0,3,0] } : { y:[0,-4,0] }} transition={{ duration:mood === 'idle'?3.8:.8, repeat:mood === 'idle'?Infinity:0, ease:'easeInOut' }}>
-    {asset.kind === 'video' && asset.url ? <video src={asset.url} autoPlay muted loop playsInline /> :
+    {mood !== 'idle' ? <img src={mood === 'win' ? `${TTT_ASSET_BASE}ttt-girl-dance.jpg` : `${TTT_ASSET_BASE}ttt-girl-cry.jpg`} alt="" /> :
+      asset.kind === 'video' && asset.url ? <video src={asset.url} autoPlay muted loop playsInline /> :
       asset.kind === 'image' && asset.url ? <img src={asset.url} alt="" /> :
       fallback ? <img src={fallback} alt="" /> : <div className="ttt-character-placeholder">✦</div>}
   </motion.div>
