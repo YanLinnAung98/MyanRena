@@ -563,7 +563,7 @@ export const VillageRpsScene: React.FC<{
 }> = ({ lang, match, currentUser, isPvp, onPick }) => {
   const players = match.players || [currentUser];
   const p1 = players[0] || currentUser;
-  const p2 = players[1] || { id: 'aegis_bot', displayName: 'မပုတု' };
+  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'မပုတု' };\n  const p2 = isPvp ? rawP2 : { ...rawP2, displayName: lang === 'my' ? 'မပုတု' : 'Ma Pu Tu' };
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
   const isMyTurn = !isFinished && !myPicked;
@@ -603,7 +603,7 @@ export const VillageRpsScene: React.FC<{
   const round = match.round || 1;
   const bestOf = match.bestOf || 3;
   const p1Avatar = p1.avatarUrl || currentUser.avatarUrl || '';
-  const p2Avatar = isPvp ? (p2.avatarUrl || '') : '/assets/ttt-girl-idle.png';
+  const p2Avatar = isPvp ? (p2.avatarUrl || '') : `${import.meta.env.BASE_URL}assets/ttt-girl-idle.png`;
   const p1Initial = (p1.displayName || 'P').slice(0, 1).toUpperCase();
 
   const PlayerCard = ({ player, avatar, side, winner, loser }: {
