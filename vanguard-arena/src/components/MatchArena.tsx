@@ -89,8 +89,8 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
     <div
       className={
         isFullBleed
-          ? 'fixed inset-x-0 top-16 bottom-0 z-20 w-screen flex flex-col justify-between overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
-          : 'fixed inset-x-0 top-16 bottom-0 max-w-5xl mx-auto px-3 sm:px-5 py-3 sm:py-4 flex flex-col justify-between gap-3 overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
+          ? 'fixed inset-x-0 top-14 lg:top-[4.25rem] bottom-0 z-20 w-screen flex flex-col justify-between overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
+          : 'fixed inset-x-0 top-14 lg:top-[4.25rem] bottom-0 max-w-5xl mx-auto px-3 sm:px-5 py-3 sm:py-4 flex flex-col justify-between gap-3 overflow-hidden overscroll-none bg-[radial-gradient(ellipse_at_50%_38%,rgba(29,78,216,.13),transparent_58%),linear-gradient(180deg,#0b1322,#070b13)]'
       }
     >
       {/* Cyber Scoreboard Header */}
