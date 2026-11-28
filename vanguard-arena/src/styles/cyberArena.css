@@ -1054,3 +1054,172 @@ html[data-graphics='low'] .mr-legend-aura, html[data-graphics='low'] .mr-legend-
 @media(max-width:650px){.ttt-world{padding:10px 9px max(14px,env(safe-area-inset-bottom))}.ttt-world-brand>span{width:31px;height:31px}.ttt-world-brand b{font-size:10px}.ttt-world-brand small{font-size:7px}.ttt-contestants{grid-template-columns:minmax(0,1fr) 28px minmax(0,1fr);gap:4px;margin:9px auto 4px}.ttt-contestant{gap:6px;padding:5px 6px;border-radius:11px}.ttt-avatar-frame{width:39px;height:39px;flex-basis:39px;border-radius:10px}.ttt-contestant-info>b{font-size:9px}.ttt-contestant-info>span{font-size:7px}.ttt-versus{font-size:8px}.ttt-play-area{grid-template-columns:minmax(0,1fr) 66px;gap:4px}.ttt-game-pedestal{width:min(100%,min(53vh,390px));gap:7px}.ttt-wood-board{padding:7px;border-radius:16px}.ttt-board-inner{padding:5px;gap:5px;border-radius:10px}.ttt-wood-cell{border-radius:7px}.ttt-scene-character{max-width:66px}.ttt-scene-character .ttt-character-art{height:min(25vh,150px)}.ttt-scene-character>span{font-size:6px;padding:4px 5px}.ttt-game-status{min-height:35px;padding:6px 8px;gap:6px}.ttt-status-medal{width:18px;height:18px;font-size:11px}.ttt-world-footer{font-size:8px}.ttt-world-footer button{min-height:30px;padding:0 9px;font-size:8px}}
 @media(max-width:390px){.ttt-play-area{grid-template-columns:minmax(0,1fr) 48px}.ttt-avatar-frame{width:34px;height:34px;flex-basis:34px}.ttt-contestant{padding:4px}.ttt-contestant-info>b{font-size:8px}.ttt-scene-character{max-width:48px}}
 @media(prefers-reduced-motion:reduce){.ttt-wood-cell,.ttt-wood-cell.winning{animation:none!important;transition:none!important}}
+
+
+/* Tic-Tac-Toe visual rebuild: one player identity row, dedicated Pu Tu art,
+   compact mobile board and a balanced desktop arena. */
+.ttt-world {
+  --ttt-cyan: #64d9ff;
+  --ttt-pink: #ff79c8;
+  --ttt-gold: #ffd27d;
+  background:
+    radial-gradient(ellipse at 50% 38%, rgba(46, 91, 178, .26), transparent 52%),
+    radial-gradient(ellipse at 88% 16%, rgba(204, 74, 163, .16), transparent 36%),
+    linear-gradient(160deg, #0c1630 0%, #10142d 54%, #090f20 100%);
+  padding: clamp(12px, 2.2vh, 24px) clamp(12px, 3vw, 34px) max(12px, env(safe-area-inset-bottom));
+}
+.ttt-world-backdrop {
+  opacity: .34;
+  background-position: center;
+  filter: saturate(1.08) contrast(1.05);
+}
+.ttt-world:before {
+  background:
+    linear-gradient(180deg, rgba(6, 12, 30, .54), rgba(7, 13, 31, .18) 42%, rgba(5, 10, 24, .72)),
+    linear-gradient(90deg, rgba(6, 12, 30, .2), transparent 50%, rgba(6, 12, 30, .2));
+}
+.ttt-world-vignette { box-shadow: inset 0 0 100px rgba(2, 6, 20, .58); }
+.ttt-world-brand > span {
+  color: #09152b;
+  background: linear-gradient(145deg, #ffe5a7, #c88b42);
+  box-shadow: 0 0 22px rgba(255, 196, 91, .24), inset 0 1px #fff;
+}
+.ttt-world-brand b { font-size: 13px; letter-spacing: .19em; }
+.ttt-world-brand small { color: #a9c7ee; }
+.ttt-turn-tag {
+  border-color: rgba(111, 214, 255, .34);
+  background: rgba(10, 25, 54, .82);
+  color: #dff7ff;
+}
+.ttt-turn-tag i, .ttt-game-status > i {
+  background: #63e7b2;
+  box-shadow: 0 0 12px rgba(99, 231, 178, .85);
+}
+.ttt-turn-tag.waiting { border-color: rgba(255, 121, 200, .4); }
+.ttt-turn-tag.waiting i { background: var(--ttt-pink); }
+.ttt-turn-tag.finished i { background: var(--ttt-gold); }
+.ttt-contestants { display: none !important; }
+.ttt-play-area {
+  width: min(100%, 1120px);
+  grid-template-columns: minmax(0, 1fr) minmax(140px, 220px);
+  gap: clamp(16px, 3vw, 42px);
+}
+.ttt-game-pedestal { width: min(100%, min(62vh, 560px)); gap: 12px; }
+.ttt-game-title {
+  color: #f4f7ff;
+  font-size: 11px;
+  letter-spacing: .18em;
+}
+.ttt-game-title small {
+  border-color: rgba(115, 192, 255, .38);
+  background: rgba(11, 26, 58, .78);
+  color: #c8e8ff;
+}
+.ttt-wood-board {
+  padding: clamp(9px, 1.6vw, 15px);
+  border: 2px solid rgba(255, 218, 148, .94);
+  border-radius: 25px;
+  background: linear-gradient(145deg, #ffe4ad 0%, #b98149 13%, #44345b 52%, #17254a 100%);
+  box-shadow: 0 24px 55px rgba(0,0,0,.56), 0 0 0 5px rgba(8,15,39,.86),
+    0 0 0 7px rgba(99,174,255,.22), 0 0 34px rgba(65,150,255,.2),
+    inset 0 2px 2px rgba(255,255,255,.8);
+}
+.ttt-board-inner {
+  gap: clamp(6px, 1vw, 10px);
+  padding: clamp(6px, 1vw, 10px);
+  border: 1px solid rgba(127, 179, 255, .58);
+  border-radius: 15px;
+  background: linear-gradient(145deg, #101c3c, #080f27);
+  box-shadow: inset 0 5px 18px rgba(0,0,0,.6);
+}
+.ttt-wood-cell {
+  border: 1px solid rgba(120, 177, 255, .72);
+  border-radius: 12px;
+  background: linear-gradient(145deg, #233e78, #14264e 65%, #101d3d);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.13), inset 0 -8px 16px rgba(0,0,0,.2), 0 3px 8px rgba(0,0,0,.3);
+}
+.ttt-wood-cell:not(:disabled):hover {
+  filter: brightness(1.2);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.2), 0 0 0 2px rgba(111,210,255,.85), 0 0 22px rgba(58,168,255,.34);
+}
+.ttt-cell-number { color: rgba(202,224,255,.42); }
+.ttt-empty-mark { color: rgba(160,207,255,.22); }
+.piece-x {
+  color: #71e4ff;
+  filter: drop-shadow(0 0 10px rgba(42,191,255,.72));
+  text-shadow: 0 2px #286fba, 0 5px 0 #164478, 0 8px 12px #07132b;
+}
+.piece-o {
+  color: #ff8bd0;
+  filter: drop-shadow(0 0 10px rgba(255,85,186,.7));
+  text-shadow: 0 2px #c64b9a, 0 5px 0 #803366, 0 8px 12px #07132b;
+}
+.ttt-wood-cell.winning {
+  background: linear-gradient(145deg, #375d9b, #253c72);
+  box-shadow: inset 0 0 0 2px #ffe5a5, 0 0 22px rgba(255,218,130,.65);
+}
+.ttt-game-status {
+  border-color: rgba(110, 192, 255, .35);
+  border-radius: 14px;
+  background: linear-gradient(120deg, rgba(17,36,75,.94), rgba(13,22,51,.96));
+  color: #e6f3ff;
+  box-shadow: 0 10px 25px rgba(0,0,0,.28), inset 0 1px rgba(255,255,255,.08);
+}
+.ttt-status-medal {
+  background: linear-gradient(145deg, #ffe5a7, #c88b42);
+  color: #342047;
+}
+.ttt-game-status.their-turn { border-color: rgba(255,121,200,.4); }
+.ttt-game-status.their-turn > i { background: var(--ttt-pink); }
+.ttt-scene-character {
+  max-width: 210px;
+  filter: drop-shadow(0 18px 25px rgba(0,0,0,.45));
+}
+.ttt-scene-character .ttt-character-art { height: min(38vh, 310px); }
+.ttt-scene-character > span {
+  border-color: rgba(255,121,200,.42);
+  background: rgba(28,20,56,.88);
+  color: #ffe2f4;
+  padding: 7px 13px;
+  font-size: 10px;
+}
+.ttt-world-footer { color: #aebfdd; }
+.ttt-world-footer button {
+  border-color: rgba(255,224,160,.82);
+  background: linear-gradient(135deg, #ffe5a7, #d09247);
+  box-shadow: 0 7px 20px rgba(0,0,0,.32), 0 0 20px rgba(241,180,85,.16);
+}
+@media (max-width: 650px) {
+  .ttt-world { padding: 10px 10px max(12px, env(safe-area-inset-bottom)); }
+  .ttt-world-header { gap: 8px; }
+  .ttt-world-brand { gap: 8px; }
+  .ttt-world-brand > span { width: 34px; height: 34px; }
+  .ttt-world-brand b { font-size: 10px; letter-spacing: .14em; }
+  .ttt-world-brand small { font-size: 7px; }
+  .ttt-turn-tag { padding: 7px 9px; font-size: 8px; letter-spacing: .08em; }
+  .ttt-play-area {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    width: 100%;
+    gap: 0;
+  }
+  .ttt-game-pedestal {
+    width: min(100%, min(49vh, 440px));
+    gap: 8px;
+  }
+  .ttt-game-title { font-size: 10px; }
+  .ttt-wood-board { padding: 7px; border-radius: 18px; }
+  .ttt-board-inner { padding: 5px; gap: 5px; border-radius: 11px; }
+  .ttt-wood-cell { border-radius: 8px; }
+  .ttt-scene-character { display: none; }
+  .ttt-game-status { min-height: 38px; padding: 7px 9px; font-size: 10px; }
+  .ttt-world-footer { min-height: 28px; font-size: 8px; }
+}
+@media (max-height: 720px) and (max-width: 650px) {
+  .ttt-game-pedestal { width: min(100%, 42vh); }
+  .ttt-world-brand small { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ttt-wood-cell.winning { animation: none !important; }
+}
