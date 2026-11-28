@@ -8,7 +8,7 @@ interface WiseOwl3DProps {
 
 export const WiseOwl3D: React.FC<WiseOwl3DProps> = ({ mood, questionNumber = 1 }) => {
   return (
-    <div className="relative w-28 h-28 sm:w-32 sm:h-32 mx-auto select-none shrink-0 flex items-center justify-center">
+    <div className="relative w-36 h-36 sm:w-40 sm:h-40 mx-auto select-none shrink-0 flex items-center justify-center">
       {/* Rotating Arcane Magic Ring Behind Owl */}
       <motion.div
         animate={{ rotate: 360 }}
