@@ -81,6 +81,14 @@ export const TicTacToeBoard: React.FC<TicTacToeBoardProps> = ({ lang='my', match
 
       {/* Player identities are shown once in the persistent match scoreboard. */}
       <main className="ttt-play-area">
+        <div className="ttt-scene-character ttt-scene-player" aria-label={currentName}>
+          <motion.div className="ttt-player-portrait" animate={{ y:[0,-4,0] }} transition={{ duration:4.2, repeat:Infinity, ease:'easeInOut' }}>
+            {currentPlayer?.avatarUrl
+              ? <img src={currentPlayer.avatarUrl} alt="" />
+              : <span>{currentName.slice(0,1).toUpperCase()}</span>}
+          </motion.div>
+          <span>{currentName}</span>
+        </div>
         <div className="ttt-game-pedestal">
           <div className="ttt-game-title"><span>{lang === 'my' ? 'ကစားကွက်' : 'GAME BOARD'}</span><small>3 × 3</small></div>
           <div className="ttt-wood-board">
