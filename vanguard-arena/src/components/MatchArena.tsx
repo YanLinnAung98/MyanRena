@@ -285,7 +285,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
       )}
 
       {/* Match Result Banner (Non-Connect4 & Non-TicTacToe Games) */}
-      {isFinished && gType !== 'connect4' && gType !== 'tictactoe' && (
+      {isFinished && gType !== 'connect4' && gType !== 'tictactoe' && gType !== 'sakarhtar' && (
         <motion.div
           initial={{ y: 40, opacity: 0 }}
           animate={{ y: 0, opacity: 1 }}
