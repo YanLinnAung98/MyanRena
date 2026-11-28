@@ -51,7 +51,7 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
   const [chatText, setChatText] = React.useState('');
 
   const gType = normalizeGameId(match.gameType);
-  const isFullBleed = gType === 'tictactoe';
+  const isFullBleed = gType === 'tictactoe' || gType === 'rps';
   const players: any[] = match.players || [currentUser];
   const p1 = players[0] || currentUser;
   const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'Aegis Bot', avatarUrl: '' };
@@ -65,11 +65,11 @@ export const MatchArena: React.FC<MatchArenaProps> = ({
           displayName: getConnect4BotName(lang, match.difficulty || 'medium'),
           avatarUrl: KID_BOT_AVATAR_DATA_URI,
         }
-      : gType === 'tictactoe' && !isPvp
+      : (gType === 'tictactoe' || gType === 'rps') && !isPvp
       ? {
           ...rawP2,
           displayName: getTicTacToeBotName(lang, match.difficulty || 'medium'),
-          avatarUrl: TTT_KID_BOT_AVATAR_DATA_URI,
+          avatarUrl: gType === 'rps' ? `${import.meta.env.BASE_URL}assets/ttt-girl-idle.png` : TTT_KID_BOT_AVATAR_DATA_URI,
         }
       : rawP2;
 
