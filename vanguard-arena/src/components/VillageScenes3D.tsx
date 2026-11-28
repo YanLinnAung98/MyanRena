@@ -1,6 +1,5 @@
 import React from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Sparkles } from 'lucide-react';
 import type { Language, UserProfile } from '../types.ts';
 import { WiseOwl3D } from './WiseOwl3D.tsx';
 
