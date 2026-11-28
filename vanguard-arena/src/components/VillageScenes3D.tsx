@@ -567,7 +567,6 @@ export const VillageRpsScene: React.FC<{
   const p2 = isPvp ? rawP2 : { ...rawP2, displayName: lang === 'my' ? 'မပုတု' : 'Ma Pu Tu' };
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
-  const isMyTurn = !isFinished && !myPicked;
   const [shaking, setShaking] = React.useState(false);
   const [bonkAnim, setBonkAnim] = React.useState<'p1_bonks_p2' | 'p2_bonks_p1' | null>(null);
   const lastRoundSeenRef = React.useRef<number>(match.round || 1);
@@ -605,7 +604,6 @@ export const VillageRpsScene: React.FC<{
   const bestOf = match.bestOf || 3;
   const p1Avatar = p1.avatarUrl || currentUser.avatarUrl || '';
   const p2Avatar = isPvp ? (p2.avatarUrl || '') : `${import.meta.env.BASE_URL}assets/ttt-girl-idle.png`;
-  const p1Initial = (p1.displayName || 'P').slice(0, 1).toUpperCase();
 
   const PlayerCard = ({ player, avatar, side, winner, loser }: {
     player: any; avatar: string; side: 'blue' | 'pink'; winner: boolean; loser: boolean;
