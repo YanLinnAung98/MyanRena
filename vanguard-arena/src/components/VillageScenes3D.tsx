@@ -362,6 +362,59 @@ export const VillageTicTacToeScene: React.FC<{
 /* ============================================================================
    2. WISE OWL TREE QUIZ (Tree Owl + Seated Kids + Dive-Down Head Bonk!)
 ============================================================================ */
+const QuizContestantAvatar: React.FC<{
+  name: string;
+  variant: number;
+  state: 'idle' | 'dancing' | 'bonked';
+}> = ({ name, variant, state }) => {
+  const palettes = [
+    { coat: '#2589C7', coatDark: '#123B70', trim: '#76E2FF', hair: '#17223D', scarf: '#F5B94E', skin: '#E9B58D' },
+    { coat: '#B84F9C', coatDark: '#642B69', trim: '#FFB7E9', hair: '#2A1831', scarf: '#78D9D1', skin: '#F0C09C' },
+    { coat: '#329B78', coatDark: '#155544', trim: '#A2F2C9', hair: '#24243A', scarf: '#F6CB72', skin: '#DFA47F' },
+    { coat: '#9B77D6', coatDark: '#493477', trim: '#D8C0FF', hair: '#251C38', scarf: '#8BE0F1', skin: '#E8B18C' },
+  ];
+  const p = palettes[variant % palettes.length];
+  return (
+    <div className="quiz-contestant">
+      <motion.div
+        className="quiz-contestant-art"
+        animate={state === 'dancing' ? { y: [0, -9, 0, -6, 0], rotate: [-5, 5, -5, 5, 0] } : state === 'bonked' ? { y: [0, 5, -2, 0], rotate: [0, -8, 8, 0], scaleY: [1, .82, 1] } : { y: [0, -3, 0] }}
+        transition={{ duration: state === 'dancing' ? .65 : state === 'bonked' ? .5 : 2.8, repeat: state === 'idle' || state === 'dancing' ? Infinity : 0, ease: 'easeInOut' }}
+      >
+        <svg viewBox="0 0 180 206" role="img" aria-label={name} className="w-full h-full">
+          <defs>
+            <linearGradient id={`quizCoat${variant}`} x1="0" y1="0" x2="1" y2="1"><stop stopColor={p.trim}/><stop offset=".3" stopColor={p.coat}/><stop offset="1" stopColor={p.coatDark}/></linearGradient>
+            <radialGradient id={`quizFace${variant}`} cx=".35" cy=".25" r=".8"><stop stopColor="#FFE0BD"/><stop offset=".7" stopColor={p.skin}/><stop offset="1" stopColor="#B97861"/></radialGradient>
+            <linearGradient id={`quizHair${variant}`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#56617D"/><stop offset=".28" stopColor={p.hair}/><stop offset="1" stopColor="#090F22"/></linearGradient>
+            <linearGradient id={`quizScarf${variant}`} x1="0" y1="0" x2="1" y2="1"><stop stopColor="#FFF0B1"/><stop offset=".4" stopColor={p.scarf}/><stop offset="1" stopColor="#A66C36"/></linearGradient>
+          </defs>
+          <ellipse cx="90" cy="194" rx="49" ry="8" fill="#020914" opacity=".45"/>
+          <path d="M45 122Q26 128 23 155L35 163 55 143M135 122Q154 128 157 155L145 163 125 143" fill={`url(#quizCoat${variant})`} stroke={p.trim} strokeOpacity=".65" strokeWidth="3"/>
+          <path d="M48 116Q90 96 132 116L144 169Q90 187 36 169Z" fill={`url(#quizCoat${variant})`} stroke={p.trim} strokeWidth="3"/>
+          <path d="M76 112L90 132 104 112 112 171 90 182 68 171Z" fill={`url(#quizScarf${variant})`} stroke="#FFF1BF" strokeOpacity=".55" strokeWidth="2"/>
+          <path d="M54 167L80 174 74 194 47 192ZM126 167L100 174 106 194 133 192Z" fill="#111B32" stroke="#667C9C" strokeWidth="3"/>
+          <path d="M42 189Q60 184 79 193L76 201H39Q34 196 42 189ZM138 189Q120 184 101 193L104 201H141Q146 196 138 189Z" fill="#E7B76D" stroke="#FFF0B2" strokeWidth="2"/>
+          <path d="M55 48Q52 18 90 16Q129 18 126 58L119 103Q90 121 61 103Z" fill={`url(#quizHair${variant})`} stroke="#7888A8" strokeOpacity=".7" strokeWidth="3"/>
+          <ellipse cx="90" cy="72" rx="39" ry="43" fill={`url(#quizFace${variant})`} stroke="#FFE0B9" strokeOpacity=".75" strokeWidth="2"/>
+          <path d="M51 67Q44 32 78 22Q110 9 132 45L123 59Q110 43 93 42Q70 40 51 67Z" fill={`url(#quizHair${variant})`} stroke="#7585A8" strokeOpacity=".55" strokeWidth="3"/>
+          <path d="M58 42Q79 16 104 29" fill="none" stroke="#B9C9E8" strokeOpacity=".45" strokeWidth="4" strokeLinecap="round"/>
+          <path d="M69 72Q77 65 84 72M97 72Q104 65 112 72" fill="none" stroke="#4A2D35" strokeWidth="3.2" strokeLinecap="round"/>
+          <ellipse cx="77" cy="78" rx="4.2" ry="5.2" fill="#18243B"/><ellipse cx="104" cy="78" rx="4.2" ry="5.2" fill="#18243B"/>
+          <circle cx="78" cy="76" r="1.5" fill="#fff"/><circle cx="105" cy="76" r="1.5" fill="#fff"/>
+          <ellipse cx="64" cy="88" rx="7" ry="3.5" fill="#F58E91" opacity=".42"/><ellipse cx="116" cy="88" rx="7" ry="3.5" fill="#F58E91" opacity=".42"/>
+          <path d="M81 96Q90 104 100 96" fill="none" stroke="#A34C54" strokeWidth="2.8" strokeLinecap="round"/>
+          <path d="M64 110L90 127 116 110" fill="none" stroke="#FFF2C5" strokeOpacity=".8" strokeWidth="3"/>
+          <path d="M39 129L20 154M141 129L160 154" stroke={p.skin} strokeWidth="12" strokeLinecap="round"/>
+          <path d="M17 154L29 163M163 154L151 163" stroke="#F5D2B1" strokeWidth="11" strokeLinecap="round"/>
+          <circle cx="90" cy="14" r="5" fill="#FFD77B" stroke="#FFF0B0" strokeWidth="2"/>
+          <path d="M83 12L90 3 97 12" fill="none" stroke="#FFD77B" strokeWidth="2.5"/>
+        </svg>
+      </motion.div>
+      <span className="quiz-contestant-name">{name}</span>
+    </div>
+  );
+};
+
 export const WiseOwlTreeQuizScene: React.FC<{
   lang: Language;
   match: any;
@@ -406,47 +459,36 @@ export const WiseOwlTreeQuizScene: React.FC<{
     }
   };
 
-  const kidColors = [
-    ['#f59e0b', '#991b1b'], ['#38bdf8', '#1e3a8a'], ['#10b981', '#065f46'],
-    ['#c084fc', '#581c87'], ['#fb7185', '#881337'], ['#fb923c', '#7c2d12'],
-    ['#2dd4bf', '#115e59'], ['#a3e635', '#3f6212'],
-  ];
-  const mySeatIdx = Math.max(0, players.findIndex((p) => p.id === currentUser.id));
-  const seatCount = Math.max(1, players.length);
-  const diveOffsetX = seatCount > 1 ? ((mySeatIdx / (seatCount - 1)) - 0.5) * 160 : 0;
-
   return (
     <div className="quiz-arena">
       <div className="quiz-topline">
-        <div className="quiz-brandmark"><span>✦</span><div><small>{lang === 'my' ? 'MYANRENA • KNOWLEDGE ARENA' : 'MYANRENA • KNOWLEDGE ARENA'}</small><strong>{lang === 'my' ? 'ပညာရှိ ဇီးကွက် ဉာဏ်စမ်း' : 'WISE OWL CHALLENGE'}</strong></div></div>
+        <div className="quiz-brandmark"><span>✦</span><div><small>MYANRENA · KNOWLEDGE ARENA</small><strong>{lang === 'my' ? 'ပညာရှိ ဇီးကွက် ဉာဏ်စမ်း' : 'WISE OWL CHALLENGE'}</strong></div></div>
         <div className="quiz-round-chip"><span>{lang === 'my' ? 'အဆင့်' : 'QUESTION'}</span><b>{idx + 1}<i>/{riddles.length}</i></b></div>
       </div>
 
-      <section className="quiz-forest-stage" aria-label={lang === 'my' ? 'ကစားသမားများနှင့် ဇီးကွက်' : 'Players and wise owl'}>
+      <section className="quiz-forest-stage" aria-label={lang === 'my' ? 'ပညာရှိဇီးကွက် ဉာဏ်စမ်းကွင်း' : 'Wise Owl knowledge arena'}>
+        <img className="quiz-forest-art" src={`${import.meta.env.BASE_URL}assets/wise-owl-forest-arena.svg`} alt="" aria-hidden="true" />
+        <div className="quiz-forest-vignette" aria-hidden="true" />
         <div className="quiz-forest-stars" aria-hidden="true"><i>✦</i><i>✧</i><i>·</i><i>✦</i><i>·</i><i>✧</i></div>
-        <div className="quiz-canopy" aria-hidden="true"><span /><span /><span /><span /></div>
-        <svg viewBox="0 0 900 190" preserveAspectRatio="none" className="quiz-branch-art" aria-hidden="true">
-          <path d="M-20 130 C180 95 270 125 440 112 S720 120 930 65" fill="none" stroke="#392b38" strokeWidth="34" strokeLinecap="round"/>
-          <path d="M-20 122 C180 87 270 117 440 104 S720 112 930 57" fill="none" stroke="#9a663e" strokeWidth="19" strokeLinecap="round"/>
-          <path d="M-20 118 C180 83 270 113 440 100 S720 108 930 53" fill="none" stroke="#d29a5c" strokeOpacity=".35" strokeWidth="4" strokeLinecap="round"/>
-        </svg>
         <div className="quiz-owl-halo" aria-hidden="true" />
         <motion.div
-          animate={owlDiving ? { y: 74, x: diveOffsetX, scale: 1.08, rotate: [0, -14, 14, 0] } : { y: 0, x: 0, scale: 1, rotate: 0 }}
+          animate={owlDiving ? { y: 74, x: 0, scale: 1.08, rotate: [0, -14, 14, 0] } : { y: 0, x: 0, scale: 1, rotate: 0 }}
           transition={{ type: 'spring', stiffness: 260, damping: 18 }}
           className="quiz-owl-character"
         >
           <WiseOwl3D mood={cheeringKidId ? 'happy' : owlDiving ? 'thinking' : 'asking'} questionNumber={idx + 1} />
         </motion.div>
         <div className="quiz-player-row">
-          {players.slice(0, 8).map((pl, sIdx) => {
-            const [shirt, longyi] = kidColors[sIdx % kidColors.length];
-            const kState = bonkingKidId === pl.id ? 'bonked' : cheeringKidId === pl.id ? 'dancing' : 'idle';
-            return <div key={pl.id} className={`quiz-player-seat ${pl.id === currentUser.id ? 'is-you' : ''}`}>
-              <VillageKidSprite name={`${pl.displayName} · ${match.scores?.[pl.id] || 0}`} shirtColor={shirt} longyiColor={longyi} state={kState} compact />
+          {players.slice(0, 8).map((pl, sIdx) => (
+            <div key={pl.id} className={`quiz-player-seat ${pl.id === currentUser.id ? 'is-you' : ''}`}>
+              <QuizContestantAvatar
+                name={pl.displayName}
+                variant={sIdx}
+                state={bonkingKidId === pl.id ? 'bonked' : cheeringKidId === pl.id ? 'dancing' : 'idle'}
+              />
               {pl.id === currentUser.id && <span className="quiz-you-tag">{lang === 'my' ? 'သင်' : 'YOU'}</span>}
-            </div>;
-          })}
+            </div>
+          ))}
         </div>
         <div className="quiz-stage-caption"><span>✧</span>{lang === 'my' ? 'ပညာရှိ ဇီးကွက်၏ စိန်ခေါ်မှု' : 'THE WISE OWL’S CHALLENGE'}<span>✧</span></div>
       </section>
