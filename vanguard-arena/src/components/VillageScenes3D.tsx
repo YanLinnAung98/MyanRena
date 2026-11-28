@@ -568,20 +568,7 @@ export const VillageRpsScene: React.FC<{
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
   const [shaking, setShaking] = React.useState(false);
-  const [bonkAnim, setBonkAnim] = React.useState<'p1_bonks_p2' | 'p2_bonks_p1' | null>(null);
-  const lastRoundSeenRef = React.useRef<number>(match.round || 1);
-
-  React.useEffect(() => {
-    const r = match.round || 1;
-    if (r > lastRoundSeenRef.current && match.rpsLastRound) {
-      lastRoundSeenRef.current = r;
-      const winner = match.rpsLastRound.winnerId;
-      if (winner === p1.id) setBonkAnim('p1_bonks_p2');
-      else if (winner === p2.id) setBonkAnim('p2_bonks_p1');
-      const timer = window.setTimeout(() => setBonkAnim(null), 950);
-      return () => window.clearTimeout(timer);
-    }
-  }, [match.round, match.rpsLastRound, p1.id, p2.id]);
+  const [shaking, setShaking] = React.useState(false);
 
   const handleChoose = (choice: string) => {
     if (shaking || isFinished || myPicked) return;
