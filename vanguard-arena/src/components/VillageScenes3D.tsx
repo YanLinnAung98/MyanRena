@@ -563,7 +563,8 @@ export const VillageRpsScene: React.FC<{
 }> = ({ lang, match, currentUser, isPvp, onPick }) => {
   const players = match.players || [currentUser];
   const p1 = players[0] || currentUser;
-  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'မပုတု' };\n  const p2 = isPvp ? rawP2 : { ...rawP2, displayName: lang === 'my' ? 'မပုတု' : 'Ma Pu Tu' };
+  const rawP2 = players[1] || { id: 'aegis_bot', displayName: 'မပုတု' };
+  const p2 = isPvp ? rawP2 : { ...rawP2, displayName: lang === 'my' ? 'မပုတု' : 'Ma Pu Tu' };
   const isFinished = match.status === 'finished';
   const myPicked = Boolean(isPvp && match.rpsPicks?.[currentUser.id]);
   const isMyTurn = !isFinished && !myPicked;
